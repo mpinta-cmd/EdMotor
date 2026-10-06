@@ -15,18 +15,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.ui.theme.EdMotorTheme
@@ -35,7 +44,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        //Aplicacion como tal solo se va a mostrar lo que este dentro de este metodo
         setContent {
             EdMotorTheme {
                 Surface(
@@ -43,7 +51,6 @@ class MainActivity : ComponentActivity() {
                 ) {
                     EdMotor()
                 }
-                EdMotor()
             }
         }
     }
@@ -57,7 +64,6 @@ data class Product(
     val contentDescription: String = name
 )
 
-// 2. Colección de datos (Lista con la información de los repuestos)
 val productList = listOf(
     Product(
         name = "Aceite Mobil 20W-50",
@@ -98,103 +104,140 @@ val productList = listOf(
 
 @Composable
 fun EdMotor() {
-    Column(modifier = Modifier
-        .fillMaxSize()
-        .verticalScroll(rememberScrollState())
-        .padding(28.dp),
+    var searchQuery by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        //Primer Texto
-
+        // Título Principal
         Text(
-            text= "⚙\uFE0F EdMotor Automotriz \uD83E\uDDF0",
-            style= MaterialTheme.typography.headlineMedium
+            text = "⚙️ EdMotor Automotriz 🧰",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
         )
 
-        // Primer espacio
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        //Segundo Texto
-        Text(text= "Mecanica automotriz y distribuidora de repuestos automotrices",
-            style= MaterialTheme.typography.bodyLarge)
+        // Subtítulo
+        Text(
+            text = "Mecánica automotriz y distribuidora de repuestos",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
-        //Espacio entre el segundo texto y el outline
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        //Campo de texto
+        // Campo de Búsqueda Dinámico
         OutlinedTextField(
-            value= " ",
-            onValueChange = {},
-            label = {
-                Text (" Buscar repuestos " )
-            },
-            modifier = Modifier.fillMaxWidth()
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text("Buscar repuestos...") },
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text="Repuestos Destacados",
-            style= MaterialTheme.typography.bodyMedium
-        )
-        for (product in productList) {
-            ProductCard(product)
-            Spacer(modifier = Modifier.height(16.dp))
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Título Sección
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            Text(
+                text = "Repuestos Destacados",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Recorrido de Productos
+        for (product in productList) {
+            ProductCard(product = product)
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 }
 
-// Lo creamos aqui el componente reutilizable
 @Composable
 fun ProductCard(
-   Product: Product,
-){
-    //Card simplemente es un contenedor
+    product: Product
+) {
     Card(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        )  {
-            Image(
-                painter = painterResource(
-                    id = Product.imageRes
-                ),
-                contentDescription = Product.contentDescription,
+            modifier = Modifier.padding(16.dp)
+        ) {
+            // Contenedor suave para la imagen
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(140.dp),
-                contentScale = ContentScale.Fit
-            )
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Image(
+                    painter = painterResource(id = product.imageRes),
+                    contentDescription = product.contentDescription,
+                    modifier = Modifier.padding(8.dp),
+                    contentScale = ContentScale.Fit
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Nombre del producto
             Text(
-                text= Product.name,
-                style = MaterialTheme.typography.titleMedium
+                text = product.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(16.dp))
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Descripción con tipografía ajustada
             Text(
-                text= Product.description,
-                style = MaterialTheme.typography.titleMedium
+                text = product.description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Fila de Precio y Botón
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text (
-                    text=Product.price,
-                    style= MaterialTheme.typography.titleMedium
+                Text(
+                    text = product.price,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF1E88E5)
                 )
 
                 Button(
-                    onClick = {}
+                    onClick = { /* Acción al agregar */ },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFFEB3B), // Color de fondo (Amarillo Material)
+                        contentColor = Color.Black          // Color del texto/ícono dentro del botón
+                    )
                 ) {
                     Text("Agregar")
                 }
-
             }
         }
-
     }
 }
 
@@ -202,6 +245,8 @@ fun ProductCard(
 @Composable
 fun EdMotorPreview() {
     EdMotorTheme {
-        EdMotor()
+        Surface {
+            EdMotor()
+        }
     }
 }
