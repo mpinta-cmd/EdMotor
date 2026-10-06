@@ -40,12 +40,61 @@ class MainActivity : ComponentActivity() {
             EdMotorTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize()
-                ) { }
+                ) {
+                    EdMotor()
+                }
                 EdMotor()
             }
         }
     }
 }
+
+data class Product(
+    val name: String,
+    val description: String,
+    val price: String,
+    @DrawableRes val imageRes: Int,
+    val contentDescription: String = name
+)
+
+// 2. Colección de datos (Lista con la información de los repuestos)
+val productList = listOf(
+    Product(
+        name = "Aceite Mobil 20W-50",
+        description = "Aceite lubricante multigrado de alta viscosidad diseñado para motores",
+        price = "$203.900",
+        imageRes = R.drawable.mobil_20_w_50,
+        contentDescription = "Aceite mobil 20 w 50"
+    ),
+    Product(
+        name = "Aceite Havoline 20w-50",
+        description = "Aceite lubricante multigrado mineral de alta viscosidad diseñado para motores a gasolina",
+        price = "$87.200",
+        imageRes = R.drawable.havoline_20_w_50,
+        contentDescription = "Aceite havoline 20 w 50"
+    ),
+    Product(
+        name = "Filtro de aceite A-111",
+        description = "Diseñado para retener impurezas y partículas en el lubricante",
+        price = "$20.140",
+        imageRes = R.drawable.filtro_a,
+        contentDescription = "Filtro de aceite A 111"
+    ),
+    Product(
+        name = "Filtro de aire Aveo",
+        description = "Encargado de retener el polvo e impurezas del aire externo antes de que ingresen al motor.",
+        price = "$20.000",
+        imageRes = R.drawable.filtro_de_aire_aveo,
+        contentDescription = "Filtro de aire para aveo"
+    ),
+    Product(
+        name = "Bujias NGK x 4",
+        description = "Componentes del sistema de encendido diseñados para generar la chispa eléctrica",
+        price = "$14.000",
+        imageRes = R.drawable.bujias_ngk,
+        contentDescription = "Bujías NGK 4 unidades"
+    )
+)
 
 @Composable
 fun EdMotor() {
@@ -86,61 +135,18 @@ fun EdMotor() {
             text="Repuestos Destacados",
             style= MaterialTheme.typography.bodyMedium
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        //Se crea el componente
-        ProductCard(
-            "Aceite Mobil 20W-50",
-            "Aceite mobil 20 w 50",
-            "Aceite lubricante multigrado de alta viscosidad diseñado para motores",
-            "$203.900",
-            R.drawable.mobil_20_w_50
-        )
+        for (product in productList) {
+            ProductCard(product)
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
-        Spacer(modifier = Modifier.height(16.dp))
-        ProductCard(
-            "Aceite Havoline 20w-50",
-            "Aceite havoline 20 w 50",
-            "Aceite lubricante multigrado mineral de alta viscosidad diseñado para motores a gasolina",
-            "$87.200",
-            R.drawable.havoline_20_w_50
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        // R.drawable.filtro_a is resolved after rebuilding the project resources
-        ProductCard(
-            "Filtro de aceite A-111",
-            "Filtro de aceite A 111",
-            "Diseñado para retener impurezas y partículas en el lubricante",
-            "$20.140",
-            R.drawable.filtro_a
-            )
-
-        Spacer(modifier = Modifier.height(16.dp))
-        ProductCard(
-            "Filtro de aire Aveo",
-            "Filtro de aire para aveo",
-            "Encargado de retener el polvo e impurezas del aire externo antes de que ingresen al motor.",
-            "$20.000",
-            R.drawable.filtro_de_aire_aveo
-            )
-        Spacer(modifier = Modifier.height(16.dp))
-        ProductCard(
-            "Bujias NGK x 4",
-            "Bujiar NGK 4 unidades",
-            "componentes del sistema de encendido diseñados para generar la chispa eléctrica",
-            "$14.000",
-            R.drawable.bujias_ngk
-        )
     }
 }
 
 // Lo creamos aqui el componente reutilizable
 @Composable
 fun ProductCard(
-    name: String,
-    content_description: String,
-    descripcion: String,
-    price: String,
-    @DrawableRes imageRes: Int
+   Product: Product,
 ){
     //Card simplemente es un contenedor
     Card(
@@ -152,21 +158,21 @@ fun ProductCard(
         )  {
             Image(
                 painter = painterResource(
-                    id = imageRes
+                    id = Product.imageRes
                 ),
-                contentDescription = content_description,
+                contentDescription = Product.contentDescription,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(140.dp),
                 contentScale = ContentScale.Fit
             )
             Text(
-                text= name,
+                text= Product.name,
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text= descripcion,
+                text= Product.description,
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(modifier = Modifier.height(16.dp))
@@ -176,7 +182,7 @@ fun ProductCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text (
-                    text=price,
+                    text=Product.price,
                     style= MaterialTheme.typography.titleMedium
                 )
 
