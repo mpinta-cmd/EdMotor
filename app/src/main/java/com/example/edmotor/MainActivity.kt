@@ -106,7 +106,7 @@ val productList = listOf(
         imageRes = R.drawable.filtro_a,
         contentDescription = "Filtro de aceite A 111",
         rating = 4.7,
-        badge = "Agotado"
+        badge = "Agotado "
     ),
     Product(
         name = "Filtro de aire Aveo",
