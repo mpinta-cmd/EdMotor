@@ -73,7 +73,8 @@ data class Product(
     val price: String,
     @DrawableRes val imageRes: Int,
     val contentDescription: String = name,
-    val rating: Double
+    val rating: Double,
+    val badge: String = ""
 )
 
 data class Category(
@@ -104,7 +105,8 @@ val productList = listOf(
         price = "$20.140",
         imageRes = R.drawable.filtro_a,
         contentDescription = "Filtro de aceite A 111",
-        rating = 4.7
+        rating = 4.7,
+        badge = "Agotado"
     ),
     Product(
         name = "Filtro de aire Aveo",
@@ -112,7 +114,8 @@ val productList = listOf(
         price = "$20.000",
         imageRes = R.drawable.filtro_de_aire_aveo,
         contentDescription = "Filtro de aire para aveo",
-        rating = 4.6
+        rating = 4.6,
+        badge = "Nuevo"
     ),
     Product(
         name = "Bujias NGK x 4",
@@ -120,7 +123,8 @@ val productList = listOf(
         price = "$14.000",
         imageRes = R.drawable.bujias_ngk,
         contentDescription = "Bujías NGK 4 unidades",
-        rating = 5.0
+        rating = 5.0,
+        badge = "Oferta"
     )
 )
 
@@ -249,7 +253,7 @@ fun EdMotor() {
             )
 
             Spacer(modifier = Modifier.height(10.dp))
-            //CATEGORIAS usando LazyRow
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Start
@@ -262,6 +266,7 @@ fun EdMotor() {
             }
             Spacer(modifier = Modifier.height(10.dp))
 
+            //CATEGORIAS usando LazyRow
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -327,19 +332,21 @@ fun ProductCard(
             )
         }
 
-        Card(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(8.dp)
-        ) {
-            Text(
-                text = "Oferta",
-                modifier = Modifier.padding(
-                    horizontal = 8.dp,
-                    vertical = 4.dp
-                ),
-                style = MaterialTheme.typography.labelSmall
-            )
+        if (product.badge.isNotBlank()) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = product.badge,
+                    modifier = Modifier.padding(
+                        horizontal = 8.dp,
+                        vertical = 4.dp
+                    ),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 

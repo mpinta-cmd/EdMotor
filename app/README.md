@@ -42,7 +42,8 @@ val description: String,
 val price: String,
 @DrawableRes val imageRes: Int,
 val contentDescription: String = name,
-val rating: Double
+val rating: Double,
+val badge: String = " "    
 )
 data class Category(
 val emoji: String,
@@ -252,7 +253,7 @@ fun ProductCard(
                 .padding(8.dp)
         ) {
             Text(
-                text = "Oferta",
+                text = product.badge,
                 modifier = Modifier.padding(
                     horizontal = 8.dp,
                     vertical = 4.dp
