@@ -1,37 +1,37 @@
 
 package com.example.edmotor.ui.screens
 
-import androidx.compose.foundation.lazy.items as lazyItems
-import androidx.compose.foundation.lazy.grid.items as gridItems
-import kotlinx.coroutines.flow.collect
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.shrinkVertically
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -42,20 +42,20 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.derivedStateOf
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
 import com.example.edmotor.data.FAVORITES_CATEGORY
 import com.example.edmotor.model.Category
 import com.example.edmotor.model.Product
@@ -63,8 +63,10 @@ import com.example.edmotor.ui.theme.AzulNitro
 import com.example.edmotor.ui.theme.components.CategoryBadge
 import com.example.edmotor.ui.theme.components.ProductGridCard
 
+
 @Composable
 fun HomeScreen(
+
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     categories: List<Category>,
@@ -73,9 +75,11 @@ fun HomeScreen(
     selectedCategory: String?,
     favoriteProductIds: Set<Int>,
     onFavoriteClick: (Int) -> Unit,
+    onProductClick: (Int) -> Unit,
     onCategorySelect: (String) -> Unit,
     onIncrease: (Int) -> Unit,
     onDecrease: (Int) -> Unit
+
 ) {
 
     // ==========================================
@@ -84,77 +88,32 @@ fun HomeScreen(
 
     val gridState = rememberLazyGridState()
 
-    var showSearchAndCategories by remember {
-        mutableStateOf(true)
-    }
 
     // ==========================================
-    // 2. DETECTAR DIRECCIÓN DEL DESPLAZAMIENTO
+    // 2. DETECTAR SI EL CATÁLOGO ESTÁ DESPLAZADO
     // ==========================================
 
-    LaunchedEffect(gridState) {
+    val isScrolled by remember(gridState) {
 
-        var previousIndex = gridState.firstVisibleItemIndex
+        derivedStateOf {
 
-        var previousOffset =
-            gridState.firstVisibleItemScrollOffset
+            gridState.firstVisibleItemIndex > 0 ||
+                    gridState.firstVisibleItemScrollOffset > 0
 
-        snapshotFlow {
-
-            if (gridState.isScrollInProgress) {
-                gridState.firstVisibleItemIndex to
-                        gridState.firstVisibleItemScrollOffset
-            } else {
-                null
-            }
-
-        }.collect { currentPosition ->
-
-            if (currentPosition != null) {
-
-                val currentIndex = currentPosition.first
-                val currentOffset = currentPosition.second
-
-                val scrollingDown =
-                    currentIndex > previousIndex ||
-                            (
-                                    currentIndex == previousIndex &&
-                                            currentOffset > previousOffset
-                                    )
-
-                val scrollingUp =
-                    currentIndex < previousIndex ||
-                            (
-                                    currentIndex == previousIndex &&
-                                            currentOffset < previousOffset
-                                    )
-
-                when {
-                    scrollingDown -> {
-                        showSearchAndCategories = false
-                    }
-
-                    scrollingUp -> {
-                        showSearchAndCategories = true
-                    }
-                }
-
-                previousIndex = currentIndex
-                previousOffset = currentOffset
-            }
         }
     }
 
+
     // ==========================================
-    // 3. REINICIAR AL CAMBIAR FILTROS
+    // 3. REINICIAR AL CAMBIAR LOS FILTROS
     // ==========================================
 
     LaunchedEffect(searchQuery, selectedCategory) {
 
-        showSearchAndCategories = true
-
         gridState.animateScrollToItem(0)
+
     }
+
 
     // ==========================================
     // 4. CATEGORÍAS VISIBLES
@@ -167,7 +126,6 @@ fun HomeScreen(
 
         buildList {
 
-            // Favoritos solo aparece si existen productos favoritos.
             if (favoriteProductIds.isNotEmpty()) {
 
                 add(
@@ -179,8 +137,10 @@ fun HomeScreen(
             }
 
             addAll(categories)
+
         }
     }
+
 
     // ==========================================
     // 5. FILTRAR PRODUCTOS
@@ -199,22 +159,27 @@ fun HomeScreen(
 
             val matchesText =
                 query.isBlank() ||
+
                         item.name.contains(
                             query,
                             ignoreCase = true
                         ) ||
+
                         item.description.contains(
                             query,
                             ignoreCase = true
                         ) ||
+
                         item.category.contains(
                             query,
                             ignoreCase = true
                         ) ||
+
                         item.badge.contains(
                             query,
                             ignoreCase = true
                         )
+
 
             val matchesCategory = when (selectedCategory) {
 
@@ -230,142 +195,227 @@ fun HomeScreen(
                         ignoreCase = true
                     )
                 }
+
             }
 
             matchesText && matchesCategory
+
         }
     }
+
 
     // ==========================================
     // 6. CONTENEDOR PRINCIPAL
     // ==========================================
 
     Column(
+
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+
     ) {
 
+
         // ======================================
-        // 7. ENCABEZADO ANIMADO
+        // 7. ENCABEZADO INTELIGENTE
         // ======================================
 
-        AnimatedVisibility(
-            visible = showSearchAndCategories,
+        Column(
 
-            enter = slideInVertically(
-                initialOffsetY = { -it / 2 }
-            ) + fadeIn(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background)
+                .animateContentSize()
+                .padding(
+                    horizontal = 16.dp,
+                    vertical = if (isScrolled) 7.dp else 12.dp
+                ),
 
-            exit = slideOutVertically(
-                targetOffsetY = { -it / 2 }
-            ) + fadeOut()
+            verticalArrangement = Arrangement.spacedBy(
+                if (isScrolled) 8.dp else 12.dp
+            )
+
         ) {
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(
-                        horizontal = 16.dp,
-                        vertical = 12.dp
-                    ),
 
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+            // ==================================
+            // TÍTULO Y DESCRIPCIÓN
+            // DESAPARECEN AL DESPLAZARSE
+            // ==================================
+
+            AnimatedVisibility(
+
+                visible = !isScrolled,
+
+                enter = expandVertically(
+                    expandFrom = Alignment.Top
+                ) + fadeIn(),
+
+                exit = shrinkVertically(
+                    shrinkTowards = Alignment.Top
+                ) + fadeOut()
+
             ) {
 
-                // TÍTULO PRINCIPAL
-
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
+
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+
                 ) {
 
                     Text(
+
                         text = "REPUESTOS QUE BUSCAS",
+
                         fontSize = 19.sp,
+
                         fontWeight = FontWeight.ExtraBold,
+
                         color = MaterialTheme.colorScheme.onBackground
+
                     )
 
+
                     Text(
+
                         text = "Encuentra lo que tu vehículo necesita.",
+
                         style = MaterialTheme.typography.bodySmall,
+
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+
+                    )
+
+                }
+            }
+
+
+            // ==================================
+            // BUSCADOR
+            // SIEMPRE PERMANECE VISIBLE
+            // ==================================
+
+            HomeSearchBar(
+
+                searchQuery = searchQuery,
+
+                onSearchChange = onSearchChange
+
+            )
+
+
+            // ==================================
+            // TÍTULO DE CATEGORÍAS
+            // DESAPARECE AL DESPLAZARSE
+            // ==================================
+
+            AnimatedVisibility(
+
+                visible = !isScrolled,
+
+                enter = expandVertically(
+                    expandFrom = Alignment.Top
+                ) + fadeIn(),
+
+                exit = shrinkVertically(
+                    shrinkTowards = Alignment.Top
+                ) + fadeOut()
+
+            ) {
+
+                Text(
+
+                    text = "CATEGORÍAS",
+
+                    style = MaterialTheme.typography.labelLarge,
+
+                    fontWeight = FontWeight.Bold,
+
+                    color = AzulNitro
+
+                )
+
+            }
+
+
+            // ==================================
+            // CATEGORÍAS HORIZONTALES
+            // SIEMPRE PERMANECEN VISIBLES
+            // ==================================
+
+            LazyRow(
+
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+
+                contentPadding = PaddingValues(
+                    vertical = 3.dp
+                )
+
+            ) {
+
+                // TODOS
+
+                item(key = "category_all") {
+
+                    CategoryBadge(
+
+                        category = Category(
+                            emoji = "✦",
+                            nombre = "Todos"
+                        ),
+
+                        isSelected = selectedCategory == null,
+
+                        onClick = {
+
+                            selectedCategory?.let {
+                                onCategorySelect(it)
+                            }
+
+                        }
+
                     )
                 }
 
-                // BUSCADOR
 
-                HomeSearchBar(
-                    searchQuery = searchQuery,
-                    onSearchChange = onSearchChange
-                )
+                // FAVORITOS Y CATEGORÍAS NORMALES
 
-                // TÍTULO DE CATEGORÍAS
+                lazyItems(
 
-                Text(
-                    text = "CATEGORÍAS",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = AzulNitro
-                )
+                    items = categoriesToDisplay,
 
-                // CATEGORÍAS HORIZONTALES
+                    key = { category ->
+                        category.nombre
+                    }
 
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    contentPadding = PaddingValues(
-                        vertical = 3.dp
+                ) { category ->
+
+                    CategoryBadge(
+
+                        category = category,
+
+                        isSelected =
+                            selectedCategory == category.nombre,
+
+                        onClick = {
+
+                            onCategorySelect(category.nombre)
+
+                        }
+
                     )
-                ) {
-
-                    // TODOS
-
-                    item(key = "category_all") {
-
-                        CategoryBadge(
-                            category = Category(
-                                emoji = "✦",
-                                nombre = "Todos"
-                            ),
-
-                            isSelected = selectedCategory == null,
-
-                            onClick = {
-                                selectedCategory?.let {
-                                    onCategorySelect(it)
-                                }
-                            }
-                        )
-                    }
-
-                    // FAVORITOS Y CATEGORÍAS NORMALES
-
-                    items(
-                        items = categoriesToDisplay,
-                        key = { category -> category.nombre }
-                    ) { category ->
-
-                        CategoryBadge(
-                            category = category,
-
-                            isSelected =
-                                selectedCategory == category.nombre,
-
-                            onClick = {
-                                onCategorySelect(category.nombre)
-                            }
-                        )
-                    }
                 }
             }
         }
+
 
         // ======================================
         // 8. CUADRÍCULA DE PRODUCTOS
         // ======================================
 
         LazyVerticalGrid(
+
             columns = GridCells.Fixed(2),
 
             state = gridState,
@@ -375,29 +425,37 @@ fun HomeScreen(
                 .weight(1f),
 
             contentPadding = PaddingValues(
+
                 start = 12.dp,
                 end = 12.dp,
                 top = 10.dp,
                 bottom = 24.dp
+
             ),
 
             horizontalArrangement = Arrangement.spacedBy(12.dp),
 
             verticalArrangement = Arrangement.spacedBy(12.dp)
+
         ) {
+
 
             // ==================================
             // ENCABEZADO DE RESULTADOS
             // ==================================
 
             item(
+
                 key = "products_header",
+
                 span = {
                     GridItemSpan(maxLineSpan)
                 }
+
             ) {
 
                 Row(
+
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
@@ -406,15 +464,19 @@ fun HomeScreen(
                         ),
 
                     verticalAlignment = Alignment.CenterVertically
+
                 ) {
 
                     Column(
+
                         modifier = Modifier.weight(1f),
 
                         verticalArrangement = Arrangement.spacedBy(3.dp)
+
                     ) {
 
                         Text(
+
                             text = when (selectedCategory) {
 
                                 FAVORITES_CATEGORY ->
@@ -429,6 +491,7 @@ fun HomeScreen(
 
                                 else ->
                                     selectedCategory
+
                             },
 
                             style = MaterialTheme.typography.titleMedium,
@@ -436,23 +499,35 @@ fun HomeScreen(
                             fontWeight = FontWeight.ExtraBold,
 
                             color = MaterialTheme.colorScheme.onBackground
+
                         )
 
+
                         Text(
+
                             text = "${filteredProducts.size} repuestos encontrados",
 
                             style = MaterialTheme.typography.bodySmall,
 
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+
                         )
+
                     }
 
+
+                    // CONTADOR
+
                     Surface(
+
                         shape = CircleShape,
+
                         color = MaterialTheme.colorScheme.primaryContainer
+
                     ) {
 
                         Text(
+
                             text = filteredProducts.size.toString(),
 
                             modifier = Modifier.padding(
@@ -463,26 +538,33 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold,
 
                             color = MaterialTheme.colorScheme.onPrimaryContainer
+
                         )
                     }
                 }
             }
 
+
             // ==================================
-            // MENSAJE CUANDO NO HAY PRODUCTOS
+            // MENSAJE SIN PRODUCTOS
             // ==================================
 
             if (filteredProducts.isEmpty()) {
 
                 item(
+
                     key = "empty_products",
+
                     span = {
                         GridItemSpan(maxLineSpan)
                     }
+
                 ) {
 
                     EmptyProductsMessage(
+
                         selectedCategory = selectedCategory,
+
                         onClear = {
 
                             onSearchChange("")
@@ -490,19 +572,27 @@ fun HomeScreen(
                             selectedCategory?.let {
                                 onCategorySelect(it)
                             }
+
                         }
+
                     )
                 }
 
             } else {
 
+
                 // ==================================
                 // PRODUCTOS EN DOS COLUMNAS
                 // ==================================
 
-                items(
+                gridItems(
+
                     items = filteredProducts,
-                    key = { item -> item.id }
+
+                    key = { item ->
+                        item.id
+                    }
+
                 ) { item ->
 
                     val quantity =
@@ -510,6 +600,7 @@ fun HomeScreen(
 
                     val isFavorite =
                         item.id in favoriteProductIds
+
 
                     ProductGridCard(
 
@@ -523,6 +614,10 @@ fun HomeScreen(
                             onFavoriteClick(item.id)
                         },
 
+                        onProductClick = {
+                            onProductClick(item.id)
+                        },
+
                         onIncrease = {
                             onIncrease(item.id)
                         },
@@ -532,22 +627,28 @@ fun HomeScreen(
                         },
 
                         modifier = Modifier.fillMaxWidth()
+
                     )
                 }
             }
+
 
             // ==================================
             // PIE DEL CATÁLOGO
             // ==================================
 
             item(
+
                 key = "home_footer",
+
                 span = {
                     GridItemSpan(maxLineSpan)
                 }
+
             ) {
 
                 Column(
+
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
@@ -558,28 +659,36 @@ fun HomeScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
 
                     verticalArrangement = Arrangement.spacedBy(4.dp)
+
                 ) {
 
                     Text(
+
                         text = "EDMOTOR",
 
                         fontWeight = FontWeight.ExtraBold,
 
                         color = AzulNitro
+
                     )
 
+
                     Text(
+
                         text = "Tu aliado en el mundo automotriz.",
 
                         style = MaterialTheme.typography.bodySmall,
 
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+
                     )
+
                 }
             }
         }
     }
 }
+
 
 // ==============================================
 // BUSCADOR DE REPUESTOS
@@ -587,8 +696,11 @@ fun HomeScreen(
 
 @Composable
 private fun HomeSearchBar(
+
     searchQuery: String,
+
     onSearchChange: (String) -> Unit
+
 ) {
 
     OutlinedTextField(
@@ -610,9 +722,13 @@ private fun HomeSearchBar(
         leadingIcon = {
 
             Icon(
+
                 imageVector = Icons.Default.Search,
+
                 contentDescription = "Buscar",
+
                 tint = AzulNitro
+
             )
         },
 
@@ -621,14 +737,19 @@ private fun HomeSearchBar(
             if (searchQuery.isNotEmpty()) {
 
                 IconButton(
+
                     onClick = {
                         onSearchChange("")
                     }
+
                 ) {
 
                     Icon(
+
                         imageVector = Icons.Default.Close,
+
                         contentDescription = "Limpiar búsqueda"
+
                     )
                 }
             }
@@ -650,9 +771,11 @@ private fun HomeSearchBar(
                 MaterialTheme.colorScheme.surface,
 
             cursorColor = AzulNitro
+
         )
     )
 }
+
 
 // ==============================================
 // MENSAJE SIN RESULTADOS
@@ -660,11 +783,15 @@ private fun HomeSearchBar(
 
 @Composable
 private fun EmptyProductsMessage(
+
     selectedCategory: String?,
+
     onClear: () -> Unit
+
 ) {
 
     Card(
+
         modifier = Modifier.fillMaxWidth(),
 
         shape = RoundedCornerShape(22.dp),
@@ -672,9 +799,11 @@ private fun EmptyProductsMessage(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         )
+
     ) {
 
         Column(
+
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(25.dp),
@@ -682,15 +811,19 @@ private fun EmptyProductsMessage(
             horizontalAlignment = Alignment.CenterHorizontally,
 
             verticalArrangement = Arrangement.spacedBy(12.dp)
+
         ) {
 
             Surface(
+
                 shape = CircleShape,
 
                 color = MaterialTheme.colorScheme.primaryContainer
+
             ) {
 
                 Icon(
+
                     imageVector = Icons.Default.Search,
 
                     contentDescription = null,
@@ -700,16 +833,23 @@ private fun EmptyProductsMessage(
                     modifier = Modifier
                         .padding(17.dp)
                         .size(34.dp)
+
                 )
             }
 
+
             Text(
+
                 text = if (
                     selectedCategory == FAVORITES_CATEGORY
                 ) {
+
                     "Todavía no tienes favoritos"
+
                 } else {
+
                     "No encontramos ese repuesto"
+
                 },
 
                 style = MaterialTheme.typography.titleMedium,
@@ -717,9 +857,12 @@ private fun EmptyProductsMessage(
                 fontWeight = FontWeight.Bold,
 
                 textAlign = TextAlign.Center
+
             )
 
+
             Text(
+
                 text = "Prueba con otra búsqueda o explora las categorías disponibles.",
 
                 style = MaterialTheme.typography.bodySmall,
@@ -727,13 +870,18 @@ private fun EmptyProductsMessage(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
 
                 textAlign = TextAlign.Center
+
             )
 
+
             Button(
+
                 onClick = onClear
+
             ) {
 
                 Text("Ver todos los repuestos")
+
             }
         }
     }

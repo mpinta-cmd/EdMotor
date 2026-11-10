@@ -1,3 +1,4 @@
+
 package com.example.edmotor.navigation
 
 object Routes {
@@ -11,4 +12,15 @@ object Routes {
     const val PROFILE = "Mi Garaje"
 
     const val DIAGNOSTIC = "Diagnóstico"
+
+    // DETALLE DEL PRODUCTO
+    const val PRODUCT_DETAIL = "detalleProducto/{productId}"
+
+    // GENERAR RUTA CON EL ID DEL PRODUCTO
+    fun productDetail(productId: Int): String {
+
+        return "detalleProducto/$productId"
+
+    }
+
 }

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -58,6 +59,7 @@ fun ProductGridCard(
     quantity: Int,
     isFavorite: Boolean,
     onFavoriteClick: () -> Unit,
+    onProductClick: () -> Unit,
     onIncrease: () -> Unit,
     onDecrease: () -> Unit,
     modifier: Modifier = Modifier
@@ -90,7 +92,10 @@ fun ProductGridCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .animateContentSize(),
+            .animateContentSize()
+            .clickable {
+                onProductClick()
+            },
         shape = RoundedCornerShape(19.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface

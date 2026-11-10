@@ -2,6 +2,12 @@
 package com.example.edmotor.ui.theme.components
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +35,8 @@ fun AddVehicleBottomSheet(
     var plate by remember { mutableStateOf("") }
     var mileage by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+    val notesBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val coroutineScope = rememberCoroutineScope()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -42,6 +50,7 @@ fun AddVehicleBottomSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 760.dp)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp),
@@ -172,7 +181,17 @@ fun AddVehicleBottomSheet(
                 placeholder = {
                     Text("Mantenimiento, recordatorios, etc.")
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewRequester(notesBringIntoViewRequester)
+                    .onFocusChanged { state ->
+                        if (state.isFocused) {
+                            coroutineScope.launch {
+                                delay(250)
+                                notesBringIntoViewRequester.bringIntoView()
+                            }
+                        }
+                    },
                 minLines = 2,
                 maxLines = 4,
                 shape = RoundedCornerShape(12.dp)

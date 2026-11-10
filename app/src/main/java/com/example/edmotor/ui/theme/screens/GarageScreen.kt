@@ -1,27 +1,24 @@
-
 package com.example.edmotor.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -57,133 +54,160 @@ fun GarageScreen(
     onUpdateNotes: (vehicleId: Int, newNotes: String) -> Unit,
     onUpdateMileage: (vehicleId: Int, newMileage: String) -> Unit
 ) {
-    val listState = rememberLazyListState()
-
-    var showAddVehicleSheet by remember {
-        mutableStateOf(false)
-    }
+    var showAddVehicleSheet by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = 16.dp,
-                bottom = 28.dp
-            ),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+        // Encabezado discreto: deja el protagonismo al vehículo.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ENCABEZADO PREMIUM
-            item(key = "garage_header") {
-                GarageHeroCard(
-                    vehicleCount = vehicles.size,
-                    onAddVehicle = {
-                        showAddVehicleSheet = true
-                    }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "ED MOTOR  /  ESPACIO PERSONAL",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Mi garaje",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "Tu vehículo, su información y sus cuidados.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            // TÍTULO DE LA LISTA
-            item(key = "garage_section_title") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "Tu colección",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-
-                        Text(
-                            text = "Todos tus vehículos en un solo lugar",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            text = "${vehicles.size}",
-                            modifier = Modifier.padding(
-                                horizontal = 14.dp,
-                                vertical = 9.dp
-                            ),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
+            OutlinedButton(
+                onClick = { showAddVehicleSheet = true },
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(
+                    horizontal = 13.dp,
+                    vertical = 10.dp
+                )
+            ) {
+                Text(
+                    text = "+ Agregar",
+                    fontWeight = FontWeight.SemiBold
+                )
             }
+        }
 
-            // ESTADO VACÍO
-            if (vehicles.isEmpty()) {
-                item(key = "garage_empty") {
-                    EmptyGarageCard(
-                        onAddVehicle = {
-                            showAddVehicleSheet = true
+        if (vehicles.isEmpty()) {
+            EmptyGarageState(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 22.dp, vertical = 12.dp),
+                onAddVehicle = { showAddVehicleSheet = true }
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    // Reduce el área visible cuando aparece el teclado.
+                    .imePadding(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 4.dp,
+                    bottom = 28.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item(key = "garage_list_heading") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (vehicles.size == 1) "TU VEHÍCULO" else "TUS VEHÍCULOS",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = if (vehicles.size == 1) {
+                                    "Un espacio reservado para tu carro"
+                                } else {
+                                    "Toda tu información en un solo lugar"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    )
+
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = vehicles.size.toString(),
+                                modifier = Modifier.padding(
+                                    horizontal = 12.dp,
+                                    vertical = 7.dp
+                                ),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
                 }
-            } else {
-                // LISTA DE VEHÍCULOS
+
                 items(
                     items = vehicles,
                     key = { vehicle -> vehicle.id }
                 ) { vehicle ->
                     VehicleCard(
                         vehicle = vehicle,
-                        onDelete = {
-                            onDeleteVehicle(vehicle.id)
-                        },
+                        onDelete = { onDeleteVehicle(vehicle.id) },
                         onUpdateNotes = { newNotes ->
-                            onUpdateNotes(
-                                vehicle.id,
-                                newNotes
-                            )
+                            onUpdateNotes(vehicle.id, newNotes)
                         },
                         onUpdateMileage = { newMileage ->
-                            onUpdateMileage(
-                                vehicle.id,
-                                newMileage
-                            )
+                            onUpdateMileage(vehicle.id, newMileage)
                         }
+                    )
+                }
+
+                item(key = "garage_footer") {
+                    Text(
+                        text = "Tu garaje es privado y está organizado para acompañarte en el cuidado de tu vehículo.",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
         }
     }
 
-    // MENÚ INFERIOR PARA AGREGAR VEHÍCULOS
     if (showAddVehicleSheet) {
         AddVehicleBottomSheet(
-            onDismiss = {
-                showAddVehicleSheet = false
-            },
-            onVehicleAdded = {
-                    brand,
-                    model,
-                    year,
-                    engine,
-                    plate,
-                    mileage,
-                    notes ->
-
+            onDismiss = { showAddVehicleSheet = false },
+            onVehicleAdded = { brand, model, year, engine, plate, mileage, notes ->
                 onAddVehicle(
                     brand,
                     model,
@@ -199,174 +223,81 @@ fun GarageScreen(
 }
 
 @Composable
-private fun GarageHeroCard(
-    vehicleCount: Int,
-    onAddVehicle: () -> Unit
-) {
-    val graphite = Color(0xFF1E293B)
-    val electricBlue = Color(0xFF0066FF)
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = graphite
-        ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 4.dp
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF334155)
-                ) {
-                    Text(
-                        text = "🚘",
-                        modifier = Modifier.padding(13.dp),
-                        style = MaterialTheme.typography.headlineMedium
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "EDMOTOR / GARAGE",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF93C5FD)
-                    )
-
-                    Text(
-                        text = "Tu garaje, bajo control",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
-            }
-
-            Text(
-                text = "Toda la información de tus vehículos, " +
-                        "organizada en un solo lugar.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFCBD5E1)
-            )
-
-            HorizontalDivider(
-                color = Color.White.copy(alpha = 0.16f)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        text = vehicleCount.toString(),
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
-                    )
-
-                    Text(
-                        text = if (vehicleCount == 1) {
-                            "Vehículo registrado"
-                        } else {
-                            "Vehículos registrados"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFCBD5E1)
-                    )
-                }
-
-                Button(
-                    onClick = onAddVehicle,
-                    shape = RoundedCornerShape(13.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = electricBlue,
-                        contentColor = Color.White
-                    ),
-                    contentPadding = PaddingValues(
-                        horizontal = 15.dp,
-                        vertical = 12.dp
-                    )
-                ) {
-                    Text(
-                        text = "+ Agregar",
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyGarageCard(
+private fun EmptyGarageState(
+    modifier: Modifier = Modifier,
     onAddVehicle: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        modifier = modifier,
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 1.dp
-        )
+        border = BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentAlignment = Alignment.Center
         ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.primaryContainer
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                Surface(
+                    modifier = Modifier.size(88.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "ED",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
                 Text(
-                    text = "🚗",
-                    modifier = Modifier.padding(18.dp),
-                    style = MaterialTheme.typography.headlineLarge
+                    text = "Este espacio es tuyo",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
                 )
-            }
 
-            Text(
-                text = "Tu garaje comienza aquí",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
+                Text(
+                    text = "Añade tu vehículo para tener a mano sus datos, kilometraje y notas de mantenimiento. Puedes registrar uno solo; no necesitas llenar ningún espacio adicional.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
 
-            Text(
-                text = "Registra tu primer vehículo para guardar " +
-                        "su placa, kilometraje y notas de mantenimiento.",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                Button(
+                    onClick = onAddVehicle,
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(
+                        horizontal = 22.dp,
+                        vertical = 13.dp
+                    )
+                ) {
+                    Text(
+                        text = "Registrar mi vehículo",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
 
-            Button(
-                onClick = onAddVehicle,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(13.dp)
-            ) {
-                Text("Registrar mi primer vehículo")
+                Text(
+                    text = "Sin espacios vacíos ni registros innecesarios.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
