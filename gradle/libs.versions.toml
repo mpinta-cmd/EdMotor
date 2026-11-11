@@ -1,4 +1,5 @@
 [versions]
+datastore = "1.1.7"
 agp = "9.4.1"
 coreKtx = "1.19.1"
 junit = "4.13.2"
@@ -14,6 +15,8 @@ ksp = "2.3.10"
 room = "2.8.5"
 
 [libraries]
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+
 # ROOM DATABASE
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }

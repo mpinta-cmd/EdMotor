@@ -11,59 +11,65 @@ class FavoriteRepository(
     private val dao: FavoriteProductDao
 ) {
 
-    // ==========================================
-    // READ: OBSERVAR PRODUCTOS FAVORITOS
-    // ==========================================
+    fun observeFavorites(
+        userId: Int
+    ): Flow<Set<Int>> {
 
-    val favoriteProductIds: Flow<Set<Int>> =
-        dao.observeAll().map { favorites ->
+        return dao.observeForUser(userId).map { favorites ->
 
-            favorites.map { favorite ->
-                favorite.productId
+            favorites.map {
+                it.productId
             }.toSet()
         }
+    }
 
-    // ==========================================
-    // CREATE: AGREGAR FAVORITO
-    // ==========================================
 
-    suspend fun addFavorite(productId: Int) {
+    suspend fun addFavorite(
+        userId: Int,
+        productId: Int
+    ) {
 
-        if (productId <= 0) return
+        if (userId <= 0 || productId <= 0) return
 
         dao.insert(
             FavoriteProductEntity(
+                userId = userId,
                 productId = productId
             )
         )
     }
 
-    // ==========================================
-    // DELETE: ELIMINAR FAVORITO
-    // ==========================================
 
-    suspend fun removeFavorite(productId: Int) {
+    suspend fun removeFavorite(
+        userId: Int,
+        productId: Int
+    ) {
 
-        dao.deleteByProductId(productId)
+        if (userId <= 0 || productId <= 0) return
+
+        dao.deleteByProductId(userId, productId)
     }
 
-    // ==========================================
-    // TOGGLE: CAMBIAR ESTADO DEL FAVORITO
-    // ==========================================
 
-    suspend fun toggleFavorite(productId: Int) {
+    suspend fun toggleFavorite(
+        userId: Int,
+        productId: Int
+    ) {
 
-        if (productId <= 0) return
+        if (userId <= 0 || productId <= 0) return
 
-        val existingFavorite = dao.findByProductId(productId)
+        val current = dao.findByProductId(
+            userId,
+            productId
+        )
 
-        if (existingFavorite != null) {
+        if (current != null) {
 
-            removeFavorite(productId)
+            removeFavorite(userId, productId)
 
         } else {
 
-            addFavorite(productId)
+            addFavorite(userId, productId)
         }
     }
 }

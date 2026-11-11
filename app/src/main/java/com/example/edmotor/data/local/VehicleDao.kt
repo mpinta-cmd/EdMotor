@@ -1,3 +1,4 @@
+
 package com.example.edmotor.data.local
 
 import androidx.room.Dao
@@ -8,38 +9,136 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
-/*
- DAO: Data Access Object
-
- CRUD:
- C - CREATE
- R - READ
- U - UPDATE
- D - DELETE
-*/
-
 @Dao
 interface VehicleDao {
 
-    // READ: Obtener todos los vehículos
-    @Query("SELECT * FROM vehicles ORDER BY id DESC")
-    fun observeAll(): Flow<List<VehicleEntity>>
+    // ==========================================
+    // CONSULTAR VEHÍCULOS DEL TALLER
+    // ==========================================
 
-    // READ: Buscar un vehículo por su ID
-    @Query("SELECT * FROM vehicles WHERE id = :vehicleId LIMIT 1")
-    suspend fun findById(vehicleId: Int): VehicleEntity?
+    @Query("""
+        SELECT
+            vehicles.*,
+            users.displayName AS ownerName,
+            users.username AS ownerUsername
+        FROM vehicles
+        LEFT JOIN users
+            ON users.id = vehicles.ownerUserId
+        ORDER BY vehicles.id DESC
+    """)
+    fun observeAllForWorkshop(): Flow<List<VehicleWithOwnerRow>>
 
-    // CREATE: Insertar un vehículo
-    @Insert(
-        onConflict = OnConflictStrategy.REPLACE
-    )
-    suspend fun insert(vehicle: VehicleEntity)
+    // ==========================================
+    // CONSULTAR VEHÍCULOS DE UN CLIENTE
+    // ==========================================
 
-    // UPDATE: Actualizar un vehículo
+    @Query("""
+        SELECT * FROM vehicles
+        WHERE ownerUserId = :ownerUserId
+        ORDER BY id DESC
+    """)
+    fun observeByOwner(
+        ownerUserId: Int
+    ): Flow<List<VehicleEntity>>
+
+    // ==========================================
+    // BUSCAR VEHÍCULO
+    // ==========================================
+
+    @Query("""
+        SELECT * FROM vehicles
+        WHERE id = :vehicleId
+        LIMIT 1
+    """)
+    suspend fun findById(
+        vehicleId: Int
+    ): VehicleEntity?
+
+    // ==========================================
+    // REGISTRAR VEHÍCULO
+    // ==========================================
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(
+        vehicle: VehicleEntity
+    ): Long
+
+    // ==========================================
+    // ACTUALIZAR VEHÍCULO
+    // ==========================================
+
     @Update
-    suspend fun update(vehicle: VehicleEntity)
+    suspend fun update(
+        vehicle: VehicleEntity
+    )
 
-    // DELETE: Eliminar un vehículo
+    // Actualización protegida por propietario.
+    // No permite modificar vehículos de otras cuentas.
+
+    @Query("""
+        UPDATE vehicles
+        SET
+            brand = :brand,
+            model = :model,
+            year = :year,
+            engine = :engine,
+            plate = :plate,
+            notes = :notes
+        WHERE id = :vehicleId
+        AND ownerUserId = :ownerUserId
+    """)
+    suspend fun updateForOwner(
+        vehicleId: Int,
+        ownerUserId: Int,
+        brand: String,
+        model: String,
+        year: Int,
+        engine: String,
+        plate: String,
+        notes: String
+    ): Int
+
+    // ==========================================
+    // ACTUALIZAR KILOMETRAJE
+    // ==========================================
+
+    @Query("""
+        UPDATE vehicles
+        SET mileage = :mileage
+        WHERE id = :vehicleId
+    """)
+    suspend fun updateMileage(
+        vehicleId: Int,
+        mileage: String
+    ): Int
+
+    // ==========================================
+    // ASIGNAR VEHÍCULO A CLIENTE
+    // ==========================================
+
+    @Query("""
+        UPDATE vehicles
+        SET ownerUserId = :ownerUserId
+        WHERE id = :vehicleId
+        AND ownerUserId IS NULL
+        AND EXISTS (
+            SELECT 1
+            FROM users
+            WHERE users.id = :ownerUserId
+            AND users.role = 'CLIENT'
+        )
+    """)
+    suspend fun assignOwner(
+        vehicleId: Int,
+        ownerUserId: Int
+    ): Int
+
+    // ==========================================
+    // ELIMINAR VEHÍCULO
+    // ==========================================
+
     @Delete
-    suspend fun delete(vehicle: VehicleEntity)
+    suspend fun delete(
+        vehicle: VehicleEntity
+    )
 }

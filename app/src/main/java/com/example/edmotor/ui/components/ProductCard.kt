@@ -1,5 +1,4 @@
-
-package com.example.edmotor.ui.theme.components
+package com.example.edmotor.ui.components
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility

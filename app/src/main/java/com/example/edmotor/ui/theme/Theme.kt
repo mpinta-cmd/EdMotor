@@ -1,3 +1,4 @@
+
 package com.example.edmotor.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -7,69 +8,91 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// Esquema para Modo Claro
 private val LightColorScheme = lightColorScheme(
+
     primary = AzulNitro,
     onPrimary = Color.White,
+
     primaryContainer = AzulNitroContenedorClaro,
     onPrimaryContainer = AzulNitroOscuro,
 
     secondary = NaranjaPerformance,
     onSecondary = Color.White,
+
     secondaryContainer = NaranjaContenedorClaro,
-    onSecondaryContainer = NaranjaPerformance,
+    onSecondaryContainer = NaranjaPerformanceOscuro,
 
     tertiary = GrisCarbon,
     onTertiary = Color.White,
 
     background = FondoClaro,
-    onBackground = Color(0xFF0F172A),
+    onBackground = TextoPrincipalClaro,
 
     surface = SuperficieClaro,
-    onSurface = Color(0xFF0F172A),
+    onSurface = TextoPrincipalClaro,
 
     surfaceVariant = TarjetaVarianteClaro,
     onSurfaceVariant = TextoSecundarioClaro,
 
-    outline = Color(0xFFCBD5E1)
+    outline = BordeClaro,
+
+    error = ErrorClaro,
+    onError = Color.White
 )
 
-// Esquema para Modo Oscuro
 private val DarkColorScheme = darkColorScheme(
-    primary = AzulNitro,
-    onPrimary = Color.White,
+
+    primary = AzulNitroClaro,
+    onPrimary = Color(0xFF001B3D),
+
     primaryContainer = AzulNitroContenedorOscuro,
-    onPrimaryContainer = Color(0xFFB3D1FF),
+    onPrimaryContainer = Color(0xFFD6E6FF),
 
     secondary = NaranjaPerformanceClaro,
-    onSecondary = Color.Black,
-    secondaryContainer = NaranjaContenedorOscuro,
-    onSecondaryContainer = Color(0xFFFFD1B8),
+    onSecondary = Color(0xFF321000),
 
-    tertiary = GrisAcero,
-    onTertiary = Color.White,
+    secondaryContainer = NaranjaContenedorOscuro,
+    onSecondaryContainer = Color(0xFFFFDCCB),
+
+    tertiary = GrisAceroClaro,
+    onTertiary = Color(0xFF101827),
 
     background = FondoOscuro,
-    onBackground = Color(0xFFF8FAFC),
+    onBackground = TextoPrincipalOscuro,
 
     surface = SuperficieOscuro,
-    onSurface = Color(0xFFF8FAFC),
+    onSurface = TextoPrincipalOscuro,
 
     surfaceVariant = TarjetaVarianteOscuro,
     onSurfaceVariant = TextoSecundarioOscuro,
 
-    outline = Color(0xFF475569)
+    outline = BordeOscuro,
+
+    error = ErrorOscuro,
+    onError = Color(0xFF410002)
 )
 
 @Composable
 fun EdMotorTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+
+    val useDarkTheme = when (themeMode) {
+
+        AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+
+        AppThemeMode.LIGHT -> false
+
+        AppThemeMode.DARK -> true
+    }
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = if (useDarkTheme) {
+            DarkColorScheme
+        } else {
+            LightColorScheme
+        },
         typography = Typography,
         content = content
     )

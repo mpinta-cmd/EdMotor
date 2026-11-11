@@ -60,8 +60,8 @@ import com.example.edmotor.data.FAVORITES_CATEGORY
 import com.example.edmotor.model.Category
 import com.example.edmotor.model.Product
 import com.example.edmotor.ui.theme.AzulNitro
-import com.example.edmotor.ui.theme.components.CategoryBadge
-import com.example.edmotor.ui.theme.components.ProductGridCard
+import com.example.edmotor.ui.components.CategoryBadge
+import com.example.edmotor.ui.components.ProductGridCard
 
 
 @Composable

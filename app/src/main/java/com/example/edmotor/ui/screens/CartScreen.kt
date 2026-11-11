@@ -29,7 +29,9 @@ import androidx.compose.ui.unit.dp
 
 import com.example.edmotor.model.Product
 
-import com.example.edmotor.ui.theme.components.CartItemCard
+import com.example.edmotor.ui.components.CartItemCard
+import java.text.NumberFormat
+import java.util.Locale
 
 
 @Composable
@@ -58,7 +60,7 @@ fun CartScreen(
     }
 
     // Formatear el total con separadores de miles
-    val formattedTotal = java.text.NumberFormat.getNumberInstance(java.util.Locale("es", "CO"))
+    val formattedTotal = NumberFormat.getNumberInstance(Locale("es", "CO"))
         .format(totalAmount)
 
     Column(

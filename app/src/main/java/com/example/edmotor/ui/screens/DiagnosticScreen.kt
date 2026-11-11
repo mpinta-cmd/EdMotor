@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,8 +37,8 @@ import com.example.edmotor.data.productList
 import com.example.edmotor.data.symptomList
 import com.example.edmotor.model.DashboardLight
 import com.example.edmotor.model.Symptom
-import com.example.edmotor.ui.theme.components.DashboardLightCard
-import com.example.edmotor.ui.theme.components.SymptomCard
+import com.example.edmotor.ui.components.DashboardLightCard
+import com.example.edmotor.ui.components.SymptomCard
 
 private const val TAB_TESTIGOS = "Testigos"
 private const val TAB_SINTOMAS = "Síntomas"

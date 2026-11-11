@@ -1,13 +1,14 @@
-
 package com.example.edmotor.data.local
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.room.Index
 
-@Entity(tableName = "favorite_products")
+@Entity(
+    tableName = "favorite_products",
+    primaryKeys = ["userId", "productId"],
+    indices = [Index(value = ["userId"])]
+)
 data class FavoriteProductEntity(
-
-    @PrimaryKey
+    val userId: Int,
     val productId: Int
-
 )

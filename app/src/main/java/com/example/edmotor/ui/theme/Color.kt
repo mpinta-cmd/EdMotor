@@ -1,35 +1,57 @@
+
 package com.example.edmotor.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
 // ==========================================
-// PALETA AUTOMOTRIZ DE ALTO RENDIMIENTO
+// IDENTIDAD VISUAL EDMOTOR
 // ==========================================
 
-// Primarios: Azul Nitro & Eléctrico (Tecnología y precisión)
-val AzulNitro = Color(0xFF0066FF)
-val AzulNitroOscuro = Color(0xFF0044B3)
-val AzulNitroContenedorClaro = Color(0xFFE5F0FF)
-val AzulNitroContenedorOscuro = Color(0xFF002B80)
+// Azul Nitro
+val AzulNitro = Color(0xFF1769E8)
+val AzulNitroClaro = Color(0xFF79AFFF)
+val AzulNitroOscuro = Color(0xFF104BA8)
 
-// Secundarios: Naranja Performance (Acción, precios y botones clave)
-val NaranjaPerformance = Color(0xFFFF5500)
-val NaranjaPerformanceClaro = Color(0xFFFF884D)
-val NaranjaContenedorClaro = Color(0xFFFFEBE0)
-val NaranjaContenedorOscuro = Color(0xFF5A1A00)
+val AzulNitroContenedorClaro = Color(0xFFE5EFFF)
+val AzulNitroContenedorOscuro = Color(0xFF173B70)
 
-// Terciarios: Gris Carbón & Acero (Estructura y componentes)
-val GrisCarbon = Color(0xFF1E293B)
-val GrisAcero = Color(0xFF475569)
+// Naranja Performance
+val NaranjaPerformance = Color(0xFFE85D2A)
+val NaranjaPerformanceClaro = Color(0xFFFFA078)
+val NaranjaPerformanceOscuro = Color(0xFFB33E17)
 
-// Superficies y Fondos - Modo Claro
-val FondoClaro = Color(0xFFF8FAFC)
+val NaranjaContenedorClaro = Color(0xFFFFE9DF)
+val NaranjaContenedorOscuro = Color(0xFF642A18)
+
+// Grises
+val GrisCarbon = Color(0xFF243247)
+val GrisAcero = Color(0xFF64748B)
+val GrisAceroClaro = Color(0xFF9AAEC8)
+
+// ==========================================
+// TEMA CLARO
+// ==========================================
+
+val FondoClaro = Color(0xFFF4F7FC)
 val SuperficieClaro = Color(0xFFFFFFFF)
-val TarjetaVarianteClaro = Color(0xFFF1F5F9)
+val TarjetaVarianteClaro = Color(0xFFEBF1F8)
+
+val TextoPrincipalClaro = Color(0xFF142033)
 val TextoSecundarioClaro = Color(0xFF64748B)
 
-// Superficies y Fondos - Modo Oscuro (Estilo Taller Deportivo)
-val FondoOscuro = Color(0xFF0F172A)
-val SuperficieOscuro = Color(0xFF1E293B)
-val TarjetaVarianteOscuro = Color(0xFF334155)
-val TextoSecundarioOscuro = Color(0xFF94A3B8)
+val BordeClaro = Color(0xFFD8E1EC)
+val ErrorClaro = Color(0xFFBA1A1A)
+
+// ==========================================
+// TEMA OSCURO
+// ==========================================
+
+val FondoOscuro = Color(0xFF0B1220)
+val SuperficieOscuro = Color(0xFF121D2E)
+val TarjetaVarianteOscuro = Color(0xFF1C2B40)
+
+val TextoPrincipalOscuro = Color(0xFFF1F5FB)
+val TextoSecundarioOscuro = Color(0xFFA9B8CB)
+
+val BordeOscuro = Color(0xFF34445B)
+val ErrorOscuro = Color(0xFFFFB4AB)

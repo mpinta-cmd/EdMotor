@@ -11,75 +11,87 @@ class CartRepository(
     private val dao: CartDao
 ) {
 
-    // ==========================================
-    // READ: OBSERVAR LAS CANTIDADES DEL CARRITO
-    // ==========================================
+    fun observeCart(
+        userId: Int
+    ): Flow<Map<Int, Int>> {
 
-    val cartQuantity: Flow<Map<Int, Int>> =
-        dao.observeAll().map { items ->
+        return dao.observeForUser(userId).map { items ->
 
-            items.associate { item ->
-                item.productId to item.quantity
+            items.associate {
+                it.productId to it.quantity
             }
         }
+    }
 
-    // ==========================================
-    // CREATE / UPDATE: AUMENTAR CANTIDAD
-    // ==========================================
 
-    suspend fun increaseQuantity(productId: Int) {
+    suspend fun increaseQuantity(
+        userId: Int,
+        productId: Int
+    ) {
 
-        if (productId <= 0) return
+        if (userId <= 0 || productId <= 0) return
 
-        val currentItem = dao.findByProductId(productId)
+        val current = dao.findByProductId(
+            userId,
+            productId
+        )
 
-        val newQuantity = (currentItem?.quantity ?: 0) + 1
+        if (current != null && current.quantity == Int.MAX_VALUE) {
+            return
+        }
 
         dao.upsert(
             CartItemEntity(
+                userId = userId,
                 productId = productId,
-                quantity = newQuantity
+                quantity = (current?.quantity ?: 0) + 1
             )
         )
     }
 
-    // ==========================================
-    // UPDATE / DELETE: DISMINUIR CANTIDAD
-    // ==========================================
 
-    suspend fun decreaseQuantity(productId: Int) {
+    suspend fun decreaseQuantity(
+        userId: Int,
+        productId: Int
+    ) {
 
-        val currentItem = dao.findByProductId(productId) ?: return
+        if (userId <= 0 || productId <= 0) return
 
-        if (currentItem.quantity > 1) {
+        val current = dao.findByProductId(
+            userId,
+            productId
+        ) ?: return
+
+        if (current.quantity > 1) {
 
             dao.upsert(
-                currentItem.copy(
-                    quantity = currentItem.quantity - 1
+                current.copy(
+                    quantity = current.quantity - 1
                 )
             )
 
         } else {
 
-            dao.deleteByProductId(productId)
+            dao.deleteByProductId(userId, productId)
         }
     }
 
-    // ==========================================
-    // DELETE: ELIMINAR UN PRODUCTO DEL CARRITO
-    // ==========================================
 
-    suspend fun removeProduct(productId: Int) {
+    suspend fun removeProduct(
+        userId: Int,
+        productId: Int
+    ) {
 
-        dao.deleteByProductId(productId)
+        if (userId <= 0 || productId <= 0) return
+
+        dao.deleteByProductId(userId, productId)
     }
 
-    // ==========================================
-    // DELETE: VACIAR TODO EL CARRITO
-    // ==========================================
 
-    suspend fun clearCart() {
+    suspend fun clearCart(userId: Int) {
 
-        dao.clearAll()
+        if (userId <= 0) return
+
+        dao.clearForUser(userId)
     }
 }
