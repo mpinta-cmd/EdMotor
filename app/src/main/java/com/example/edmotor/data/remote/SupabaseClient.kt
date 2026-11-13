@@ -102,6 +102,35 @@ class SupabaseClient(
         return session
     }
 
+    /**
+     * Reactiva una sesión recuperada del almacenamiento seguro.
+     *
+     * Si el token está próximo a vencer, intenta renovarlo con el refresh token.
+     * Si no hay conexión, conserva el token guardado y permite que las peticiones
+     * posteriores vuelvan a intentar la renovación al recibir un 401.
+     */
+    suspend fun prepareRestoredSession(remote: RemoteSession): RemoteSession {
+        var activeSession = remote
+
+        val expiresSoon =
+            remote.expiresAtMillis <= System.currentTimeMillis() + 60_000L
+
+        if (expiresSoon && remote.refreshToken.isNotBlank()) {
+            activeSession = try {
+                refreshSession(remote.refreshToken)
+            } catch (_: Exception) {
+                remote
+            }
+        }
+
+        if (activeSession != remote) {
+            sessionManager.updateRemoteSession(activeSession)
+        }
+
+        startRealtime(activeSession.accessToken)
+        return activeSession
+    }
+
     suspend fun fetchMyProfile(session: RemoteSession): SupabaseProfile {
         val encodedId = encode(session.userId)
         val result = execute(

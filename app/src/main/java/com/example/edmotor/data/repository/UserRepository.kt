@@ -44,6 +44,18 @@ class UserRepository(
     fun observeClients(): Flow<List<UserEntity>> = userDao.observeClients()
 
     /**
+     * Recupera el usuario local asociado a una sesión persistida.
+     */
+    suspend fun findUserById(userId: Int): UserEntity? =
+        userDao.findById(userId)
+
+    /**
+     * Prepara la sesión guardada y reactiva las suscripciones Realtime.
+     */
+    suspend fun prepareRestoredSession(remote: RemoteSession): RemoteSession =
+        supabase.prepareRestoredSession(remote)
+
+    /**
      * Crea la cuenta local inicial. La cuenta remota del taller se crea una sola
      * vez desde Supabase Dashboard y se marca como WORKSHOP con el SQL incluido.
      */
@@ -150,8 +162,8 @@ class UserRepository(
             // de activar Supabase. El dueño se crea manualmente en Dashboard.
             val canMigrateLocalClient =
                 localUser != null &&
-                    localUser.role == UserRole.CLIENT.name &&
-                    PasswordHasher.verify(password, localUser.passwordHash, localUser.salt)
+                        localUser.role == UserRole.CLIENT.name &&
+                        PasswordHasher.verify(password, localUser.passwordHash, localUser.salt)
 
             if (!canMigrateLocalClient) {
                 return UserAuthResult.Error(
@@ -169,7 +181,7 @@ class UserRepository(
             } catch (migrationError: Exception) {
                 return UserAuthResult.Error(
                     "No se pudo vincular tu cuenta anterior con Supabase: " +
-                        (migrationError.message ?: "verifica tu conexión.")
+                            (migrationError.message ?: "verifica tu conexión.")
                 )
             }
         }

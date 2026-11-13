@@ -25,7 +25,7 @@ class AppContainer(context: Context) {
         context.applicationContext
     )
 
-    val sessionManager = SessionManager()
+    val sessionManager = SessionManager(context.applicationContext)
 
     // Cliente único para Auth, REST y Realtime de Supabase.
     private val supabaseClient = SupabaseClient(sessionManager)
