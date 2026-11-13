@@ -8,6 +8,8 @@ import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.repository.CartRepository
 import com.example.edmotor.data.repository.FavoriteRepository
 import com.example.edmotor.data.repository.MaintenanceRepository
+import com.example.edmotor.data.repository.OrderRepository
+import com.example.edmotor.data.repository.ProductRepository
 import com.example.edmotor.data.repository.UserRepository
 import com.example.edmotor.data.repository.VehicleRepository
 
@@ -16,16 +18,9 @@ import com.example.edmotor.session.SessionManager
 import com.example.edmotor.viewmodel.AuthViewModelFactory
 import com.example.edmotor.viewmodel.EdMotorViewModelFactory
 import com.example.edmotor.viewmodel.MaintenanceViewModelFactory
+import com.example.edmotor.viewmodel.ProductViewModelFactory
+import com.example.edmotor.viewmodel.OrderViewModelFactory
 
-/**
- * Contenedor central de dependencias de EdMotor.
- *
- * Responsabilidades:
- * - Inicializar la base de datos.
- * - Crear los repositorios.
- * - Compartir el administrador de sesión.
- * - Proporcionar las fábricas de ViewModels.
- */
 class AppContainer(context: Context) {
 
     // ==========================================
@@ -37,13 +32,13 @@ class AppContainer(context: Context) {
     )
 
     // ==========================================
-    // GESTIÓN DE SESIÓN
+    // SESIÓN
     // ==========================================
 
     val sessionManager = SessionManager()
 
     // ==========================================
-    // REPOSITORIOS
+    // USUARIOS
     // ==========================================
 
     private val userRepository = UserRepository(
@@ -53,27 +48,71 @@ class AppContainer(context: Context) {
         favoriteDao = database.favoriteProductDao()
     )
 
+    // ==========================================
+    // VEHÍCULOS
+    // ==========================================
+
     private val vehicleRepository = VehicleRepository(
         database.vehicleDao()
     )
 
+    // ==========================================
+    // CARRITO
+    // ==========================================
+
     private val cartRepository = CartRepository(
-        database.cartDao()
+        database = database,
+        dao = database.cartDao(),
+        productDao = database.productDao()
     )
+
+    // ==========================================
+    // FAVORITOS
+    // ==========================================
 
     private val favoriteRepository = FavoriteRepository(
         database.favoriteProductDao()
     )
 
+    // ==========================================
+    // MANTENIMIENTOS
+    // ==========================================
+
     private val maintenanceRepository = MaintenanceRepository(
         database = database,
         maintenanceDao = database.maintenanceDao(),
         partDao = database.maintenancePartDao(),
-        vehicleDao = database.vehicleDao()
+        vehicleDao = database.vehicleDao(),
+        productDao = database.productDao()
     )
 
     // ==========================================
-    // FÁBRICAS DE VIEWMODELS
+    // PRODUCTOS E INVENTARIO
+    // ==========================================
+
+    private val productRepository = ProductRepository(
+        database = database,
+        productDao = database.productDao(),
+        categoryDao = database.productCategoryDao(),
+        sessionManager = sessionManager
+    )
+
+    val productsRepository: ProductRepository
+        get() = productRepository
+
+    // ==========================================
+    // PEDIDOS Y VENTAS
+    // ==========================================
+
+    private val orderRepository = OrderRepository(
+        database = database,
+        orderDao = database.orderDao(),
+        cartDao = database.cartDao(),
+        productDao = database.productDao()
+    )
+
+    // ==========================================
+    // VIEWMODEL FACTORIES
     // ==========================================
 
     val authViewModelFactory = AuthViewModelFactory(
@@ -84,11 +123,22 @@ class AppContainer(context: Context) {
     val appViewModelFactory = EdMotorViewModelFactory(
         vehicleRepository,
         cartRepository,
-        favoriteRepository
+        favoriteRepository,
+        userRepository
     )
 
     val maintenanceViewModelFactory = MaintenanceViewModelFactory(
         maintenanceRepository,
+        sessionManager
+    )
+
+    val productViewModelFactory = ProductViewModelFactory(
+        productRepository,
+        sessionManager
+    )
+
+    val orderViewModelFactory = OrderViewModelFactory(
+        orderRepository,
         sessionManager
     )
 }

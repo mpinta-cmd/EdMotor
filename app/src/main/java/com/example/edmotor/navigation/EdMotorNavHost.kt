@@ -1,4 +1,3 @@
-
 package com.example.edmotor.navigation
 
 import android.widget.Toast
@@ -12,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,8 +27,9 @@ import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 
-import com.example.edmotor.data.categoryList
+import com.example.edmotor.R
 import com.example.edmotor.data.productList
+import com.example.edmotor.data.toProduct
 
 import com.example.edmotor.model.UserRole
 
@@ -41,17 +42,32 @@ import com.example.edmotor.ui.screens.MaintenanceHistoryScreen
 import com.example.edmotor.ui.screens.ProductDetailScreen
 import com.example.edmotor.ui.screens.ServicesScreen
 import com.example.edmotor.ui.screens.WorkshopGarageScreen
+import com.example.edmotor.ui.screens.ProductManagementScreen
+import com.example.edmotor.ui.screens.ProductFormScreen
+import com.example.edmotor.ui.screens.OrdersManagementScreen
 
 import com.example.edmotor.viewmodel.EdMotorViewModel
 import com.example.edmotor.viewmodel.MaintenanceViewModel
+import com.example.edmotor.viewmodel.ProductViewModel
+import com.example.edmotor.viewmodel.OrderViewModel
 
 
 /**
- * Grafo principal de navegación de EdMotor.
+ * Navegación principal de EdMotor.
  *
- * Conecta las pantallas con sus respectivos ViewModels,
- * administra la navegación y controla los permisos
- * según el tipo de usuario.
+ * Incluye:
+ * - Catálogo dinámico.
+ * - Detalle de productos.
+ * - Carrito.
+ * - Envío de pedidos.
+ * - Administración de pedidos y ventas.
+ * - Servicios.
+ * - Garaje.
+ * - Diagnóstico.
+ * - Historial de mantenimiento.
+ * - Formularios de mantenimiento.
+ * - Administración de inventario.
+ * - Creación y edición de repuestos.
  */
 
 @Composable
@@ -60,41 +76,95 @@ fun EdMotorNavHost(
     currentUserRole: String,
     appViewModel: EdMotorViewModel,
     maintenanceViewModel: MaintenanceViewModel,
+    productViewModel: ProductViewModel,
+    orderViewModel: OrderViewModel,
     onLogout: () -> Unit,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
 
     // =====================================================
-    // ESTADOS GENERALES DE LA APLICACIÓN
+    // 1. ESTADOS GENERALES
     // =====================================================
 
-    val searchQuery by appViewModel.searchQuery.collectAsStateWithLifecycle()
+    val searchQuery by appViewModel.searchQuery
+        .collectAsStateWithLifecycle()
 
-    val selectedCategory by appViewModel.selectedCategory.collectAsStateWithLifecycle()
+    val selectedCategory by appViewModel.selectedCategory
+        .collectAsStateWithLifecycle()
 
-    val cartQuantity by appViewModel.cartQuantity.collectAsStateWithLifecycle()
+    val cartQuantity by appViewModel.cartQuantity
+        .collectAsStateWithLifecycle()
 
-    val vehicleList by appViewModel.vehicles.collectAsStateWithLifecycle()
+    val cartMessage by appViewModel.cartMessage
+        .collectAsStateWithLifecycle()
 
-    val favoriteProductIds by appViewModel.favoriteProductIds.collectAsStateWithLifecycle()
+    val vehicleList by appViewModel.vehicles
+        .collectAsStateWithLifecycle()
 
-
-    // =====================================================
-    // ESTADOS DE MANTENIMIENTO
-    // =====================================================
-
-    val maintenanceRecords by maintenanceViewModel.records.collectAsStateWithLifecycle()
-
-    val editingRecord by maintenanceViewModel.editingRecord.collectAsStateWithLifecycle()
-
-    val isLoadingRecord by maintenanceViewModel.isLoadingRecord.collectAsStateWithLifecycle()
-
-    val editingRecordError by maintenanceViewModel.editingRecordError.collectAsStateWithLifecycle()
+    val favoriteProductIds by appViewModel.favoriteProductIds
+        .collectAsStateWithLifecycle()
 
 
     // =====================================================
-    // CONFIGURACIÓN GENERAL
+    // 2. ESTADOS DE MANTENIMIENTO
+    // =====================================================
+
+    val maintenanceRecords by maintenanceViewModel.records
+        .collectAsStateWithLifecycle()
+
+    val editingRecord by maintenanceViewModel.editingRecord
+        .collectAsStateWithLifecycle()
+
+    val isLoadingRecord by maintenanceViewModel.isLoadingRecord
+        .collectAsStateWithLifecycle()
+
+    val editingRecordError by maintenanceViewModel.editingRecordError
+        .collectAsStateWithLifecycle()
+
+
+    // =====================================================
+    // 3. ESTADOS DEL INVENTARIO
+    // =====================================================
+
+    val productEntities by productViewModel.products
+        .collectAsStateWithLifecycle()
+
+    val categories by productViewModel.categories
+        .collectAsStateWithLifecycle()
+
+    val clients by appViewModel.clients
+        .collectAsStateWithLifecycle()
+
+    val isSavingProduct by productViewModel.isSaving
+        .collectAsStateWithLifecycle()
+
+    // Conversión de entidades Room al modelo visual Product.
+
+    val catalogProducts = remember(productEntities) {
+        productEntities.map { it.toProduct() }
+    }
+
+
+    // =====================================================
+    // 4. ESTADOS DE PEDIDOS Y VENTAS
+    // =====================================================
+
+    val orders by orderViewModel.orders
+        .collectAsStateWithLifecycle()
+
+    val isProcessingOrder by orderViewModel.isProcessing
+        .collectAsStateWithLifecycle()
+
+    val orderMessage by orderViewModel.message
+        .collectAsStateWithLifecycle()
+
+    val orderIsError by orderViewModel.isError
+        .collectAsStateWithLifecycle()
+
+
+    // =====================================================
+    // 5. CONFIGURACIÓN GENERAL
     // =====================================================
 
     val isWorkshop =
@@ -104,11 +174,46 @@ fun EdMotorNavHost(
 
     val carCount = cartQuantity.values.sum()
 
-    val navigateTo: (String) -> Unit = onNavigate
+
+    // =====================================================
+    // 6. MENSAJES PARA EL CLIENTE
+    // =====================================================
+
+    LaunchedEffect(orderMessage, isWorkshop) {
+
+        if (!isWorkshop && !orderMessage.isNullOrBlank()) {
+
+            Toast.makeText(
+                context,
+                orderMessage.orEmpty(),
+                Toast.LENGTH_LONG
+            ).show()
+
+            orderViewModel.clearMessage()
+        }
+    }
+
+    // =====================================================
+    // 7. MENSAJES DE VALIDACIÓN DEL CARRITO
+    // =====================================================
+
+    LaunchedEffect(cartMessage) {
+
+        cartMessage?.let { message ->
+
+            Toast.makeText(
+                context,
+                message,
+                Toast.LENGTH_SHORT
+            ).show()
+
+            appViewModel.clearCartMessage()
+        }
+    }
 
 
     // =====================================================
-    // NAVEGACIÓN PRINCIPAL
+    // 8. GRAFO DE NAVEGACIÓN
     // =====================================================
 
     NavHost(
@@ -130,9 +235,9 @@ fun EdMotorNavHost(
 
                 onSearchChange = appViewModel::updateSearchQuery,
 
-                categories = categoryList,
+                categories = categories,
 
-                product = productList,
+                product = catalogProducts,
 
                 cartQuantity = cartQuantity,
 
@@ -143,10 +248,9 @@ fun EdMotorNavHost(
                 onFavoriteClick = appViewModel::toggleFavorite,
 
                 onProductClick = { productId ->
-
-                    navController.navigate(
-                        Routes.productDetail(productId)
-                    ) {
+                    // Seleccionar un producto siempre abre su ficha.
+                    // El dueño decide desde allí si desea editarlo.
+                    navController.navigate(Routes.productDetail(productId)) {
                         launchSingleTop = true
                     }
                 },
@@ -155,7 +259,27 @@ fun EdMotorNavHost(
 
                 onIncrease = appViewModel::increaseQuantity,
 
-                onDecrease = appViewModel::decreaseQuantity
+                onDecrease = appViewModel::decreaseQuantity,
+
+                onAdjustStock = { productId, delta ->
+                    productViewModel.adjustStock(productId, delta)
+                },
+
+                // ACCESO EXCLUSIVO DEL TALLER
+
+                isWorkshop = isWorkshop,
+
+                onOpenInventory = {
+
+                    if (isWorkshop) {
+
+                        navController.navigate(
+                            Routes.PRODUCT_MANAGEMENT
+                        ) {
+                            launchSingleTop = true
+                        }
+                    }
+                }
             )
         }
 
@@ -165,21 +289,18 @@ fun EdMotorNavHost(
         // =================================================
 
         composable(
-
             route = Routes.PRODUCT_DETAIL,
-
             arguments = listOf(
                 navArgument("productId") {
                     type = NavType.IntType
                 }
             )
-
         ) { backStackEntry ->
 
             val productId =
                 backStackEntry.arguments?.getInt("productId") ?: -1
 
-            val selectedProduct = productList.firstOrNull {
+            val selectedProduct = catalogProducts.firstOrNull {
                 it.id == productId
             }
 
@@ -191,43 +312,57 @@ fun EdMotorNavHost(
 
                     quantity = cartQuantity[selectedProduct.id] ?: 0,
 
-                    cartCount = carCount,
+                    cartCount = if (isWorkshop) 0 else carCount,
 
                     isFavorite = selectedProduct.id in favoriteProductIds,
+
+                    isWorkshop = isWorkshop,
 
                     onBack = {
                         navController.popBackStack()
                     },
 
                     onFavoriteClick = {
-                        appViewModel.toggleFavorite(selectedProduct.id)
+                        if (!isWorkshop) {
+                            appViewModel.toggleFavorite(selectedProduct.id)
+                        }
                     },
 
                     onIncrease = {
-                        appViewModel.increaseQuantity(selectedProduct.id)
+                        if (!isWorkshop) {
+                            appViewModel.increaseQuantity(selectedProduct.id)
+                        }
                     },
 
                     onDecrease = {
-                        appViewModel.decreaseQuantity(selectedProduct.id)
+                        if (!isWorkshop) {
+                            appViewModel.decreaseQuantity(selectedProduct.id)
+                        }
                     },
 
                     onOpenCart = {
-                        navigateTo(Routes.CAR)
+                        if (!isWorkshop) {
+                            navController.navigate(Routes.CAR)
+                        }
+                    },
+
+                    onEditProduct = {
+                        if (isWorkshop) {
+                            navController.navigate(Routes.productEdit(selectedProduct.id)) {
+                                launchSingleTop = true
+                            }
+                        }
                     }
                 )
 
             } else {
 
                 Column(
-
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(24.dp),
-
                     verticalArrangement = Arrangement.Center,
-
                     horizontalAlignment = Alignment.CenterHorizontally
-
                 ) {
 
                     Text(
@@ -243,7 +378,6 @@ fun EdMotorNavHost(
                             navController.popBackStack()
                         }
                     ) {
-
                         Text("Volver al catálogo")
                     }
                 }
@@ -252,21 +386,24 @@ fun EdMotorNavHost(
 
 
         // =================================================
-        // 3. CARRITO
+        // 3. CARRITO Y ENVÍO DE PEDIDOS
         // =================================================
 
         composable(Routes.CAR) {
-
-            CartScreen(
-
-                products = productList,
-
-                cartQuantity = cartQuantity,
-
-                onIncrease = appViewModel::increaseQuantity,
-
-                onDecrease = appViewModel::decreaseQuantity
-            )
+            if (isWorkshop) {
+                AccessDeniedScreen(
+                    message = "El perfil de EdMotor administra el inventario y no utiliza el carrito de compras.",
+                    onBack = { navController.popBackStack() }
+                )
+            } else {
+                CartScreen(
+                    products = catalogProducts,
+                    cartQuantity = cartQuantity,
+                    onIncrease = appViewModel::increaseQuantity,
+                    onDecrease = appViewModel::decreaseQuantity,
+                    onSubmitOrder = { orderViewModel.submitOrder() }
+                )
+            }
         }
 
 
@@ -279,15 +416,15 @@ fun EdMotorNavHost(
             ServicesScreen(
 
                 onOpenGarage = {
-                    navigateTo(Routes.PROFILE)
+                    navController.navigate(Routes.PROFILE)
                 },
 
                 onOpenDiagnosis = {
-                    navigateTo(Routes.DIAGNOSTIC)
+                    navController.navigate(Routes.DIAGNOSTIC)
                 },
 
                 onOpenCatalog = {
-                    navigateTo(Routes.HOME)
+                    navController.navigate(Routes.HOME)
                 }
             )
         }
@@ -305,11 +442,26 @@ fun EdMotorNavHost(
 
                     vehicles = vehicleList,
 
+                    clients = clients,
+
+                    orders = orders,
+
                     onVehicleClick = { vehicleId ->
 
-                        navigateTo(
+                        navController.navigate(
                             Routes.maintenanceHistory(vehicleId)
                         )
+                    },
+
+                    // ACCESO A LOS PEDIDOS RECIBIDOS
+
+                    onOpenOrders = {
+
+                        navController.navigate(
+                            Routes.ORDER_MANAGEMENT
+                        ) {
+                            launchSingleTop = true
+                        }
                     },
 
                     onLogout = onLogout
@@ -320,6 +472,8 @@ fun EdMotorNavHost(
                 ClientGarageScreen(
 
                     vehicles = vehicleList,
+
+                    orders = orders,
 
                     onAddVehicle = {
                             brand,
@@ -343,7 +497,7 @@ fun EdMotorNavHost(
 
                     onVehicleClick = { vehicleId ->
 
-                        navigateTo(
+                        navController.navigate(
                             Routes.maintenanceHistory(vehicleId)
                         )
                     },
@@ -355,26 +509,61 @@ fun EdMotorNavHost(
 
 
         // =================================================
-        // 6. HISTORIAL DE MANTENIMIENTO
+        // 6. ADMINISTRACIÓN DE PEDIDOS Y VENTAS
+        // =================================================
+
+        composable(Routes.ORDER_MANAGEMENT) {
+
+            if (isWorkshop) {
+
+                OrdersManagementScreen(
+
+                    orders = orders,
+
+                    isProcessing = isProcessingOrder,
+
+                    message = orderMessage,
+
+                    isError = orderIsError,
+
+                    onConfirm = orderViewModel::confirmOrder,
+
+                    onReject = orderViewModel::rejectOrder,
+
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+
+            } else {
+
+                AccessDeniedScreen(
+                    message = "Solo el taller puede administrar pedidos.",
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+        }
+
+
+        // =================================================
+        // 7. HISTORIAL DE MANTENIMIENTO
         // =================================================
 
         composable(
-
             route = Routes.MAINTENANCE_HISTORY,
-
             arguments = listOf(
                 navArgument("vehicleId") {
                     type = NavType.IntType
                 }
             )
-
         ) { entry ->
 
             val vehicleId =
                 entry.arguments?.getInt("vehicleId") ?: -1
 
             LaunchedEffect(vehicleId) {
-
                 maintenanceViewModel.selectVehicle(vehicleId)
             }
 
@@ -385,13 +574,10 @@ fun EdMotorNavHost(
             if (vehicle == null) {
 
                 Column(
-
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(24.dp),
-
                     verticalArrangement = Arrangement.Center
-
                 ) {
 
                     Text(
@@ -405,7 +591,6 @@ fun EdMotorNavHost(
                             navController.popBackStack()
                         }
                     ) {
-
                         Text("Volver")
                     }
                 }
@@ -422,19 +607,23 @@ fun EdMotorNavHost(
 
                     onAdd = {
 
-                        navController.navigate(
-                            Routes.maintenanceForm(vehicleId)
-                        )
+                        if (isWorkshop) {
+                            navController.navigate(
+                                Routes.maintenanceForm(vehicleId)
+                            )
+                        }
                     },
 
                     onEdit = { recordId ->
 
-                        navController.navigate(
-                            Routes.maintenanceForm(
-                                vehicleId,
-                                recordId
+                        if (isWorkshop) {
+                            navController.navigate(
+                                Routes.maintenanceForm(
+                                    vehicleId,
+                                    recordId
+                                )
                             )
-                        )
+                        }
                     },
 
                     onDelete = maintenanceViewModel::deleteMaintenance,
@@ -448,13 +637,11 @@ fun EdMotorNavHost(
 
 
         // =================================================
-        // 7. FORMULARIO DE MANTENIMIENTO
+        // 8. FORMULARIO DE MANTENIMIENTO
         // =================================================
 
         composable(
-
             route = Routes.MAINTENANCE_FORM,
-
             arguments = listOf(
 
                 navArgument("vehicleId") {
@@ -466,7 +653,6 @@ fun EdMotorNavHost(
                     defaultValue = -1
                 }
             )
-
         ) { entry ->
 
             val vehicleId =
@@ -478,11 +664,6 @@ fun EdMotorNavHost(
             val vehicle = vehicleList.firstOrNull {
                 it.id == vehicleId
             }
-
-
-            // ---------------------------------------------
-            // CARGA DEL REGISTRO SELECCIONADO
-            // ---------------------------------------------
 
             LaunchedEffect(vehicleId, recordId) {
 
@@ -501,76 +682,23 @@ fun EdMotorNavHost(
                 }
             }
 
-
-            // ---------------------------------------------
-            // CONTROL DE PERMISOS
-            // ---------------------------------------------
-
             if (!isWorkshop) {
 
-                Column(
-
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-
-                    verticalArrangement = Arrangement.Center
-
-                ) {
-
-                    Text(
-                        "Solo el taller puede registrar o editar mantenimientos."
-                    )
-
-                    Spacer(Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            navController.popBackStack()
-                        }
-                    ) {
-
-                        Text("Volver")
+                AccessDeniedScreen(
+                    message = "Solo el taller puede registrar o editar mantenimientos.",
+                    onBack = {
+                        navController.popBackStack()
                     }
-                }
-
-
-                // ---------------------------------------------
-                // VEHÍCULO NO ENCONTRADO
-                // ---------------------------------------------
+                )
 
             } else if (vehicle == null) {
 
-                Column(
-
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-
-                    verticalArrangement = Arrangement.Center
-
-                ) {
-
-                    Text(
-                        "No se encontró el vehículo seleccionado."
-                    )
-
-                    Spacer(Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            navController.popBackStack()
-                        }
-                    ) {
-
-                        Text("Volver")
+                AccessDeniedScreen(
+                    message = "No se encontró el vehículo seleccionado.",
+                    onBack = {
+                        navController.popBackStack()
                     }
-                }
-
-
-                // ---------------------------------------------
-                // CARGANDO MANTENIMIENTO
-                // ---------------------------------------------
+                )
 
             } else if (
                 recordId > 0 &&
@@ -584,61 +712,24 @@ fun EdMotorNavHost(
             ) {
 
                 Box(
-
                     modifier = Modifier.fillMaxSize(),
-
                     contentAlignment = Alignment.Center
-
                 ) {
-
                     CircularProgressIndicator()
                 }
-
-
-                // ---------------------------------------------
-                // ERROR AL CARGAR EL REGISTRO
-                // ---------------------------------------------
 
             } else if (
                 recordId > 0 &&
                 editingRecord == null
             ) {
 
-                Column(
-
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-
-                    verticalArrangement = Arrangement.Center,
-
-                    horizontalAlignment = Alignment.CenterHorizontally
-
-                ) {
-
-                    Text(
-                        editingRecordError
-                            ?: "No fue posible cargar el mantenimiento.",
-
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-
-                    Spacer(Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            navController.popBackStack()
-                        }
-                    ) {
-
-                        Text("Volver al historial")
+                AccessDeniedScreen(
+                    message = editingRecordError
+                        ?: "No fue posible cargar el mantenimiento.",
+                    onBack = {
+                        navController.popBackStack()
                     }
-                }
-
-
-                // ---------------------------------------------
-                // FORMULARIO DE REGISTRO O EDICIÓN
-                // ---------------------------------------------
+                )
 
             } else {
 
@@ -649,6 +740,48 @@ fun EdMotorNavHost(
 
                     existingRecord =
                         if (recordId > 0) editingRecord else null,
+
+                    availableProducts = productEntities,
+
+                    categories = categories,
+
+                    isCreatingProduct = isSavingProduct,
+
+                    onCreateCategory = { name, onResult ->
+                        productViewModel.createCategory(name) { result ->
+                            when (result) {
+                                is com.example.edmotor.data.repository.ProductOperationResult.Success ->
+                                    onResult(true, null)
+                                is com.example.edmotor.data.repository.ProductOperationResult.Error ->
+                                    onResult(false, result.message)
+                            }
+                        }
+                    },
+
+                    onCreateProduct = { name, description, category, priceCop, stock, imageUri, onResult ->
+                        productViewModel.createProduct(
+                            name = name,
+                            description = description,
+                            category = category,
+                            priceCop = priceCop,
+                            imageRes = productList.firstOrNull()?.imageRes
+                                ?: R.drawable.mobil_20_w_50,
+                            contentDescription = name,
+                            stock = stock,
+                            isNew = false,
+                            isOnPromotion = false,
+                            promotionPriceCop = null,
+                            imageUri = imageUri,
+                            onResult = { result ->
+                                when (result) {
+                                    is com.example.edmotor.data.repository.ProductOperationResult.Success ->
+                                        onResult(result.productId, null)
+                                    is com.example.edmotor.data.repository.ProductOperationResult.Error ->
+                                        onResult(null, result.message)
+                                }
+                            }
+                        )
+                    },
 
                     onSave = { draft ->
 
@@ -688,7 +821,7 @@ fun EdMotorNavHost(
 
 
         // =================================================
-        // 8. DIAGNÓSTICO
+        // 9. DIAGNÓSTICO
         // =================================================
 
         composable(Routes.DIAGNOSTIC) {
@@ -699,9 +832,280 @@ fun EdMotorNavHost(
 
                     appViewModel.selectCategory(categoryName)
 
-                    navigateTo(Routes.HOME)
+                    navController.navigate(Routes.HOME)
                 }
             )
+        }
+
+
+        // =================================================
+        // 10. ADMINISTRACIÓN DE REPUESTOS
+        // =================================================
+
+        composable(Routes.PRODUCT_MANAGEMENT) {
+
+            if (isWorkshop) {
+
+                ProductManagementScreen(
+
+                    viewModel = productViewModel,
+
+                    onCreateProduct = {
+                        navController.navigate(
+                            Routes.PRODUCT_CREATE
+                        )
+                    },
+
+                    onEditProduct = { product ->
+
+                        navController.navigate(
+                            Routes.productEdit(product.id)
+                        )
+                    }
+                )
+
+            } else {
+
+                AccessDeniedScreen(
+                    message = "Solo EdMotor puede administrar los repuestos.",
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+        }
+
+
+        // =================================================
+        // 11. CREAR REPUESTO
+        // =================================================
+
+        composable(Routes.PRODUCT_CREATE) {
+
+            if (isWorkshop) {
+
+                val availableImages = remember {
+                    productList.map {
+                        it.name to it.imageRes
+                    }.distinctBy {
+                        it.second
+                    }
+                }
+
+                ProductFormScreen(
+
+                    product = null,
+
+                    availableImages = availableImages,
+
+                    categories = categories,
+
+                    isSaving = isSavingProduct,
+
+                    onCreateCategory = { name, onResult ->
+                        productViewModel.createCategory(name) { result ->
+                            when (result) {
+                                is com.example.edmotor.data.repository.ProductOperationResult.Success ->
+                                    onResult(true, null)
+                                is com.example.edmotor.data.repository.ProductOperationResult.Error ->
+                                    onResult(false, result.message)
+                            }
+                        }
+                    },
+
+                    onSave = {
+                            name,
+                            description,
+                            category,
+                            priceCop,
+                            imageRes,
+                            contentDescription,
+                            stock,
+                            isNew,
+                            isOnPromotion,
+                            promotionPriceCop,
+                            imageUri,
+                            onResult ->
+
+                        productViewModel.createProduct(
+                            name = name,
+                            description = description,
+                            category = category,
+                            priceCop = priceCop,
+                            imageRes = imageRes,
+                            contentDescription = contentDescription,
+                            stock = stock,
+                            isNew = isNew,
+                            isOnPromotion = isOnPromotion,
+                            promotionPriceCop = promotionPriceCop,
+                            imageUri = imageUri,
+                            onResult = onResult
+                        )
+                    },
+
+                    onUpdate = { _, onResult ->
+                        onResult(
+                            com.example.edmotor.data.repository.ProductOperationResult.Error(
+                                "No se puede actualizar un producto desde el formulario de creación."
+                            )
+                        )
+                    },
+
+                    onCreated = { productId ->
+                        navController.navigate(Routes.productEdit(productId)) {
+                            popUpTo(Routes.PRODUCT_CREATE) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+
+            } else {
+
+                AccessDeniedScreen(
+                    message = "No tienes permiso para crear repuestos.",
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+        }
+
+
+        // =================================================
+        // 12. EDITAR REPUESTO
+        // =================================================
+
+        composable(
+            route = Routes.PRODUCT_EDIT,
+            arguments = listOf(
+                navArgument("productId") {
+                    type = NavType.IntType
+                }
+            )
+        ) { entry ->
+
+            val productId =
+                entry.arguments?.getInt("productId") ?: -1
+
+            val selectedEntity = productEntities.firstOrNull {
+                it.id == productId
+            }
+
+            if (!isWorkshop) {
+
+                AccessDeniedScreen(
+                    message = "No tienes permiso para modificar repuestos.",
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+
+            } else if (selectedEntity == null) {
+
+                AccessDeniedScreen(
+                    message = "No encontramos el repuesto solicitado.",
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+
+            } else {
+
+                val availableImages = remember {
+                    productList.map {
+                        it.name to it.imageRes
+                    }.distinctBy {
+                        it.second
+                    }
+                }
+
+                ProductFormScreen(
+
+                    product = selectedEntity,
+
+                    availableImages = availableImages,
+
+                    categories = categories,
+
+                    isSaving = isSavingProduct,
+
+                    onCreateCategory = { name, onResult ->
+                        productViewModel.createCategory(name) { result ->
+                            when (result) {
+                                is com.example.edmotor.data.repository.ProductOperationResult.Success ->
+                                    onResult(true, null)
+                                is com.example.edmotor.data.repository.ProductOperationResult.Error ->
+                                    onResult(false, result.message)
+                            }
+                        }
+                    },
+
+                    onSave = { _, _, _, _, _, _, _, _, _, _, _, onResult ->
+                        onResult(
+                            com.example.edmotor.data.repository.ProductOperationResult.Error(
+                                "El producto ya existe; utiliza Guardar cambios."
+                            )
+                        )
+                    },
+
+                    onUpdate = { updatedProduct, onResult ->
+                        productViewModel.updateProduct(updatedProduct, onResult)
+                    },
+
+                    onCreated = { },
+
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+        }
+    }
+}
+
+
+// =====================================================
+// PANTALLA AUXILIAR: ACCESO DENEGADO
+// =====================================================
+
+@Composable
+private fun AccessDeniedScreen(
+    message: String,
+    onBack: () -> Unit
+) {
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+
+        Text(
+            text = "Acceso restringido",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.ExtraBold,
+            color = MaterialTheme.colorScheme.error
+        )
+
+        Spacer(Modifier.height(10.dp))
+
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Spacer(Modifier.height(20.dp))
+
+        Button(
+            onClick = onBack
+        ) {
+            Text("Volver")
         }
     }
 }

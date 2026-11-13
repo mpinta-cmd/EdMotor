@@ -1,3 +1,4 @@
+
 package com.example.edmotor.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
@@ -16,51 +17,57 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-
 import com.example.edmotor.model.Product
-
 import com.example.edmotor.ui.components.CartItemCard
 import java.text.NumberFormat
 import java.util.Locale
-
 
 @Composable
 fun CartScreen(
     products: List<Product>,
     cartQuantity: Map<Int, Int>,
     onIncrease: (Int) -> Unit,
-    onDecrease: (Int) -> Unit
+    onDecrease: (Int) -> Unit,
+    onSubmitOrder: () -> Unit = {},
+    isSubmittingOrder: Boolean = false,
+    orderMessage: String? = null,
+    isOrderError: Boolean = false
 ) {
+
     val listState = rememberLazyListState()
+
     LaunchedEffect(Unit) {
         listState.scrollToItem(0)
     }
-    // 1. Filtrar solo los productos cuya cantidad en el carrito sea mayor a 0
-    val cartItems = products.filter { (cartQuantity[it.id] ?: 0) > 0 }
 
-    // Función auxiliar para extraer el valor numérico del precio (ej: "$203.900" -> 203900.0)
-    fun parsePrice(priceStr: String): Double {
-        return priceStr.filter { it.isDigit() }.toDoubleOrNull() ?: 0.0
+    val cartItems = products.filter {
+        (cartQuantity[it.id] ?: 0) > 0
     }
 
-    // 2. Calcular la cuenta total sumando (precio * cantidad) de cada producto
+    fun parsePrice(value: String): Long {
+        return value.filter { it.isDigit() }
+            .toLongOrNull() ?: 0L
+    }
+
     val totalAmount = cartItems.sumOf { product ->
+
         val quantity = cartQuantity[product.id] ?: 0
-        parsePrice(product.price) * quantity
+
+        parsePrice(product.effectivePrice) * quantity
     }
 
-    // Formatear el total con separadores de miles
-    val formattedTotal = NumberFormat.getNumberInstance(Locale("es", "CO"))
+    val formattedTotal = NumberFormat
+        .getNumberInstance(Locale("es", "CO"))
         .format(totalAmount)
 
     Column(
@@ -68,49 +75,75 @@ fun CartScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
+
         Text(
-            text = "Carrito de Compras 🛒",
+            "Carrito de compras",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // 3. Si no hay productos, mostrar el mensaje solicitado
+        if (orderMessage != null) {
+
+            Text(
+                text = orderMessage,
+                color = if (isOrderError) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+        }
+
         if (cartItems.isEmpty()) {
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
+
                 Text(
-                    text = "Selecciona productos en la ventana de inicio 🛠️",
+                    "Tu carrito está vacío. Selecciona repuestos del catálogo.",
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
         } else {
-            // 4. Lista de productos seleccionados
+
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 state = listState
             ) {
-                items(cartItems) { product ->
-                    val cantidad = cartQuantity[product.id] ?: 0
+
+                items(
+                    items = cartItems,
+                    key = { it.id }
+                ) { product ->
+
+                    val quantity = cartQuantity[product.id] ?: 0
+
                     CartItemCard(
                         product = product,
-                        cantidad = cantidad,
-                        onIncrease = { onIncrease(product.id) },
-                        onDecrease = { onDecrease(product.id) }
+                        cantidad = quantity,
+                        onIncrease = {
+                            onIncrease(product.id)
+                        },
+                        onDecrease = {
+                            onDecrease(product.id)
+                        }
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // 5. Tarjeta inferior con la cuenta total y el botón Pagar
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -118,37 +151,62 @@ fun CartScreen(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant
                 )
             ) {
+
                 Column(
                     modifier = Modifier.padding(16.dp)
                 ) {
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+
                         Text(
-                            text = "Total a pagar:",
+                            "Total del pedido:",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
+
                         Text(
-                            text = "$$formattedTotal",
+                            "\$$formattedTotal",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF1E88E5)
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(Modifier.height(12.dp))
+
+                    Text(
+                        "El pedido será enviado a EdMotor para su revisión y confirmación.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(Modifier.height(16.dp))
 
                     Button(
-                        onClick = { /* Acción al presionar Pagar */ },
+                        onClick = onSubmitOrder,
+                        enabled = !isSubmittingOrder,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
+
+                        if (isSubmittingOrder) {
+
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(end = 10.dp),
+                                strokeWidth = 2.dp
+                            )
+                        }
+
                         Text(
-                            text = "Pagar",
-                            style = MaterialTheme.typography.titleMedium,
+                            if (isSubmittingOrder) {
+                                "Enviando pedido..."
+                            } else {
+                                "Enviar pedido al taller"
+                            },
                             fontWeight = FontWeight.Bold
                         )
                     }

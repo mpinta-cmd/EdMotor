@@ -1,19 +1,25 @@
 package com.example.edmotor.ui.screens
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -25,19 +31,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.data.local.MaintenanceWithParts
+import com.example.edmotor.data.local.ProductEntity
 import com.example.edmotor.model.MaintenanceDraft
+import com.example.edmotor.model.Category
 import com.example.edmotor.model.MaintenancePartDraft
+import com.example.edmotor.ui.components.ProductImage
+import com.example.edmotor.ui.components.CategorySelector
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 private data class PartFormState(
+    val catalogProductId: Int? = null,
     val name: String = "",
     val brand: String = "",
     val reference: String = "",
@@ -51,19 +66,47 @@ private data class PartFormState(
 fun MaintenanceFormScreen(
     vehicleTitle: String,
     existingRecord: MaintenanceWithParts?,
+    availableProducts: List<ProductEntity>,
+    categories: List<Category>,
+    isCreatingProduct: Boolean = false,
+    onCreateCategory: (String, (Boolean, String?) -> Unit) -> Unit,
+    onCreateProduct: (
+        String,
+        String,
+        String,
+        Long,
+        Int,
+        String?,
+        (Int?, String?) -> Unit
+    ) -> Unit,
     onSave: (MaintenanceDraft) -> Unit,
     onBack: () -> Unit
 ) {
-    var serviceType by remember(existingRecord?.record?.id) { mutableStateOf(existingRecord?.record?.serviceType ?: "Cambio de aceite") }
-    var serviceDate by remember(existingRecord?.record?.id) {
+    var serviceType by rememberSaveable(existingRecord?.record?.id) {
+        mutableStateOf(existingRecord?.record?.serviceType ?: "Cambio de aceite")
+    }
+    var serviceDate by rememberSaveable(existingRecord?.record?.id) {
         mutableStateOf(existingRecord?.record?.serviceDate ?: SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()))
     }
-    var mileage by remember(existingRecord?.record?.id) { mutableStateOf(existingRecord?.record?.mileageKm?.toString() ?: "") }
-    var description by remember(existingRecord?.record?.id) { mutableStateOf(existingRecord?.record?.description ?: "") }
-    var laborCost by remember(existingRecord?.record?.id) { mutableStateOf(existingRecord?.record?.laborCostCop?.toString() ?: "0") }
-    var nextMileage by remember(existingRecord?.record?.id) { mutableStateOf(existingRecord?.record?.nextServiceMileageKm?.toString() ?: "") }
-    var nextDate by remember(existingRecord?.record?.id) { mutableStateOf(existingRecord?.record?.nextServiceDate ?: "") }
-    var observations by remember(existingRecord?.record?.id) { mutableStateOf(existingRecord?.record?.observations ?: "") }
+    var mileage by rememberSaveable(existingRecord?.record?.id) {
+        mutableStateOf(existingRecord?.record?.mileageKm?.toString() ?: "")
+    }
+    var description by rememberSaveable(existingRecord?.record?.id) {
+        mutableStateOf(existingRecord?.record?.description ?: "")
+    }
+    var laborCost by rememberSaveable(existingRecord?.record?.id) {
+        mutableStateOf(existingRecord?.record?.laborCostCop?.toString() ?: "0")
+    }
+    var nextMileage by rememberSaveable(existingRecord?.record?.id) {
+        mutableStateOf(existingRecord?.record?.nextServiceMileageKm?.toString() ?: "")
+    }
+    var nextDate by rememberSaveable(existingRecord?.record?.id) {
+        mutableStateOf(existingRecord?.record?.nextServiceDate ?: "")
+    }
+    var observations by rememberSaveable(existingRecord?.record?.id) {
+        mutableStateOf(existingRecord?.record?.observations ?: "")
+    }
+
     val parts = remember(existingRecord?.record?.id) {
         mutableStateListOf<PartFormState>().apply {
             val existingParts = existingRecord?.parts.orEmpty()
@@ -71,6 +114,7 @@ fun MaintenanceFormScreen(
             else existingParts.forEach { part ->
                 add(
                     PartFormState(
+                        catalogProductId = part.catalogProductId,
                         name = part.name,
                         brand = part.brand,
                         reference = part.reference,
@@ -83,14 +127,63 @@ fun MaintenanceFormScreen(
             }
         }
     }
-    var localError by remember(existingRecord?.record?.id) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(existingRecord?.record?.id) {
-        // La pantalla se reinicializa cuando termina de cargar el registro que se editará.
+    var localError by remember { mutableStateOf<String?>(null) }
+    var productPickerIndex by remember { mutableStateOf<Int?>(null) }
+    var showNewProductDialog by remember { mutableStateOf(false) }
+    var pendingCreatedProductId by remember { mutableStateOf<Int?>(null) }
+    var newProductError by remember { mutableStateOf<String?>(null) }
+
+    var newProductName by remember { mutableStateOf("") }
+    var newProductDescription by remember { mutableStateOf("") }
+    var newProductCategory by remember { mutableStateOf(categories.firstOrNull()?.nombre ?: "Repuestos") }
+    var newProductPrice by remember { mutableStateOf("") }
+    var newProductStock by remember { mutableStateOf("1") }
+    var newProductImageUri by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val quickPhotoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+                // Se conserva la URI devuelta por el selector del sistema.
+            }
+            newProductImageUri = uri.toString()
+        }
+    }
+
+    // Cuando Room emite el nuevo producto creado desde este formulario,
+    // se incorpora automáticamente como repuesto utilizado.
+    LaunchedEffect(availableProducts, pendingCreatedProductId) {
+        val createdId = pendingCreatedProductId ?: return@LaunchedEffect
+        val product = availableProducts.firstOrNull { it.id == createdId }
+        if (product != null) {
+            parts.add(
+                PartFormState(
+                    catalogProductId = product.id,
+                    name = product.name,
+                    specification = product.description,
+                    quantity = "1",
+                    unit = "unidad",
+                    unitPrice = product.effectivePriceCop.toString()
+                )
+            )
+            pendingCreatedProductId = null
+            showNewProductDialog = false
+            newProductError = null
+        }
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(18.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         TextButton(onClick = onBack) { Text("← Volver al historial") }
@@ -103,7 +196,7 @@ fun MaintenanceFormScreen(
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -172,31 +265,61 @@ fun MaintenanceFormScreen(
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Repuestos y materiales", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    OutlinedButton(onClick = { parts.add(PartFormState()) }) { Text("+ Agregar") }
-                }
+                Text("Repuestos utilizados", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    "Selecciona los repuestos del inventario. Al guardar el mantenimiento, sus cantidades se descontarán automáticamente del stock.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 parts.forEachIndexed { index, part ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text("Repuesto ${index + 1}", fontWeight = FontWeight.Bold)
-                                if (parts.size > 1) TextButton(onClick = { parts.removeAt(index) }) { Text("Quitar") }
+                                if (parts.size > 1) {
+                                    TextButton(onClick = { parts.removeAt(index) }) { Text("Quitar") }
+                                }
                             }
+
+                            OutlinedButton(
+                                onClick = { productPickerIndex = index },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (part.catalogProductId == null) "Seleccionar del inventario" else "Cambiar repuesto del inventario")
+                            }
+
+                            if (part.catalogProductId != null) {
+                                val selectedProduct = availableProducts.firstOrNull { it.id == part.catalogProductId }
+                                val previouslyUsed = existingRecord?.parts
+                                    ?.filter { it.catalogProductId == part.catalogProductId }
+                                    ?.sumOf { it.quantity.toInt() } ?: 0
+                                val effectiveStock = (selectedProduct?.stock ?: 0) + previouslyUsed
+                                Text(
+                                    if (selectedProduct != null) "Stock disponible para este mantenimiento: $effectiveStock" else "Este producto ya no aparece en el catálogo.",
+                                    color = if (effectiveStock <= 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            } else {
+                                Text("También puedes registrar un material manual que no descuente inventario.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+
                             OutlinedTextField(
                                 value = part.name,
                                 onValueChange = { parts[index] = part.copy(name = it) },
-                                label = { Text("Nombre del repuesto") },
+                                label = { Text("Nombre del repuesto/material") },
                                 modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
+                                singleLine = true,
+                                enabled = part.catalogProductId == null
                             )
                             OutlinedTextField(
                                 value = part.brand,
@@ -221,9 +344,19 @@ fun MaintenanceFormScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
                                     value = part.quantity,
-                                    onValueChange = { parts[index] = part.copy(quantity = it.filter { c -> c.isDigit() || c == '.' || c == ',' }) },
+                                    onValueChange = {
+                                        val filtered = if (part.catalogProductId != null) {
+                                            it.filter(Char::isDigit)
+                                        } else {
+                                            it.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                                        }
+                                        parts[index] = part.copy(quantity = filtered)
+                                    },
                                     label = { Text("Cantidad") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    supportingText = {
+                                        if (part.catalogProductId != null) Text("Unidades enteras para descontar del stock.")
+                                    },
+                                    keyboardOptions = KeyboardOptions(keyboardType = if (part.catalogProductId != null) KeyboardType.Number else KeyboardType.Decimal),
                                     modifier = Modifier.weight(1f),
                                     singleLine = true
                                 )
@@ -246,42 +379,64 @@ fun MaintenanceFormScreen(
                         }
                     }
                 }
+
+                OutlinedButton(
+                    onClick = { parts.add(PartFormState()) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("+ Agregar material manual") }
+
+                Button(
+                    onClick = {
+                        newProductError = null
+                        newProductName = ""
+                        newProductDescription = ""
+                        newProductCategory = categories.firstOrNull()?.nombre ?: "Repuestos"
+                        newProductPrice = ""
+                        newProductStock = "1"
+                        newProductImageUri = null
+                        showNewProductDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("+ Agregar repuesto nuevo al inventario") }
             }
         }
 
         if (localError != null) {
-            Text(localError!!, color = MaterialTheme.colorScheme.error)
+            Text(localError.orEmpty(), color = MaterialTheme.colorScheme.error)
         }
 
         Button(
             onClick = {
                 val parsedMileage = mileage.toIntOrNull()
-                if (serviceType.isBlank()) {
-                    localError = "Escribe el tipo de mantenimiento."
-                } else if (!serviceDate.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$"))) {
-                    localError = "La fecha debe tener el formato AAAA-MM-DD."
-                } else if (parsedMileage == null) {
-                    localError = "Ingresa el kilometraje del vehículo."
-                } else if (description.isBlank()) {
-                    localError = "Describe el trabajo realizado."
-                } else {
-                    localError = null
-                    val draftParts = parts.filter { it.name.isNotBlank() }.map { part ->
-                        MaintenancePartDraft(
-                            name = part.name,
-                            brand = part.brand,
-                            reference = part.reference,
-                            specification = part.specification,
-                            quantity = part.quantity.replace(',', '.').toDoubleOrNull() ?: 1.0,
-                            unit = part.unit,
-                            unitPriceCop = part.unitPrice.toLongOrNull() ?: 0L
-                        )
-                    }
+                val draftParts = parts.filter { it.name.isNotBlank() }.map { part ->
+                    MaintenancePartDraft(
+                        catalogProductId = part.catalogProductId,
+                        name = part.name,
+                        brand = part.brand,
+                        reference = part.reference,
+                        specification = part.specification,
+                        quantity = part.quantity.replace(',', '.').toDoubleOrNull() ?: 0.0,
+                        unit = part.unit,
+                        unitPriceCop = part.unitPrice.toLongOrNull() ?: 0L
+                    )
+                }
+
+                localError = when {
+                    serviceType.isBlank() -> "Escribe el tipo de mantenimiento."
+                    !serviceDate.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$")) -> "La fecha debe tener el formato AAAA-MM-DD."
+                    parsedMileage == null -> "Ingresa el kilometraje del vehículo."
+                    description.isBlank() -> "Describe el trabajo realizado."
+                    draftParts.any { it.quantity <= 0.0 } -> "Todas las cantidades de repuestos deben ser mayores que cero."
+                    draftParts.any { it.catalogProductId != null && it.quantity % 1.0 != 0.0 } -> "Los repuestos del inventario se descuentan en unidades enteras."
+                    else -> null
+                }
+
+                if (localError == null) {
                     onSave(
                         MaintenanceDraft(
                             serviceType = serviceType,
                             serviceDate = serviceDate,
-                            mileageKm = parsedMileage,
+                            mileageKm = parsedMileage!!,
                             description = description,
                             laborCostCop = laborCost.toLongOrNull() ?: 0L,
                             nextServiceMileageKm = nextMileage.toIntOrNull(),
@@ -293,12 +448,163 @@ fun MaintenanceFormScreen(
                 }
             },
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(15.dp)
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp)
         ) {
             Text("Guardar mantenimiento", fontWeight = FontWeight.Bold)
         }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp)) {
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp)) {
             Text("Cancelar")
         }
+    }
+
+    val pickerIndex = productPickerIndex
+    if (pickerIndex != null) {
+        val currentPart = parts.getOrNull(pickerIndex)
+        val productsToShow = availableProducts.filter { product ->
+            product.isActive && (product.stock > 0 || product.id == currentPart?.catalogProductId)
+        }
+        AlertDialog(
+            onDismissRequest = { productPickerIndex = null },
+            title = { Text("Seleccionar repuesto") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (productsToShow.isEmpty()) {
+                        Text("No hay repuestos disponibles en el inventario. Puedes agregar uno nuevo desde el formulario.")
+                    }
+                    productsToShow.forEach { product ->
+                        val oldQuantity = existingRecord?.parts
+                            ?.filter { it.catalogProductId == product.id }
+                            ?.sumOf { it.quantity.toInt() } ?: 0
+                        val stockForThisEdit = product.stock + oldQuantity
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(9.dp)
+                            ) {
+                                ProductImage(
+                                    imageUri = product.imageUri,
+                                    imageRes = product.imageRes,
+                                    contentDescription = product.contentDescription,
+                                    modifier = Modifier.size(58.dp)
+                                )
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(product.name, fontWeight = FontWeight.Bold)
+                                    Text("Stock: $stockForThisEdit", style = MaterialTheme.typography.bodySmall)
+                                    Text("$${product.effectivePriceCop}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                                }
+                                TextButton(
+                                    onClick = {
+                                        if (currentPart != null) {
+                                            parts[pickerIndex] = currentPart.copy(
+                                                catalogProductId = product.id,
+                                                name = product.name,
+                                                specification = product.description,
+                                                quantity = "1",
+                                                unit = currentPart.unit.ifBlank { "unidad" },
+                                                unitPrice = product.effectivePriceCop.toString()
+                                            )
+                                        }
+                                        productPickerIndex = null
+                                    },
+                                    enabled = stockForThisEdit > 0
+                                ) { Text("Elegir") }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { productPickerIndex = null }) { Text("Cerrar") }
+            }
+        )
+    }
+
+    if (showNewProductDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!isCreatingProduct) showNewProductDialog = false },
+            title = { Text("Agregar repuesto al inventario") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("El nuevo repuesto se guardará en el catálogo y quedará disponible para seleccionarlo en este mantenimiento.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(newProductName, { newProductName = it }, label = { Text("Nombre") }, singleLine = true)
+                    OutlinedTextField(newProductDescription, { newProductDescription = it }, label = { Text("Descripción") }, minLines = 2)
+                    CategorySelector(
+                        selectedCategory = newProductCategory,
+                        categories = categories,
+                        onCategorySelected = { newProductCategory = it },
+                        onCreateCategory = onCreateCategory,
+                        label = "Categoría"
+                    )
+                    OutlinedTextField(newProductPrice, { newProductPrice = it.filter(Char::isDigit) }, label = { Text("Precio (COP)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    OutlinedTextField(newProductStock, { newProductStock = it.filter(Char::isDigit) }, label = { Text("Existencias iniciales") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    ProductImage(
+                        imageUri = newProductImageUri,
+                        imageRes = com.example.edmotor.R.drawable.mobil_20_w_50,
+                        contentDescription = newProductName.ifBlank { "Foto del repuesto nuevo" },
+                        modifier = Modifier.fillMaxWidth().height(130.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                    OutlinedButton(
+                        onClick = { quickPhotoPicker.launch(arrayOf("image/*")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(if (newProductImageUri.isNullOrBlank()) "Elegir foto del dispositivo" else "Cambiar foto") }
+                    if (newProductError != null) {
+                        Text(newProductError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !isCreatingProduct,
+                    onClick = {
+                        val price = newProductPrice.toLongOrNull()
+                        val stock = newProductStock.toIntOrNull()
+                        newProductError = when {
+                            newProductName.trim().length < 3 -> "El nombre debe tener al menos 3 caracteres."
+                            newProductDescription.isBlank() -> "Escribe una descripción."
+                            newProductCategory.isBlank() -> "Escribe una categoría."
+                            price == null || price <= 0L -> "Ingresa un precio válido."
+                            stock == null || stock <= 0 -> "El nuevo repuesto debe tener al menos una existencia."
+                            else -> null
+                        }
+                        if (newProductError == null) {
+                            onCreateProduct(
+                                newProductName.trim(),
+                                newProductDescription.trim(),
+                                newProductCategory.trim(),
+                                price!!,
+                                stock!!,
+                                newProductImageUri
+                            ) { productId, message ->
+                                if (productId != null) {
+                                    pendingCreatedProductId = productId
+                                } else {
+                                    newProductError = message ?: "No fue posible registrar el repuesto."
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    if (isCreatingProduct) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Guardar y agregar")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showNewProductDialog = false },
+                    enabled = !isCreatingProduct
+                ) { Text("Cancelar") }
+            }
+        )
     }
 }

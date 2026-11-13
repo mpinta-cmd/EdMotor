@@ -1,8 +1,10 @@
+
 package com.example.edmotor.ui.components
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +24,6 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
-import androidx.compose.foundation.clickable
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -42,9 +43,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
 import com.example.edmotor.model.Product
 import com.example.edmotor.ui.theme.AzulNitro
 import com.example.edmotor.ui.theme.AzulNitroContenedorClaro
@@ -61,32 +64,60 @@ fun ProductGridCard(
     onProductClick: () -> Unit,
     onIncrease: () -> Unit,
     onDecrease: () -> Unit,
+    isWorkshop: Boolean = false,
     modifier: Modifier = Modifier
 ) {
 
     val haptics = LocalHapticFeedback.current
 
-    val isOutOfStock = product.badge.equals(
-        "Agotado",
-        ignoreCase = true
-    )
+    // ==========================================
+    // 1. CONTROL DE INVENTARIO
+    // ==========================================
 
-    // COLORES DE LAS ETIQUETAS
-    val badgeBackground = when (product.badge.lowercase()) {
-        "agotado" -> Color(0xFFFFE4E6)
-        "nuevo" -> AzulNitroContenedorClaro
-        "oferta" -> NaranjaContenedorClaro
-        "top ventas" -> Color(0xFFFFF3CD)
+    val isOutOfStock = product.stock <= 0
+
+    val canIncrease = !isOutOfStock &&
+            quantity < product.stock
+
+    val stockLabel = when {
+        isOutOfStock -> "AGOTADO"
+        product.stock <= 3 -> "ÚLTIMAS ${product.stock} UNIDADES"
+        else -> "STOCK: ${product.stock}"
+    }
+
+    // ==========================================
+    // 2. ETIQUETAS COMERCIALES
+    // ==========================================
+
+    val badgeText = when {
+        isOutOfStock -> "AGOTADO"
+        product.isOnPromotion -> "PROMOCIÓN"
+        product.isNew -> "NUEVO"
+        product.badge.equals("top ventas", true) -> "TOP VENTAS"
+        else -> product.badge.uppercase()
+    }
+
+    val badgeBackground = when {
+        isOutOfStock -> Color(0xFFFFE4E6)
+        product.isOnPromotion -> NaranjaContenedorClaro
+        product.isNew -> AzulNitroContenedorClaro
+        product.badge.equals("top ventas", true) ->
+            Color(0xFFFFF3CD)
         else -> MaterialTheme.colorScheme.secondaryContainer
     }
 
-    val badgeForeground = when (product.badge.lowercase()) {
-        "agotado" -> Color(0xFFBE123C)
-        "nuevo" -> AzulNitro
-        "oferta" -> NaranjaPerformance
-        "top ventas" -> Color(0xFF92400E)
+    val badgeForeground = when {
+        isOutOfStock -> Color(0xFFBE123C)
+        product.isOnPromotion -> NaranjaPerformance
+        product.isNew -> AzulNitro
+        product.badge.equals("top ventas", true) ->
+            Color(0xFF92400E)
         else -> MaterialTheme.colorScheme.onSecondaryContainer
     }
+
+    // ==========================================
+    // 3. TARJETA PRINCIPAL
+    // ==========================================
 
     Card(
         modifier = modifier
@@ -110,7 +141,7 @@ fun ProductGridCard(
         ) {
 
             // =====================================
-            // 1. IMAGEN DEL PRODUCTO
+            // 4. IMAGEN DEL PRODUCTO
             // =====================================
 
             Box(
@@ -123,10 +154,9 @@ fun ProductGridCard(
                     )
             ) {
 
-                Image(
-                    painter = painterResource(
-                        id = product.imageRes
-                    ),
+                ProductImage(
+                    imageUri = product.imageUri,
+                    imageRes = product.imageRes,
                     contentDescription = product.contentDescription,
                     modifier = Modifier
                         .fillMaxSize()
@@ -134,7 +164,10 @@ fun ProductGridCard(
                     contentScale = ContentScale.Fit
                 )
 
-                // CORAZÓN DE FAVORITOS
+                // =================================
+                // FAVORITOS
+                // =================================
+
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -149,6 +182,7 @@ fun ProductGridCard(
                             haptics.performHapticFeedback(
                                 HapticFeedbackType.TextHandleMove
                             )
+
                             onFavoriteClick()
                         },
                         modifier = Modifier.size(34.dp)
@@ -175,8 +209,11 @@ fun ProductGridCard(
                     }
                 }
 
-                // ETIQUETA: OFERTA, NUEVO, AGOTADO...
-                if (product.badge.isNotBlank()) {
+                // =================================
+                // ETIQUETAS
+                // =================================
+
+                if (badgeText.isNotBlank()) {
 
                     Surface(
                         modifier = Modifier
@@ -187,7 +224,7 @@ fun ProductGridCard(
                     ) {
 
                         Text(
-                            text = product.badge.uppercase(),
+                            text = badgeText,
                             modifier = Modifier.padding(
                                 horizontal = 7.dp,
                                 vertical = 5.dp
@@ -203,7 +240,7 @@ fun ProductGridCard(
             }
 
             // =====================================
-            // 2. NOMBRE DEL REPUESTO
+            // 5. NOMBRE DEL REPUESTO
             // =====================================
 
             Text(
@@ -216,7 +253,10 @@ fun ProductGridCard(
                 overflow = TextOverflow.Ellipsis
             )
 
-            // DESCRIPCIÓN
+            // =====================================
+            // 6. DESCRIPCIÓN
+            // =====================================
+
             Text(
                 text = product.description,
                 style = MaterialTheme.typography.bodySmall,
@@ -227,25 +267,107 @@ fun ProductGridCard(
             )
 
             // =====================================
-            // 3. PRECIO
+            // 7. PRECIOS
             // =====================================
 
-            Text(
-                text = product.price,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.ExtraBold,
-                color = AzulNitro,
-                maxLines = 1
-            )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+
+                if (
+                    product.isOnPromotion &&
+                    product.promotionPrice != null
+                ) {
+
+                    Text(
+                        text = product.price,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textDecoration = TextDecoration.LineThrough,
+                        maxLines = 1
+                    )
+
+                    Text(
+                        text = product.promotionPrice,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = NaranjaPerformance,
+                        maxLines = 1
+                    )
+
+                } else {
+
+                    Text(
+                        text = product.price,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = AzulNitro,
+                        maxLines = 1
+                    )
+                }
+
+                // =================================
+                // EXISTENCIAS
+                // =================================
+
+                Text(
+                    text = stockLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = when {
+                        isOutOfStock ->
+                            MaterialTheme.colorScheme.error
+
+                        product.stock <= 3 ->
+                            NaranjaPerformance
+
+                        else ->
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
 
             // =====================================
-            // 4. AGREGAR AL CARRITO
+            // 8. CONTROL DEL CARRITO
             // =====================================
 
-            when {
+            if (isWorkshop) {
+                // En el inicio del dueño solo se muestran los controles + y -.
+                // El resto de la tarjeta continúa abriendo la ficha del repuesto.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalIconButton(
+                        onClick = onDecrease,
+                        enabled = product.stock > 0,
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Remove,
+                            contentDescription = "Disminuir stock"
+                        )
+                    }
 
-                // PRODUCTO AGOTADO SIN UNIDADES
-                isOutOfStock && quantity == 0 -> {
+                    androidx.compose.foundation.layout.Spacer(
+                        modifier = Modifier.size(18.dp)
+                    )
+
+                    FilledIconButton(
+                        onClick = onIncrease,
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Aumentar stock"
+                        )
+                    }
+                }
+            } else when {
+
+                // PRODUCTO AGOTADO
+                isOutOfStock -> {
 
                     Button(
                         onClick = {},
@@ -268,7 +390,7 @@ fun ProductGridCard(
                     }
                 }
 
-                // PRODUCTO YA AGREGADO
+                // PRODUCTO YA AGREGADO AL CARRITO
                 quantity > 0 -> {
 
                     Row(
@@ -277,11 +399,13 @@ fun ProductGridCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
 
+                        // DISMINUIR
                         FilledTonalIconButton(
                             onClick = {
                                 haptics.performHapticFeedback(
                                     HapticFeedbackType.TextHandleMove
                                 )
+
                                 onDecrease()
                             },
                             modifier = Modifier.size(34.dp)
@@ -293,20 +417,37 @@ fun ProductGridCard(
                             )
                         }
 
-                        Text(
-                            text = "$quantity",
-                            fontWeight = FontWeight.ExtraBold,
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        // CANTIDAD
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
 
+                            Text(
+                                text = "$quantity",
+                                fontWeight = FontWeight.ExtraBold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+
+                            Text(
+                                text = "En carrito",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        // AUMENTAR
                         FilledIconButton(
                             onClick = {
-                                haptics.performHapticFeedback(
-                                    HapticFeedbackType.TextHandleMove
-                                )
-                                onIncrease()
+                                if (canIncrease) {
+
+                                    haptics.performHapticFeedback(
+                                        HapticFeedbackType.TextHandleMove
+                                    )
+
+                                    onIncrease()
+                                }
                             },
-                            enabled = !isOutOfStock,
+                            enabled = canIncrease,
                             modifier = Modifier.size(34.dp)
                         ) {
 
@@ -316,18 +457,34 @@ fun ProductGridCard(
                             )
                         }
                     }
+
+                    // MENSAJE DE LÍMITE
+                    if (quantity >= product.stock) {
+
+                        Text(
+                            text = "Máximo de unidades disponibles alcanzado.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
 
-                // PRODUCTO DISPONIBLE PARA AGREGAR
+                // PRODUCTO DISPONIBLE
                 else -> {
 
                     Button(
                         onClick = {
-                            haptics.performHapticFeedback(
-                                HapticFeedbackType.Confirm
-                            )
-                            onIncrease()
+
+                            if (canIncrease) {
+
+                                haptics.performHapticFeedback(
+                                    HapticFeedbackType.Confirm
+                                )
+
+                                onIncrease()
+                            }
                         },
+                        enabled = canIncrease,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(40.dp),

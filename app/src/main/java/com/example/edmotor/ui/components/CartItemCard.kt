@@ -1,3 +1,4 @@
+
 package com.example.edmotor.ui.components
 
 import androidx.compose.foundation.Image
@@ -12,19 +13,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+
 import androidx.compose.runtime.Composable
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+
 import com.example.edmotor.model.Product
 
 @Composable
@@ -34,20 +38,59 @@ fun CartItemCard(
     onIncrease: () -> Unit,
     onDecrease: () -> Unit
 ) {
+
+    val canIncrease =
+        product.stock > 0 &&
+                cantidad < product.stock
+
+    val stockMessage = when {
+
+        product.stock <= 0 ->
+            "AGOTADO"
+
+        cantidad > product.stock ->
+            "Stock insuficiente. Reduce la cantidad."
+
+        cantidad >= product.stock ->
+            "Límite de existencias alcanzado."
+
+        else ->
+            "Existencias disponibles: ${product.stock}"
+    }
+
+    val stockColor = when {
+
+        product.stock <= 0 ||
+                cantidad > product.stock ->
+            MaterialTheme.colorScheme.error
+
+        cantidad >= product.stock ->
+            MaterialTheme.colorScheme.error
+
+        else ->
+            MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        )
     ) {
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Imagen del repuesto
-            Image(
-                painter = painterResource(id = product.imageRes),
+
+            // IMAGEN DEL PRODUCTO
+
+            ProductImage(
+                imageUri = product.imageUri,
+                imageRes = product.imageRes,
                 contentDescription = product.contentDescription,
                 modifier = Modifier
                     .size(60.dp)
@@ -55,36 +98,59 @@ fun CartItemCard(
                 contentScale = ContentScale.Fit
             )
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(
+                modifier = Modifier.width(12.dp)
+            )
 
-            // Información del producto (Nombre y Precio unitario)
+            // INFORMACIÓN DEL PRODUCTO
+
             Column(
                 modifier = Modifier.weight(1f)
             ) {
+
                 Text(
                     text = product.name,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+
+                Spacer(
+                    modifier = Modifier.height(4.dp)
+                )
+
                 Text(
-                    text = product.price,
+                    text = product.effectivePrice,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF1E88E5),
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold
+                )
+
+                Spacer(
+                    modifier = Modifier.height(4.dp)
+                )
+
+                Text(
+                    text = stockMessage,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = stockColor,
+                    fontWeight = FontWeight.Bold
                 )
             }
 
-            // Controles de cantidad (+ / -)
+            // CONTROLES DE CANTIDAD
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+
                 OutlinedButton(
                     onClick = onDecrease,
+                    enabled = cantidad > 0,
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier.size(36.dp)
                 ) {
+
                     Text("-")
                 }
 
@@ -96,9 +162,11 @@ fun CartItemCard(
 
                 OutlinedButton(
                     onClick = onIncrease,
+                    enabled = canIncrease,
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier.size(36.dp)
                 ) {
+
                     Text("+")
                 }
             }

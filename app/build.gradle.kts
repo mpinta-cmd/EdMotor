@@ -121,6 +121,7 @@ dependencies {
     implementation(libs.androidx.room.runtime)
 
     implementation(libs.androidx.room.ktx)
+    implementation(libs.transport.api)
 
     ksp(libs.androidx.room.compiler)
 

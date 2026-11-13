@@ -99,10 +99,9 @@ fun ProductCard(
                         MaterialTheme.colorScheme.surfaceVariant
                     )
             ) {
-                Image(
-                    painter = painterResource(
-                        id = product.imageRes
-                    ),
+                ProductImage(
+                    imageUri = product.imageUri,
+                    imageRes = product.imageRes,
                     contentDescription = product.contentDescription,
                     modifier = Modifier
                         .fillMaxSize()
