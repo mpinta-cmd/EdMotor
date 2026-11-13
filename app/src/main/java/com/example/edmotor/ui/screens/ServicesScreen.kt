@@ -20,9 +20,9 @@ import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CarRepair
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.ElectricBolt
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TireRepair
 import androidx.compose.material3.Button
@@ -111,7 +111,7 @@ private val automotiveServices = listOf(
 @Composable
 fun ServicesScreen(
     onOpenGarage: () -> Unit,
-    onOpenDiagnosis: () -> Unit,
+    onOpenAppointments: () -> Unit,
     onOpenCatalog: () -> Unit
 ) {
     val listState = rememberLazyListState()
@@ -145,9 +145,9 @@ fun ServicesScreen(
                         modifier = Modifier.weight(1f)
                     )
                     ServiceShortcut(
-                        label = "Diagnóstico",
-                        icon = Icons.Filled.Search,
-                        onClick = onOpenDiagnosis,
+                        label = "Citas",
+                        icon = Icons.Filled.CalendarMonth,
+                        onClick = onOpenAppointments,
                         modifier = Modifier.weight(1f)
                     )
                     ServiceShortcut(
@@ -190,19 +190,19 @@ fun ServicesScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "PRÓXIMAMENTE · AGENDA DE CITAS",
+                        text = "AGENDA DE CITAS",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Estamos preparando nuevas funciones",
+                        text = "Programa la revisión de tu vehículo",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = "Por ahora puedes consultar servicios, revisar tu garaje, " +
-                                "explorar repuestos y acceder a Diagnóstico.",
+                        text = "Selecciona el vehículo, el día y la hora que prefieras. " +
+                                "El taller revisará tu solicitud y te confirmará la disponibilidad.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -264,10 +264,10 @@ fun ServicesScreen(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         selectedService = null
-                        onOpenDiagnosis()
+                        onOpenAppointments()
                     }
                 ) {
-                    Text("Abrir diagnóstico")
+                    Text("Agendar cita")
                 }
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),

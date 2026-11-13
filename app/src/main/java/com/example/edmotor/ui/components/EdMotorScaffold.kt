@@ -53,6 +53,8 @@ import com.example.edmotor.ui.theme.AppThemeMode
 fun EdMotorScaffold(
     currentRoute: String?,
     cartCount: Int,
+    pendingOrderCount: Int = 0,
+    pendingAppointmentCount: Int = 0,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onNavigate: (String) -> Unit,
@@ -155,6 +157,8 @@ fun EdMotorScaffold(
                 EdMotorBottomBar(
                     currentRoute = currentRoute,
                     cartCount = cartCount,
+                    pendingOrderCount = pendingOrderCount,
+                    pendingAppointmentCount = pendingAppointmentCount,
                     onNavigate = onNavigate
                 )
             }

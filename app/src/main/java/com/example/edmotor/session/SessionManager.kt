@@ -1,4 +1,3 @@
-
 package com.example.edmotor.session
 
 import com.example.edmotor.data.local.UserEntity
@@ -7,20 +6,31 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Sesión en memoria.
- * Al cerrar o reiniciar la aplicación se vuelve a solicitar acceso.
+ * Sesión local y credenciales temporales de Supabase.
+ *
+ * El token permanece en memoria. Al cerrar la aplicación se vuelve a solicitar
+ * el acceso, igual que en la implementación local anterior.
  */
 class SessionManager {
 
     private val _currentUser = MutableStateFlow<UserEntity?>(null)
-
     val currentUser: StateFlow<UserEntity?> = _currentUser.asStateFlow()
 
-    fun startSession(user: UserEntity) {
+    @Volatile
+    var remoteSession: RemoteSession? = null
+        private set
+
+    fun startSession(user: UserEntity, remote: RemoteSession) {
+        remoteSession = remote
         _currentUser.value = user
+    }
+
+    fun updateRemoteSession(remote: RemoteSession) {
+        remoteSession = remote
     }
 
     fun clearSession() {
         _currentUser.value = null
+        remoteSession = null
     }
 }

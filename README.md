@@ -674,3 +674,9 @@ Obtén el código fuente clonando el repositorio desde GitHub o descargando el a
 
 ```bash
 git clone https://github.com/mpinta-cmd/EdMotor
+
+---
+
+## Actualización: Supabase, pedidos y citas
+
+Para instalar la sincronización remota de pedidos y la nueva agenda de citas, sigue obligatoriamente las instrucciones de `README_Supabase_Citas.md` y ejecuta `supabase/edmotor_supabase_setup.sql` en tu proyecto Supabase.

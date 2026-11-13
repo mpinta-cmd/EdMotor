@@ -6,7 +6,10 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "users",
-    indices = [Index(value = ["username"], unique = true)]
+    indices = [
+        Index(value = ["username"], unique = true),
+        Index(value = ["remoteAuthId"], unique = true)
+    ]
 )
 data class UserEntity(
     @PrimaryKey(autoGenerate = true)
@@ -17,5 +20,6 @@ data class UserEntity(
     val passwordHash: String,
     val salt: String,
     val role: String,
-    val createdAtMillis: Long = System.currentTimeMillis()
+    val createdAtMillis: Long = System.currentTimeMillis(),
+    val remoteAuthId: String? = null
 )

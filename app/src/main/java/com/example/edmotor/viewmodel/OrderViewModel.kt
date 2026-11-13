@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -54,6 +55,14 @@ class OrderViewModel(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
             emptyList()
+        )
+
+    val pendingOrdersCount = orders
+        .map { list -> list.count { it.order.status == com.example.edmotor.data.local.OrderStatus.PENDING } }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            0
         )
 
     // ==========================================

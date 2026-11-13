@@ -9,7 +9,9 @@ import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.FavoriteProductDao
 import com.example.edmotor.data.local.UserDao
 import com.example.edmotor.data.local.UserEntity
+import com.example.edmotor.data.remote.SupabaseClient
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.session.RemoteSession
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Locale
@@ -18,57 +20,42 @@ import javax.crypto.spec.PBEKeySpec
 import kotlinx.coroutines.flow.Flow
 
 sealed class UserAuthResult {
-
     data class Success(
-        val user: UserEntity
+        val user: UserEntity,
+        val remoteSession: RemoteSession
     ) : UserAuthResult()
 
-    data class Error(
-        val message: String
-    ) : UserAuthResult()
+    data class Error(val message: String) : UserAuthResult()
 }
 
 class UserRepository(
     private val database: EdMotorDatabase,
     private val userDao: UserDao,
     private val cartDao: CartDao,
-    private val favoriteDao: FavoriteProductDao
+    private val favoriteDao: FavoriteProductDao,
+    private val supabase: SupabaseClient
 ) {
-
     companion object {
         private const val DEFAULT_WORKSHOP_USERNAME = "edmotor"
         private const val DEFAULT_WORKSHOP_PASSWORD = "tecnologica"
         private const val DEFAULT_WORKSHOP_NAME = "EdMotor"
     }
 
-    fun observeClients(): Flow<List<UserEntity>> =
-        userDao.observeClients()
+    fun observeClients(): Flow<List<UserEntity>> = userDao.observeClients()
 
-    // ==========================================
-    // CREAR AUTOMÁTICAMENTE LA CUENTA DEL TALLER
-    // ==========================================
-
+    /**
+     * Crea la cuenta local inicial. La cuenta remota del taller se crea una sola
+     * vez desde Supabase Dashboard y se marca como WORKSHOP con el SQL incluido.
+     */
     suspend fun ensureDefaultWorkshopAccount(): String? {
-
         return try {
-
-            val existingUser = userDao.findByUsername(
-                DEFAULT_WORKSHOP_USERNAME
-            )
-
-            if (existingUser != null) {
-
-                return if (existingUser.role == UserRole.WORKSHOP.name) {
-                    null
-                } else {
-                    "El usuario EdMotor ya existe con un rol diferente al del taller."
-                }
+            val existing = userDao.findByUsername(DEFAULT_WORKSHOP_USERNAME)
+            if (existing != null) {
+                return if (existing.role == UserRole.WORKSHOP.name) null
+                else "El usuario EdMotor ya existe con un rol diferente al del taller."
             }
 
-            val (hash, salt) = PasswordHasher.create(
-                DEFAULT_WORKSHOP_PASSWORD
-            )
-
+            val (hash, salt) = PasswordHasher.create(DEFAULT_WORKSHOP_PASSWORD)
             val workshop = UserEntity(
                 username = DEFAULT_WORKSHOP_USERNAME,
                 displayName = DEFAULT_WORKSHOP_NAME,
@@ -79,62 +66,21 @@ class UserRepository(
             )
 
             database.withTransaction {
-
-                // Comprobación adicional para evitar duplicados.
-
-                val currentUser = userDao.findByUsername(
-                    DEFAULT_WORKSHOP_USERNAME
-                )
-
-                if (currentUser == null) {
-
-                    val generatedId = userDao.insert(
-                        workshop
-                    ).toInt()
-
-                    // Conservar los datos antiguos.
-
-                    cartDao.assignLegacyItems(
-                        legacyUserId = 0,
-                        newUserId = generatedId
-                    )
-
-                    favoriteDao.assignLegacyFavorites(
-                        legacyUserId = 0,
-                        newUserId = generatedId
-                    )
-
-                } else if (currentUser.role != UserRole.WORKSHOP.name) {
-
-                    throw IllegalStateException(
-                        "El usuario EdMotor ya existe con otro rol."
-                    )
+                if (userDao.findByUsername(DEFAULT_WORKSHOP_USERNAME) == null) {
+                    val id = userDao.insert(workshop).toInt()
+                    cartDao.assignLegacyItems(legacyUserId = 0, newUserId = id)
+                    favoriteDao.assignLegacyFavorites(legacyUserId = 0, newUserId = id)
                 }
             }
-
             null
-
         } catch (_: SQLiteConstraintException) {
-
-            val existing = userDao.findByUsername(
-                DEFAULT_WORKSHOP_USERNAME
-            )
-
-            if (existing?.role == UserRole.WORKSHOP.name) {
-                null
-            } else {
-                "No fue posible inicializar la cuenta del taller."
-            }
-
+            val existing = userDao.findByUsername(DEFAULT_WORKSHOP_USERNAME)
+            if (existing?.role == UserRole.WORKSHOP.name) null
+            else "No fue posible inicializar la cuenta EdMotor."
         } catch (e: Exception) {
-
             e.message ?: "Error al inicializar la cuenta EdMotor."
         }
     }
-
-    // ==========================================
-    // REGISTRO DE CLIENTES
-    // ==========================================
 
     suspend fun registerClient(
         username: String,
@@ -142,242 +88,192 @@ class UserRepository(
         displayName: String,
         phone: String?
     ): UserAuthResult {
-
-        return createUser(
-            username,
-            password,
-            displayName,
-            phone,
-            UserRole.CLIENT
-        )
-    }
-
-    // ==========================================
-    // CREACIÓN DE USUARIOS
-    // ==========================================
-
-    private suspend fun createUser(
-        username: String,
-        password: String,
-        displayName: String,
-        phone: String?,
-        role: UserRole
-    ): UserAuthResult {
-
-        val normalizedUsername = username.trim().lowercase(Locale.ROOT)
+        val normalized = username.trim().lowercase(Locale.ROOT)
         val cleanName = displayName.trim()
 
-        if (!normalizedUsername.matches(
-                Regex("^[a-z0-9_]{3,20}$")
-            )
-        ) {
-
-            return UserAuthResult.Error(
-                "El usuario debe tener entre 3 y 20 caracteres: letras, números o guion bajo."
-            )
+        validateCredentials(normalized, password, cleanName)?.let {
+            return UserAuthResult.Error(it)
         }
 
-        if (cleanName.length < 2) {
-
-            return UserAuthResult.Error(
-                "Escribe tu nombre."
-            )
+        if (userDao.usernameExists(normalized) > 0) {
+            return UserAuthResult.Error("Ese nombre de usuario ya está registrado.")
         }
-
-        if (password.length < 6) {
-
-            return UserAuthResult.Error(
-                "La contraseña debe tener al menos 6 caracteres."
-            )
-        }
-
-        if (userDao.usernameExists(normalizedUsername) > 0) {
-
-            return UserAuthResult.Error(
-                "Ese nombre de usuario ya está registrado."
-            )
-        }
-
-        val (hash, salt) = PasswordHasher.create(password)
-
-        val entity = UserEntity(
-            username = normalizedUsername,
-            displayName = cleanName,
-            phone = phone?.trim()?.takeIf { it.isNotEmpty() },
-            passwordHash = hash,
-            salt = salt,
-            role = role.name
-        )
 
         return try {
+            val remoteSession = supabase.signUpClient(
+                username = normalized,
+                password = password,
+                displayName = cleanName,
+                phone = phone?.trim()?.takeIf { it.isNotBlank() }
+            )
+            val profile = supabase.fetchMyProfile(remoteSession)
 
-            val id = database.withTransaction {
-
-                userDao.insert(entity).toInt()
+            if (profile.role != UserRole.CLIENT.name) {
+                return UserAuthResult.Error("La cuenta remota no tiene permisos de cliente.")
             }
 
-            UserAuthResult.Success(
-                entity.copy(id = id)
+            val (hash, salt) = PasswordHasher.create(password)
+            val user = UserEntity(
+                username = profile.username,
+                displayName = profile.displayName,
+                phone = profile.phone,
+                passwordHash = hash,
+                salt = salt,
+                role = profile.role,
+                remoteAuthId = profile.id
             )
+            val id = userDao.insert(user).toInt()
+            supabase.startRealtime(remoteSession.accessToken)
 
-        } catch (_: SQLiteConstraintException) {
-
-            UserAuthResult.Error(
-                "Ese nombre de usuario ya está registrado."
-            )
-
+            UserAuthResult.Success(user.copy(id = id), remoteSession)
+        } catch (e: SQLiteConstraintException) {
+            UserAuthResult.Error("Ese nombre de usuario ya está registrado en este dispositivo.")
         } catch (e: Exception) {
-
             UserAuthResult.Error(
-                e.message ?: "No fue posible crear la cuenta."
+                e.message ?: "No fue posible crear la cuenta remota. Revisa la configuración de Supabase."
             )
         }
     }
 
-    // ==========================================
-    // INICIAR SESIÓN
-    // ==========================================
-
-    suspend fun login(
-        username: String,
-        password: String
-    ): UserAuthResult {
-
-        val normalizedUsername = username.trim().lowercase(Locale.ROOT)
-
-        if (normalizedUsername.isBlank() || password.isEmpty()) {
-
-            return UserAuthResult.Error(
-                "Ingresa tu usuario y contraseña."
-            )
+    suspend fun login(username: String, password: String): UserAuthResult {
+        val normalized = username.trim().lowercase(Locale.ROOT)
+        if (normalized.isBlank() || password.isEmpty()) {
+            return UserAuthResult.Error("Ingresa tu usuario y contraseña.")
         }
 
-        val user = userDao.findByUsername(
-            normalizedUsername
-        ) ?: return UserAuthResult.Error(
-            "Usuario o contraseña incorrectos."
-        )
+        val localUser = userDao.findByUsername(normalized)
 
-        val valid = PasswordHasher.verify(
-            password,
-            user.passwordHash,
-            user.salt
-        )
+        val remoteSession = try {
+            supabase.signIn(normalized, password)
+        } catch (signInError: Exception) {
+            // Migración transparente de clientes que ya existían en Room antes
+            // de activar Supabase. El dueño se crea manualmente en Dashboard.
+            val canMigrateLocalClient =
+                localUser != null &&
+                    localUser.role == UserRole.CLIENT.name &&
+                    PasswordHasher.verify(password, localUser.passwordHash, localUser.salt)
 
-        return if (valid) {
+            if (!canMigrateLocalClient) {
+                return UserAuthResult.Error(
+                    signInError.message ?: "Usuario o contraseña incorrectos."
+                )
+            }
 
-            UserAuthResult.Success(user)
+            try {
+                supabase.signUpClient(
+                    username = normalized,
+                    password = password,
+                    displayName = localUser!!.displayName,
+                    phone = localUser.phone
+                )
+            } catch (migrationError: Exception) {
+                return UserAuthResult.Error(
+                    "No se pudo vincular tu cuenta anterior con Supabase: " +
+                        (migrationError.message ?: "verifica tu conexión.")
+                )
+            }
+        }
 
-        } else {
+        return try {
+            val profile = supabase.fetchMyProfile(remoteSession)
 
+            if (profile.username != normalized) {
+                return UserAuthResult.Error("El usuario remoto no coincide con la cuenta solicitada.")
+            }
+
+            if (
+                localUser != null &&
+                localUser.role != profile.role
+            ) {
+                return UserAuthResult.Error(
+                    "El rol de esta cuenta no coincide con el perfil autorizado en Supabase."
+                )
+            }
+
+            val user = if (localUser != null) {
+                val updated = localUser.copy(
+                    displayName = profile.displayName,
+                    phone = profile.phone,
+                    role = profile.role,
+                    remoteAuthId = profile.id
+                )
+                userDao.update(updated)
+                updated
+            } else {
+                val (hash, salt) = PasswordHasher.create(password)
+                val remoteUser = UserEntity(
+                    username = profile.username,
+                    displayName = profile.displayName,
+                    phone = profile.phone,
+                    passwordHash = hash,
+                    salt = salt,
+                    role = profile.role,
+                    remoteAuthId = profile.id
+                )
+                val id = userDao.insert(remoteUser).toInt()
+                remoteUser.copy(id = id)
+            }
+
+            supabase.startRealtime(remoteSession.accessToken)
+            UserAuthResult.Success(user, remoteSession)
+        } catch (e: Exception) {
             UserAuthResult.Error(
-                "Usuario o contraseña incorrectos."
+                e.message ?: "No fue posible recuperar tu perfil remoto."
             )
         }
+    }
+
+    fun logout() {
+        supabase.stopRealtime()
+    }
+
+    private fun validateCredentials(
+        username: String,
+        password: String,
+        displayName: String
+    ): String? {
+        if (!username.matches(Regex("^[a-z0-9_]{3,20}$"))) {
+            return "El usuario debe tener entre 3 y 20 caracteres: letras, números o guion bajo."
+        }
+        if (displayName.length < 2) return "Escribe tu nombre."
+        if (password.length < 6) return "La contraseña debe tener al menos 6 caracteres."
+        return null
     }
 }
 
-// ==========================================
-// SEGURIDAD DE CONTRASEÑAS
-// ==========================================
-
 private object PasswordHasher {
-
     private const val SHA256_ITERATIONS = 210_000
     private const val SHA1_ITERATIONS = 600_000
     private const val KEY_LENGTH_BITS = 256
 
     fun create(password: String): Pair<String, String> {
-
-        val saltBytes = ByteArray(16).also {
-            SecureRandom().nextBytes(it)
-        }
-
-        val useSha256 =
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-
-        val algorithm =
-            if (useSha256) "PBKDF2WithHmacSHA256"
-            else "PBKDF2WithHmacSHA1"
-
-        val label =
-            if (useSha256) "pbkdf2-sha256"
-            else "pbkdf2-sha1"
-
-        val iterations =
-            if (useSha256) SHA256_ITERATIONS
-            else SHA1_ITERATIONS
-
-        val hashBytes = derive(
-            password,
-            saltBytes,
-            algorithm,
-            iterations
-        )
-
-        val salt = Base64.encodeToString(
-            saltBytes,
-            Base64.NO_WRAP
-        )
-
-        val hash = Base64.encodeToString(
-            hashBytes,
-            Base64.NO_WRAP
-        )
-
+        val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val useSha256 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+        val algorithm = if (useSha256) "PBKDF2WithHmacSHA256" else "PBKDF2WithHmacSHA1"
+        val label = if (useSha256) "pbkdf2-sha256" else "pbkdf2-sha1"
+        val iterations = if (useSha256) SHA256_ITERATIONS else SHA1_ITERATIONS
+        val hashBytes = derive(password, saltBytes, algorithm, iterations)
+        val salt = Base64.encodeToString(saltBytes, Base64.NO_WRAP)
+        val hash = Base64.encodeToString(hashBytes, Base64.NO_WRAP)
         return "$label:$iterations:$hash" to salt
     }
 
-    fun verify(
-        password: String,
-        storedHash: String,
-        storedSalt: String
-    ): Boolean {
-
+    fun verify(password: String, storedHash: String, storedSalt: String): Boolean {
         return try {
-
             val parts = storedHash.split(":")
-
             if (parts.size != 3) return false
-
             val algorithm = when (parts[0]) {
-
                 "pbkdf2-sha256" -> "PBKDF2WithHmacSHA256"
-
                 "pbkdf2-sha1" -> "PBKDF2WithHmacSHA1"
-
                 else -> return false
             }
-
-            val iterations = parts[1].toIntOrNull()
-                ?: return false
-
+            val iterations = parts[1].toIntOrNull() ?: return false
             if (iterations !in 1..1_000_000) return false
-
-            val expected = Base64.decode(
-                parts[2],
-                Base64.NO_WRAP
-            )
-
-            val salt = Base64.decode(
-                storedSalt,
-                Base64.NO_WRAP
-            )
-
-            val actual = derive(
-                password,
-                salt,
-                algorithm,
-                iterations
-            )
-
-            MessageDigest.isEqual(
-                expected,
-                actual
-            )
-
+            val expected = Base64.decode(parts[2], Base64.NO_WRAP)
+            val salt = Base64.decode(storedSalt, Base64.NO_WRAP)
+            val actual = derive(password, salt, algorithm, iterations)
+            MessageDigest.isEqual(expected, actual)
         } catch (_: Exception) {
-
             false
         }
     }
@@ -388,23 +284,10 @@ private object PasswordHasher {
         algorithm: String,
         iterations: Int
     ): ByteArray {
-
-        val spec = PBEKeySpec(
-            password.toCharArray(),
-            salt,
-            iterations,
-            KEY_LENGTH_BITS
-        )
-
+        val spec = PBEKeySpec(password.toCharArray(), salt, iterations, KEY_LENGTH_BITS)
         return try {
-
-            SecretKeyFactory
-                .getInstance(algorithm)
-                .generateSecret(spec)
-                .encoded
-
+            SecretKeyFactory.getInstance(algorithm).generateSecret(spec).encoded
         } finally {
-
             spec.clearPassword()
         }
     }

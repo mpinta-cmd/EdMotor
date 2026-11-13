@@ -27,7 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material.icons.outlined.CalendarMonth
 
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -67,7 +67,7 @@ private val tabs = listOf(
     EdMotorTab(Routes.HOME, "Inicio", Icons.Outlined.Home),
     EdMotorTab(Routes.SERVICES, "Servicios", Icons.Outlined.Build),
     EdMotorTab(Routes.PROFILE, "Mi Garaje", Icons.Outlined.DirectionsCar),
-    EdMotorTab(Routes.DIAGNOSTIC, "Diagnóstico", Icons.Outlined.Warning)
+    EdMotorTab(Routes.APPOINTMENTS, "Citas", Icons.Outlined.CalendarMonth)
 )
 
 /**
@@ -81,6 +81,8 @@ private val tabs = listOf(
 fun EdMotorBottomBar(
     currentRoute: String?,
     cartCount: Int,
+    pendingOrderCount: Int = 0,
+    pendingAppointmentCount: Int = 0,
     onNavigate: (String) -> Unit
 ) {
     val activeIndex = tabs.indexOfFirst { it.route == currentRoute }
@@ -109,7 +111,7 @@ fun EdMotorBottomBar(
                 MovingNotchShape(notchPosition)
             }
 
-            // 5 columnas del mismo ancho, para que los iconos queden alineados.
+            // 4 columnas del mismo ancho, para que los iconos queden alineados.
             val tabWidth = maxWidth / tabs.size
             val dotOffset by animateDpAsState(
                 targetValue = tabWidth * (activeIndex + 0.5f) - 5.dp,
@@ -128,7 +130,7 @@ fun EdMotorBottomBar(
                     .border(0.7.dp, Color(0xFFE8EDF4), notchShape)
             )
 
-            // 5 botones contenidos dentro de la cápsula (sin expandir su altura).
+            // 4 botones contenidos dentro de la cápsula (sin expandir su altura).
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -139,9 +141,15 @@ fun EdMotorBottomBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 tabs.forEach {tab ->
+                    val badgeCount = when (tab.route) {
+                        Routes.PROFILE -> pendingOrderCount
+                        Routes.APPOINTMENTS -> pendingAppointmentCount
+                        else -> 0
+                    }
                     EdMotorTabButton(
                         tab = tab,
                         selected = tab.route == currentRoute,
+                        badgeCount = badgeCount,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight(),
@@ -168,6 +176,7 @@ fun EdMotorBottomBar(
 private fun EdMotorTabButton(
     tab: EdMotorTab,
     selected: Boolean,
+    badgeCount: Int,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -209,14 +218,35 @@ private fun EdMotorTabButton(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(
-                imageVector = tab.icon,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier
-                    .size(25.dp)
-                    .scale(iconScale)
-            )
+            Box {
+                Icon(
+                    imageVector = tab.icon,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier
+                        .size(25.dp)
+                        .scale(iconScale)
+                )
+                if (badgeCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 9.dp, y = (-7).dp)
+                            .size(17.dp)
+                            .background(Color(0xFFE53935), CircleShape)
+                            .border(1.dp, Color.White, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (badgeCount > 99) "99+" else badgeCount.toString(),
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(5.dp))
 

@@ -26,7 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OrderEntity::class,
         OrderItemEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class EdMotorDatabase : RoomDatabase() {
@@ -609,6 +609,26 @@ abstract class EdMotorDatabase : RoomDatabase() {
 
 
         // ======================================
+        // MIGRACIÓN 7 -> 8
+        // IDENTIDAD REMOTA SUPABASE
+        // ======================================
+
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `users` ADD COLUMN `remoteAuthId` TEXT"
+                )
+                database.execSQL(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS
+                    `index_users_remoteAuthId`
+                    ON `users` (`remoteAuthId`)
+                    """.trimIndent()
+                )
+            }
+        }
+
+        // ======================================
         // INSTANCIA ÚNICA DE ROOM
         // ======================================
 
@@ -632,7 +652,8 @@ abstract class EdMotorDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
-                        MIGRATION_6_7
+                        MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
 
                     .build()

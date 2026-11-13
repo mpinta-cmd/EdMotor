@@ -50,6 +50,19 @@ interface ProductDao {
     """)
     suspend fun findById(productId: Int): ProductEntity?
 
+    @Query("""
+        SELECT * FROM products
+        WHERE name = :name COLLATE NOCASE
+          AND category = :category COLLATE NOCASE
+          AND isActive = 1
+        ORDER BY id ASC
+        LIMIT 1
+    """)
+    suspend fun findByNameAndCategory(
+        name: String,
+        category: String
+    ): ProductEntity?
+
     // ==========================================
     // BUSCAR PRODUCTOS
     // ==========================================

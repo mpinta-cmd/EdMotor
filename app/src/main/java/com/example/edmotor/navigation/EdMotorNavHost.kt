@@ -35,7 +35,6 @@ import com.example.edmotor.model.UserRole
 
 import com.example.edmotor.ui.screens.CartScreen
 import com.example.edmotor.ui.screens.ClientGarageScreen
-import com.example.edmotor.ui.screens.DiagnosticScreen
 import com.example.edmotor.ui.screens.HomeScreen
 import com.example.edmotor.ui.screens.MaintenanceFormScreen
 import com.example.edmotor.ui.screens.MaintenanceHistoryScreen
@@ -45,11 +44,13 @@ import com.example.edmotor.ui.screens.WorkshopGarageScreen
 import com.example.edmotor.ui.screens.ProductManagementScreen
 import com.example.edmotor.ui.screens.ProductFormScreen
 import com.example.edmotor.ui.screens.OrdersManagementScreen
+import com.example.edmotor.ui.screens.AppointmentsScreen
 
 import com.example.edmotor.viewmodel.EdMotorViewModel
 import com.example.edmotor.viewmodel.MaintenanceViewModel
 import com.example.edmotor.viewmodel.ProductViewModel
 import com.example.edmotor.viewmodel.OrderViewModel
+import com.example.edmotor.viewmodel.AppointmentViewModel
 
 
 /**
@@ -63,7 +64,7 @@ import com.example.edmotor.viewmodel.OrderViewModel
  * - Administración de pedidos y ventas.
  * - Servicios.
  * - Garaje.
- * - Diagnóstico.
+ * - Agenda de citas.
  * - Historial de mantenimiento.
  * - Formularios de mantenimiento.
  * - Administración de inventario.
@@ -78,6 +79,7 @@ fun EdMotorNavHost(
     maintenanceViewModel: MaintenanceViewModel,
     productViewModel: ProductViewModel,
     orderViewModel: OrderViewModel,
+    appointmentViewModel: AppointmentViewModel,
     onLogout: () -> Unit,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -162,9 +164,25 @@ fun EdMotorNavHost(
     val orderIsError by orderViewModel.isError
         .collectAsStateWithLifecycle()
 
+    // =====================================================
+    // 5. ESTADOS DE CITAS
+    // =====================================================
+
+    val appointments by appointmentViewModel.appointments
+        .collectAsStateWithLifecycle()
+
+    val isProcessingAppointment by appointmentViewModel.isProcessing
+        .collectAsStateWithLifecycle()
+
+    val appointmentMessage by appointmentViewModel.message
+        .collectAsStateWithLifecycle()
+
+    val appointmentIsError by appointmentViewModel.isError
+        .collectAsStateWithLifecycle()
+
 
     // =====================================================
-    // 5. CONFIGURACIÓN GENERAL
+    // 6. CONFIGURACIÓN GENERAL
     // =====================================================
 
     val isWorkshop =
@@ -419,8 +437,8 @@ fun EdMotorNavHost(
                     navController.navigate(Routes.PROFILE)
                 },
 
-                onOpenDiagnosis = {
-                    navController.navigate(Routes.DIAGNOSTIC)
+                onOpenAppointments = {
+                    navController.navigate(Routes.APPOINTMENTS)
                 },
 
                 onOpenCatalog = {
@@ -821,19 +839,28 @@ fun EdMotorNavHost(
 
 
         // =================================================
-        // 9. DIAGNÓSTICO
+        // 9. CITAS Y AGENDA DEL TALLER
         // =================================================
 
-        composable(Routes.DIAGNOSTIC) {
+        composable(Routes.APPOINTMENTS) {
 
-            DiagnosticScreen(
-
-                onNavigateToCategory = { categoryName ->
-
-                    appViewModel.selectCategory(categoryName)
-
-                    navController.navigate(Routes.HOME)
-                }
+            AppointmentsScreen(
+                isWorkshop = isWorkshop,
+                appointments = appointments,
+                vehicles = vehicleList,
+                isProcessing = isProcessingAppointment,
+                message = appointmentMessage,
+                isError = appointmentIsError,
+                onCreateAppointment = { vehicle, scheduledAtMillis, description ->
+                    appointmentViewModel.createAppointment(
+                        vehicle = vehicle,
+                        scheduledAtMillis = scheduledAtMillis,
+                        description = description
+                    )
+                },
+                onAccept = appointmentViewModel::acceptAppointment,
+                onReject = appointmentViewModel::rejectAppointment,
+                onClearMessage = appointmentViewModel::clearMessage
             )
         }
 

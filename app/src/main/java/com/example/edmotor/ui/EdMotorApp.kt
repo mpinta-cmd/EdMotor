@@ -34,6 +34,7 @@ import com.example.edmotor.viewmodel.EdMotorViewModel
 import com.example.edmotor.viewmodel.MaintenanceViewModel
 import com.example.edmotor.viewmodel.ProductViewModel
 import com.example.edmotor.viewmodel.OrderViewModel
+import com.example.edmotor.viewmodel.AppointmentViewModel
 
 // =====================================================
 // APLICACIÓN PRINCIPAL EDMOTOR
@@ -77,6 +78,10 @@ fun EdMotorApp(
 
     val orderViewModel: OrderViewModel = viewModel(
         factory = appContainer.orderViewModelFactory
+    )
+
+    val appointmentViewModel: AppointmentViewModel = viewModel(
+        factory = appContainer.appointmentViewModelFactory
     )
 
     // ==========================================
@@ -137,6 +142,7 @@ fun EdMotorApp(
                 maintenanceViewModel = maintenanceViewModel,
                 productViewModel = productViewModel,
                 orderViewModel = orderViewModel,
+                appointmentViewModel = appointmentViewModel,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
                 onLogout = {
@@ -161,6 +167,7 @@ private fun EdMotorAppContent(
     maintenanceViewModel: MaintenanceViewModel,
     productViewModel: ProductViewModel,
     orderViewModel: OrderViewModel,
+    appointmentViewModel: AppointmentViewModel,
     themeMode: AppThemeMode,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onLogout: () -> Unit
@@ -178,6 +185,14 @@ private fun EdMotorAppContent(
     } else {
         cartQuantity.values.sum()
     }
+
+    val pendingOrderCount by orderViewModel.pendingOrdersCount
+        .collectAsStateWithLifecycle()
+
+    val pendingAppointmentCount by appointmentViewModel.pendingCount
+        .collectAsStateWithLifecycle()
+
+    val isWorkshop = currentUserRole == UserRole.WORKSHOP.name
 
     // ==========================================
     // NAVEGACIÓN
@@ -221,6 +236,10 @@ private fun EdMotorAppContent(
 
         cartCount = cartCount,
 
+        pendingOrderCount = if (isWorkshop) pendingOrderCount else 0,
+
+        pendingAppointmentCount = if (isWorkshop) pendingAppointmentCount else 0,
+
         themeMode = themeMode,
 
         onThemeModeChange = onThemeModeChange,
@@ -246,6 +265,8 @@ private fun EdMotorAppContent(
             productViewModel = productViewModel,
 
             orderViewModel = orderViewModel,
+
+            appointmentViewModel = appointmentViewModel,
 
             onLogout = onLogout,
 

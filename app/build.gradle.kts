@@ -1,3 +1,4 @@
+import org.gradle.kotlin.dsl.dependencies
 
 plugins {
     alias(libs.plugins.android.application)
@@ -122,6 +123,9 @@ dependencies {
 
     implementation(libs.androidx.room.ktx)
     implementation(libs.transport.api)
+
+    // SUPABASE REST + REALTIME (WebSocket)
+    implementation(libs.okhttp)
 
     ksp(libs.androidx.room.compiler)
 
