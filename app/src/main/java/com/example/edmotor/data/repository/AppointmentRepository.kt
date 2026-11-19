@@ -9,9 +9,11 @@ import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.remote.MockApiConnection
 import com.example.edmotor.data.remote.MockAppointmentAvailability
+import com.example.edmotor.data.remote.MockAppointmentCancellation
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
+import com.example.edmotor.data.remote.cancelAppointmentIfMatches
 import com.example.edmotor.data.remote.checkAppointmentAvailability
 import com.example.edmotor.data.remote.isDefinitiveMockAppointmentFailure
 import com.example.edmotor.data.remote.listAppointments
@@ -286,23 +288,25 @@ class AppointmentRepository(
                 }
             }
             pendingSubmissions[booking] = RemoteSubmission(body, submitted)
-            database.withTransaction {
-                requireActiveAccount(account, user)
-                val registeredVehicle = database.vehicleDao().findById(vehicle.id)?.takeIf { it.ownerUserId == user.id }
-                saveAppointmentWork(
-                    database,
-                    AppointmentWorkEntity(
-                        clientAuthId = account.profileKey,
-                        appointmentId = requireNotNull(mockAppointmentId(submitted.id)),
-                        appointmentCreatedAtMillis = submitted.createdAtMillis,
-                        vehicleId = registeredVehicle?.id,
-                        finishedAtMillis = submitted.updatedAtMillis.takeIf {
-                            submitted.status == AppointmentStatus.COMPLETED && it > 0
-                        }
+            if (submitted.status != AppointmentStatus.CANCELLED) {
+                database.withTransaction {
+                    requireActiveAccount(account, user)
+                    val registeredVehicle = database.vehicleDao().findById(vehicle.id)?.takeIf { it.ownerUserId == user.id }
+                    saveAppointmentWork(
+                        database,
+                        AppointmentWorkEntity(
+                            clientAuthId = account.profileKey,
+                            appointmentId = requireNotNull(mockAppointmentId(submitted.id)),
+                            appointmentCreatedAtMillis = submitted.createdAtMillis,
+                            vehicleId = registeredVehicle?.id,
+                            finishedAtMillis = submitted.updatedAtMillis.takeIf {
+                                submitted.status == AppointmentStatus.COMPLETED && it > 0
+                            }
+                        )
                     )
-                )
-                appointmentDao.upsertCachedAppointment(submitted.toCacheEntity(connection, account))
-                requireActiveAccount(account, user)
+                    appointmentDao.upsertCachedAppointment(submitted.toCacheEntity(connection, account))
+                    requireActiveAccount(account, user)
+                }
             }
             pendingSubmissions.remove(booking)
             val message = if (recovered == null) "Solicitud de cita enviada."
@@ -433,8 +437,70 @@ class AppointmentRepository(
     suspend fun rejectAppointment(workshop: UserEntity, appointmentId: Long): AppointmentOperationResult =
         changeAppointment(workshop, appointmentId, AppointmentAction.REJECT)
 
-    suspend fun cancelAppointment(user: UserEntity, appointmentId: Long): AppointmentOperationResult =
-        changeAppointment(user, appointmentId, AppointmentAction.CANCEL)
+    suspend fun cancelAppointment(user: UserEntity, appointment: Appointment): AppointmentOperationResult {
+        val account = accountFor(user)
+            ?: return AppointmentOperationResult.Error("Entra con tu perfil para gestionar las citas.")
+        if (appointment.id <= 0 || appointment.createdAtMillis <= 0 || appointment.clientAuthId.isBlank()) {
+            return AppointmentOperationResult.Error("No se pudo identificar la cita para cancelarla.")
+        }
+        val unavailable = AppointmentOperationResult.Error("La cita no está disponible para este perfil.")
+        if (account.role == UserRole.CLIENT && appointment.clientAuthId != account.profileKey) return unavailable
+
+        val notActive = AppointmentOperationResult.Error("Esta cita ya no se puede cancelar.")
+        val cancelled = AppointmentOperationResult.Success("Cita #${appointment.id} cancelada.")
+        localDatabase?.let { database ->
+            return performLocalOperation(database, account) { localUser ->
+                val target = appointmentDao.findLocalAppointment(appointment.id)
+                if (target != null) {
+                    if (!appointment.matchesAppointment(target.id.toLong(), target.clientAuthId, target.createdAtMillis) ||
+                        (account.role == UserRole.CLIENT && target.clientLocalUserId != localUser.id)
+                    ) return@performLocalOperation unavailable
+
+                    if (!AppointmentStatus.isActive(target.status)) return@performLocalOperation notActive
+                    check(appointmentDao.deleteActiveLocalAppointment(
+                        appointment.id, appointment.clientAuthId, appointment.createdAtMillis
+                    ) == 1)
+                }
+                deleteCancelledAppointmentReferences(database, appointment)
+                cancelled
+            }
+        }
+
+        val database = workDatabase
+            ?: return AppointmentOperationResult.Error("No fue posible actualizar la agenda en este dispositivo.")
+        return performRemoteOperation(
+            account,
+            fallback = "No fue posible comprobar la cancelación. Actualiza la agenda antes de volver a intentarlo."
+        ) { connection, activeUser ->
+            val profileId = connection.profileId(appointment.clientAuthId) ?: return@performRemoteOperation unavailable
+            val removal = connection.service.cancelAppointmentIfMatches(
+                appointment.id.toString(), profileId, appointment.createdAtMillis
+            ) { requireActiveAccount(account, activeUser) }
+            when (removal) {
+                MockAppointmentCancellation.CHANGED -> return@performRemoteOperation unavailable
+                MockAppointmentCancellation.NOT_ACTIVE -> return@performRemoteOperation notActive
+                MockAppointmentCancellation.REMOVED -> Unit
+            }
+            pendingSubmissions.entries.removeAll { (booking, submission) ->
+                booking.profileKey == appointment.clientAuthId &&
+                    submission.request.createdAtMillis == appointment.createdAtMillis &&
+                    (submission.appointment == null || mockAppointmentId(submission.appointment.id) == appointment.id)
+            }
+            database.withTransaction {
+                requireActiveAccount(account, activeUser)
+                deleteCancelledAppointmentReferences(database, appointment)
+                requireActiveAccount(account, activeUser)
+            }
+            cancelled
+        }
+    }
+
+    private suspend fun deleteCancelledAppointmentReferences(database: EdMotorDatabase, appointment: Appointment) {
+        appointmentDao.deleteCachedAppointment(appointment.id, appointment.clientAuthId, appointment.createdAtMillis)
+        database.appointmentWorkDao().deleteUnfinishedForAppointment(
+            appointment.clientAuthId, appointment.id, appointment.createdAtMillis
+        )
+    }
 
     suspend fun rescheduleAppointment(
         user: UserEntity,
@@ -532,13 +598,6 @@ class AppointmentRepository(
                     return AppointmentOperationResult.Error("Ajusta la cita a una hora futura antes de confirmarla.")
                 }
                 reviewedStatus
-            }
-
-            AppointmentAction.CANCEL -> {
-                if (currentStatus != AppointmentStatus.CANCELLED && !AppointmentStatus.isActive(currentStatus)) {
-                    return AppointmentOperationResult.Error("Esta cita ya no se puede cancelar.")
-                }
-                AppointmentStatus.CANCELLED
             }
 
             AppointmentAction.RESCHEDULE -> {
@@ -707,7 +766,6 @@ class AppointmentRepository(
     private enum class AppointmentAction(val workshopOnly: Boolean, val resultDescription: String) {
         CONFIRM(true, "confirmada"),
         REJECT(true, "rechazada"),
-        CANCEL(false, "cancelada"),
         RESCHEDULE(false, "reagendada")
     }
 

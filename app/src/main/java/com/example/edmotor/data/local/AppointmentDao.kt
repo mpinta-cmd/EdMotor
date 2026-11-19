@@ -17,6 +17,7 @@ abstract class AppointmentDao {
             WHERE id = :viewerId AND remoteAuthId = :viewerKey AND role = :viewerRole
         )
         AND (:viewerRole = 'WORKSHOP' OR (clientLocalUserId = :viewerId AND clientAuthId = :viewerKey))
+        AND status != 'CANCELLED'
         ORDER BY scheduledAtMillis, id
         """
     )
@@ -59,8 +60,22 @@ abstract class AppointmentDao {
 
     @Query(
         """
+        DELETE FROM appointments
+        WHERE id = :appointmentId AND clientAuthId = :clientAuthId AND createdAtMillis = :createdAtMillis
+          AND status IN ('PENDING', 'CONFIRMED')
+        """
+    )
+    abstract suspend fun deleteActiveLocalAppointment(
+        appointmentId: Long,
+        clientAuthId: String,
+        createdAtMillis: Long
+    ): Int
+
+    @Query(
+        """
         SELECT * FROM appointment_cache
         WHERE accountAuthId = :accountAuthId AND accountRole = :accountRole
+          AND status != 'CANCELLED'
         ORDER BY scheduledAtMillis, id
         """
     )
@@ -71,6 +86,14 @@ abstract class AppointmentDao {
 
     @Upsert
     abstract suspend fun upsertCachedAppointment(appointment: AppointmentCacheEntity)
+
+    @Query(
+        """
+        DELETE FROM appointment_cache
+        WHERE id = :appointmentId AND clientAuthId = :clientAuthId AND createdAtMillis = :createdAtMillis
+        """
+    )
+    abstract suspend fun deleteCachedAppointment(appointmentId: Long, clientAuthId: String, createdAtMillis: Long)
 
     @Query(
         """

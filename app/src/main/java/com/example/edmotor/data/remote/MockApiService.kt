@@ -9,6 +9,7 @@ import com.google.gson.JsonParseException
 import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.PUT
@@ -39,6 +40,9 @@ interface MockApiService {
         @Path("id") id: String,
         @Body body: MockAppointmentStatusDto
     ): MockAppointmentDto
+
+    @DELETE("appointments/{id}")
+    suspend fun deleteAppointment(@Path("id") id: String)
 }
 
 data class MockProfileDto(
@@ -84,7 +88,8 @@ data class MockAppointmentStatusDto(
 
 internal suspend fun MockApiService.listAppointments(
     profileId: String? = null,
-    requireComplete: Boolean = false
+    requireComplete: Boolean = false,
+    includeCancelled: Boolean = false
 ): List<MockAppointmentDto> {
     val rows = try {
         getAppointments(profileId)
@@ -120,6 +125,7 @@ internal suspend fun MockApiService.listAppointments(
             appointment
         }
         .filter { profileId == null || it.profileId == profileId }
+        .filter { includeCancelled || it.status != AppointmentStatus.CANCELLED }
 }
 
 internal sealed interface MockAppointmentAvailability {
@@ -134,7 +140,7 @@ internal suspend fun MockApiService.checkAppointmentAvailability(
 ): MockAppointmentAvailability {
     require(appointmentProfileId.matches(profileId))
     require(previousRequest == null || previousRequest.profileId == profileId)
-    val appointments = listAppointments(profileId, requireComplete = true)
+    val appointments = listAppointments(profileId, requireComplete = true, includeCancelled = previousRequest != null)
     val recovered = previousRequest?.let(appointments::findSubmission)
     return when {
         recovered != null -> MockAppointmentAvailability.PreviouslySubmitted(recovered)
@@ -144,7 +150,7 @@ internal suspend fun MockApiService.checkAppointmentAvailability(
 }
 
 internal suspend fun MockApiService.findSubmittedAppointment(request: MockAppointmentCreateDto): MockAppointmentDto? {
-    return listAppointments(request.profileId).findSubmission(request)
+    return listAppointments(request.profileId, includeCancelled = true).findSubmission(request)
 }
 
 private fun List<MockAppointmentDto>.findSubmission(request: MockAppointmentCreateDto): MockAppointmentDto? {
@@ -172,6 +178,54 @@ internal suspend fun MockApiService.submitAppointmentStatus(
     },
     readBack = { getAppointment(target.id).takeIf { it.matchesUpdate(target, request) } }
 )
+
+internal enum class MockAppointmentCancellation { REMOVED, CHANGED, NOT_ACTIVE }
+
+internal suspend fun MockApiService.cancelAppointmentIfMatches(
+    id: String,
+    expectedProfileId: String,
+    expectedCreatedAtMillis: Long,
+    beforeDelete: () -> Unit = {}
+): MockAppointmentCancellation {
+    require(mockAppointmentId(id) != null && appointmentProfileId.matches(expectedProfileId) && expectedCreatedAtMillis > 0)
+    val target = getAppointmentForCancellation(id) ?: return MockAppointmentCancellation.REMOVED
+    if (target.id != id || target.profileId != expectedProfileId || target.createdAtMillis != expectedCreatedAtMillis) {
+        return MockAppointmentCancellation.CHANGED
+    }
+    if (!AppointmentStatus.isActive(target.status)) return MockAppointmentCancellation.NOT_ACTIVE
+
+    beforeDelete()
+    try {
+        deleteAppointment(id)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        if (error is HttpException) {
+            error.response()?.errorBody()?.close()
+            if (error.code() in setOf(400, 422, 429)) throw error
+        }
+        val removed = try {
+            getAppointmentForCancellation(id) == null
+        } catch (readError: CancellationException) {
+            throw readError
+        } catch (_: Exception) {
+            false
+        }
+        if (!removed) throw error
+    }
+    return MockAppointmentCancellation.REMOVED
+}
+
+private suspend fun MockApiService.getAppointmentForCancellation(id: String): MockAppointmentDto? = try {
+    getAppointment(id)
+} catch (error: HttpException) {
+    error.response()?.errorBody()?.close()
+    if (error.code() != 404) throw error
+
+    // Si falta el recurso completo, el 404 no confirma que se borró esa cita.
+    probeAppointments()
+    null
+}
 
 private suspend fun reconcileMockAppointmentWrite(
     write: suspend () -> MockAppointmentDto,

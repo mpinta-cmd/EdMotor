@@ -34,6 +34,17 @@ interface AppointmentWorkDao {
     @Update
     suspend fun update(work: AppointmentWorkEntity): Int
 
+    @Query(
+        """
+        DELETE FROM appointment_work
+        WHERE clientAuthId = :clientAuthId
+          AND appointmentId = :appointmentId
+          AND appointmentCreatedAtMillis = :appointmentCreatedAtMillis
+          AND finishedAtMillis IS NULL AND maintenanceRecordId IS NULL
+        """
+    )
+    suspend fun deleteUnfinishedForAppointment(clientAuthId: String, appointmentId: Long, appointmentCreatedAtMillis: Long)
+
     @Transaction
     @Query(
         """

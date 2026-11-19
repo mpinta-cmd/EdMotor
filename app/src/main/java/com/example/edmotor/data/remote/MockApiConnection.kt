@@ -5,6 +5,7 @@ import java.security.MessageDigest
 import java.util.Locale
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -51,10 +52,10 @@ internal fun createMockApiService(endpoint: String): MockApiService = Retrofit.B
         .followRedirects(false)
         .addInterceptor { chain ->
             val request = chain.request()
-            val body = request.body
-            if (body == null || request.method != "POST" && request.method != "PUT") {
+            if (request.method != "POST" && request.method != "PUT" && request.method != "DELETE") {
                 chain.proceed(request)
             } else {
+                val body = request.body ?: ByteArray(0).toRequestBody()
                 val oneShot = object : RequestBody() {
                     override fun contentType() = body.contentType()
                     override fun contentLength() = body.contentLength()

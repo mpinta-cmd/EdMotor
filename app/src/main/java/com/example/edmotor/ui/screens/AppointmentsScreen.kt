@@ -71,6 +71,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private enum class AppointmentSection { REQUESTS, CALENDAR, ALL }
+
 @Composable
 fun AppointmentsScreen(
     isWorkshop: Boolean,
@@ -83,7 +85,7 @@ fun AppointmentsScreen(
     onCreateAppointment: (Vehicle, Long, String) -> Unit,
     onAccept: (Long) -> Unit,
     onReject: (Long) -> Unit,
-    onCancel: (Long) -> Unit,
+    onCancel: (Appointment) -> Unit,
     onReschedule: (Long, Long) -> Unit,
     onClearMessage: () -> Unit,
     onRefresh: () -> Unit,
@@ -94,27 +96,41 @@ fun AppointmentsScreen(
     requestedCalendarDay: Long? = null,
     onCalendarDayHandled: () -> Unit = {}
 ) {
-    var showCalendar by rememberSaveable(isWorkshop) { mutableStateOf(false) }
+    var selectedSection by rememberSaveable(isWorkshop) { mutableStateOf(AppointmentSection.REQUESTS) }
     var rescheduleId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var cancelId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pendingCancel by remember(isWorkshop) { mutableStateOf<Appointment?>(null) }
     var pendingFinish by remember(isWorkshop) { mutableStateOf<Appointment?>(null) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val today = remember(nowMillis) { appointmentDateUtcMillis(nowMillis) }
     var selectedDay by rememberSaveable(isWorkshop) { mutableLongStateOf(requestedCalendarDay ?: today) }
     val requestListState = rememberLazyListState()
     val calendarListState = rememberLazyListState()
+    val allListState = rememberLazyListState()
     val tabStateHolder = rememberSaveableStateHolder()
     val coroutineScope = rememberCoroutineScope()
     val isConfigured = syncState != AppointmentSyncState.NOT_CONFIGURED
     val canManage = syncState == AppointmentSyncState.UP_TO_DATE && !isProcessing
     val colors = MaterialTheme.colorScheme
     val orderedAppointments = remember(appointments) {
-        appointments.sortedWith(compareBy({ it.scheduledAtMillis }, { it.id }))
+        appointments.filter { it.status != AppointmentStatus.CANCELLED }
+            .sortedWith(compareBy({ it.scheduledAtMillis }, { it.id }))
     }
-    val activeAppointment = if (isWorkshop) null else orderedAppointments.firstOrNull { it.canBeChanged() }
-    val calendarOnly = !isWorkshop && (activeAppointment != null || syncState == AppointmentSyncState.LOADING)
-    val calendarVisible = calendarOnly || showCalendar || requestedCalendarDay != null
-    val listState = if (calendarVisible) calendarListState else requestListState
+    val upcoming = remember(orderedAppointments, nowMillis) {
+        orderedAppointments.filter { it.canBeChanged() && it.scheduledAtMillis >= nowMillis }
+    }
+    val nextAppointment = upcoming.firstOrNull()
+    val activeAppointment = if (isWorkshop) null else nextAppointment ?: orderedAppointments.firstOrNull { it.canBeChanged() }
+    val requestTabAvailable = isWorkshop || (activeAppointment == null && syncState != AppointmentSyncState.LOADING)
+    val visibleSection = when {
+        requestedCalendarDay != null -> AppointmentSection.CALENDAR
+        selectedSection == AppointmentSection.REQUESTS && !requestTabAvailable -> AppointmentSection.CALENDAR
+        else -> selectedSection
+    }
+    val listState = when (visibleSection) {
+        AppointmentSection.REQUESTS -> requestListState
+        AppointmentSection.CALENDAR -> calendarListState
+        AppointmentSection.ALL -> allListState
+    }
     val activeTime = activeAppointment?.let { it.identity() to it.scheduledAtMillis }
     var lastActiveTime by remember(isWorkshop) { mutableStateOf<Pair<Triple<String, Long, Long>, Long>?>(null) }
     var awaitingActiveAfterCalendarLink by remember(isWorkshop) { mutableStateOf(false) }
@@ -129,15 +145,6 @@ fun AppointmentsScreen(
     val requests = remember(orderedAppointments) {
         orderedAppointments.filter { it.status == AppointmentStatus.PENDING }
     }
-    val clientRequests = remember(orderedAppointments, isWorkshop) {
-        if (isWorkshop) emptyList() else orderedAppointments
-            .filter { it.status != AppointmentStatus.CONFIRMED }
-            .sortedByDescending { it.createdAtMillis }
-    }
-    val upcoming = remember(orderedAppointments, nowMillis) {
-        orderedAppointments.filter { it.status == AppointmentStatus.CONFIRMED && it.scheduledAtMillis >= nowMillis }
-    }
-
     LaunchedEffect(Unit) {
         while (isActive) {
             nowMillis = System.currentTimeMillis()
@@ -150,7 +157,7 @@ fun AppointmentsScreen(
     LaunchedEffect(requestedCalendarDay, activeTime) {
         if (requestedCalendarDay != null) {
             selectedDay = requestedCalendarDay
-            showCalendar = true
+            selectedSection = AppointmentSection.CALENDAR
             lastActiveTime = activeTime
             awaitingActiveAfterCalendarLink = !isWorkshop && activeTime == null
             calendarListState.scrollToItem(0)
@@ -161,16 +168,20 @@ fun AppointmentsScreen(
                 // An explicit history link can arrive before the client's appointments load.
                 if (!awaitingActiveAfterCalendarLink) {
                     selectedDay = appointmentDateUtcMillis(activeAppointment.scheduledAtMillis)
-                    showCalendar = false
-                    calendarListState.scrollToItem(0)
+                    if (selectedSection != AppointmentSection.ALL) {
+                        selectedSection = AppointmentSection.REQUESTS
+                        calendarListState.scrollToItem(0)
+                    }
                 }
                 awaitingActiveAfterCalendarLink = false
             }
         }
     }
-    BackHandler(enabled = showCalendar && !calendarOnly) {
+    BackHandler(enabled = selectedSection == AppointmentSection.ALL ||
+        (selectedSection == AppointmentSection.CALENDAR && requestTabAvailable)
+    ) {
         awaitingActiveAfterCalendarLink = false
-        showCalendar = false
+        selectedSection = AppointmentSection.REQUESTS
     }
 
     val appointmentContent: @Composable (Appointment) -> Unit = { appointment ->
@@ -183,13 +194,13 @@ fun AppointmentsScreen(
         AppointmentCard(
             appointment = appointment,
             isWorkshop = isWorkshop,
-            showsReview = isWorkshop && !calendarVisible,
+            showsReview = isWorkshop && visibleSection != AppointmentSection.CALENDAR,
             canManage = canManage,
             maintenance = report,
             onAccept = { onAccept(appointment.id) },
             onReject = { onReject(appointment.id) },
             onReschedule = { rescheduleId = appointment.id },
-            onCancel = { cancelId = appointment.id },
+            onCancel = { pendingCancel = appointment },
             onFinish = { pendingFinish = appointment },
             onRegisterMaintenance = { onRegisterMaintenance(appointment) },
             onViewMaintenance = onViewMaintenance
@@ -200,19 +211,23 @@ fun AppointmentsScreen(
         AppointmentHeader(
             requestLabel = when {
                 isWorkshop -> "Solicitudes"
-                calendarOnly -> null
-                else -> "Solicitar"
+                requestTabAvailable -> "Solicitar"
+                else -> null
             },
-            showCalendar = calendarVisible,
-            onSelect = { calendar ->
-                if (!calendarOnly) {
-                    if (!calendar) awaitingActiveAfterCalendarLink = false
-                    showCalendar = calendar
+            selectedSection = visibleSection,
+            onSelect = { section ->
+                if (section != visibleSection) {
+                    if (section == AppointmentSection.REQUESTS) awaitingActiveAfterCalendarLink = false
+                    selectedSection = if (section == AppointmentSection.CALENDAR && !requestTabAvailable) {
+                        AppointmentSection.REQUESTS
+                    } else {
+                        section
+                    }
                 }
             }
         )
 
-        tabStateHolder.SaveableStateProvider(calendarVisible) {
+        tabStateHolder.SaveableStateProvider(visibleSection.name) {
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 state = listState,
@@ -223,19 +238,23 @@ fun AppointmentsScreen(
                     item(key = "message") { AppointmentMessage(message, isError, onClearMessage) }
                 }
                 item(key = "sync") {
-                    AppointmentSyncNotice(syncState, isWorkshop, appointments.isNotEmpty(), isProcessing, onRefresh)
+                    AppointmentSyncNotice(syncState, isWorkshop, orderedAppointments.isNotEmpty(), isProcessing, onRefresh)
                 }
 
-                if (isConfigured && calendarVisible) {
-                    if (activeAppointment != null) {
-                        item(key = "activeAppointment") {
-                            val activeDay = appointmentDateUtcMillis(activeAppointment.scheduledAtMillis)
-                            ActiveAppointmentSummary(
-                                appointment = activeAppointment,
-                                showsItsDay = selectedDay == activeDay,
+                if (isConfigured && visibleSection == AppointmentSection.CALENDAR) {
+                    val highlightedAppointment = nextAppointment ?: activeAppointment
+                    if (highlightedAppointment != null || syncState == AppointmentSyncState.UP_TO_DATE) {
+                        item(key = "nextAppointment") {
+                            val appointmentDay = highlightedAppointment?.let { appointmentDateUtcMillis(it.scheduledAtMillis) }
+                            UpcomingAppointmentSummary(
+                                appointment = highlightedAppointment,
+                                isUpcoming = nextAppointment != null,
+                                showsItsDay = selectedDay == appointmentDay,
                                 onShowItsDay = {
-                                    selectedDay = activeDay
-                                    showCalendar = false
+                                    if (appointmentDay != null) {
+                                        selectedDay = appointmentDay
+                                        if (!requestTabAvailable) selectedSection = AppointmentSection.REQUESTS
+                                    }
                                 }
                             )
                         }
@@ -285,6 +304,11 @@ fun AppointmentsScreen(
                         }
                     }
                     items(dayAppointments, key = { it.id }) { appointmentContent(it) }
+                } else if (isConfigured && visibleSection == AppointmentSection.ALL) {
+                    if (orderedAppointments.isEmpty() && syncState == AppointmentSyncState.UP_TO_DATE) {
+                        item(key = "emptyAll") { EmptyAppointmentsMessage("Todavía no hay citas registradas.") }
+                    }
+                    items(orderedAppointments, key = { it.id }) { appointmentContent(it) }
                 } else if (isConfigured) {
                     item(key = "intro") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -304,9 +328,8 @@ fun AppointmentsScreen(
                             OpenAgendaButton(
                                 upcomingCount = upcoming.size,
                                 onClick = {
-                                    val next = upcoming.firstOrNull() ?: requests.firstOrNull { it.scheduledAtMillis >= nowMillis }
-                                    selectedDay = next?.let { appointmentDateUtcMillis(it.scheduledAtMillis) } ?: today
-                                    showCalendar = true
+                                    selectedDay = nextAppointment?.let { appointmentDateUtcMillis(it.scheduledAtMillis) } ?: today
+                                    selectedSection = AppointmentSection.CALENDAR
                                     coroutineScope.launch { calendarListState.scrollToItem(0) }
                                 }
                             )
@@ -328,20 +351,6 @@ fun AppointmentsScreen(
                                 onCreateAppointment = onCreateAppointment
                             )
                         }
-                        item(key = "clientRequestsHeading") {
-                            Text(
-                                "Mis solicitudes",
-                                modifier = Modifier.semantics { heading() },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        if (clientRequests.isEmpty() && syncState == AppointmentSyncState.UP_TO_DATE) {
-                            item(key = "emptyClientRequests") {
-                                EmptyAppointmentsMessage("Aquí aparecerán tus solicitudes y sus cambios de estado.")
-                            }
-                        }
-                        items(clientRequests, key = { it.id }) { appointmentContent(it) }
                     }
                 }
             }
@@ -363,23 +372,25 @@ fun AppointmentsScreen(
         )
     }
 
-    val appointmentToCancel = appointments.firstOrNull { it.id == cancelId && it.canBeChanged() }
+    val appointmentToCancel = pendingCancel?.let { requested ->
+        orderedAppointments.firstOrNull { it.identity() == requested.identity() && it.canBeChanged() }
+    }
     if (appointmentToCancel != null) {
         AlertDialog(
             icon = { Icon(Icons.Outlined.EventAvailable, contentDescription = null) },
             title = { Text("Cancelar cita") },
-            text = { Text("Se cancelará la cita del ${formatAppointmentDateTime(appointmentToCancel.scheduledAtMillis)}.") },
-            onDismissRequest = { cancelId = null },
+            text = { Text("Al cancelar se eliminará la cita del ${formatAppointmentDateTime(appointmentToCancel.scheduledAtMillis)}.") },
+            onDismissRequest = { pendingCancel = null },
             confirmButton = {
                 Button(
                     enabled = canManage,
                     onClick = {
-                        cancelId = null
-                        onCancel(appointmentToCancel.id)
+                        pendingCancel = null
+                        onCancel(appointmentToCancel)
                     }
                 ) { Text("Confirmar cancelación") }
             },
-            dismissButton = { TextButton(onClick = { cancelId = null }) { Text("Conservar cita") } }
+            dismissButton = { TextButton(onClick = { pendingCancel = null }) { Text("Conservar cita") } }
         )
     }
 
@@ -409,7 +420,11 @@ fun AppointmentsScreen(
 }
 
 @Composable
-private fun AppointmentHeader(requestLabel: String?, showCalendar: Boolean, onSelect: (Boolean) -> Unit) {
+private fun AppointmentHeader(
+    requestLabel: String?,
+    selectedSection: AppointmentSection,
+    onSelect: (AppointmentSection) -> Unit
+) {
     val colors = MaterialTheme.colorScheme
     val tabShape = RoundedCornerShape(12.dp)
     Column(
@@ -441,19 +456,23 @@ private fun AppointmentHeader(requestLabel: String?, showCalendar: Boolean, onSe
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                listOfNotNull(requestLabel?.let { false to it }, true to "Calendario").forEach { (isCalendar, label) ->
-                    val selected = showCalendar == isCalendar
+                listOfNotNull(
+                    requestLabel?.let { AppointmentSection.REQUESTS to it },
+                    AppointmentSection.CALENDAR to "Calendario",
+                    AppointmentSection.ALL to "Todas las citas"
+                ).forEach { (section, label) ->
+                    val selected = selectedSection == section
                     Tab(
                         selected = selected,
-                        onClick = { onSelect(isCalendar) },
-                        modifier = Modifier.weight(1f).clip(tabShape)
+                        onClick = { onSelect(section) },
+                        modifier = Modifier.weight(if (section == AppointmentSection.ALL) 1.15f else 1f).clip(tabShape)
                             .background(if (selected) colors.primary else colors.surfaceVariant),
                         selectedContentColor = colors.onPrimary,
                         unselectedContentColor = colors.onSurfaceVariant
                     ) {
                         Text(
                             label,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 12.dp),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center
@@ -466,7 +485,12 @@ private fun AppointmentHeader(requestLabel: String?, showCalendar: Boolean, onSe
 }
 
 @Composable
-private fun ActiveAppointmentSummary(appointment: Appointment, showsItsDay: Boolean, onShowItsDay: () -> Unit) {
+private fun UpcomingAppointmentSummary(
+    appointment: Appointment?,
+    isUpcoming: Boolean,
+    showsItsDay: Boolean,
+    onShowItsDay: () -> Unit
+) {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -476,18 +500,22 @@ private fun ActiveAppointmentSummary(appointment: Appointment, showsItsDay: Bool
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "Tu cita activa",
+                if (appointment != null && !isUpcoming) "Cita activa" else "Próxima cita",
                 modifier = Modifier.semantics { heading() },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            Text("Horario: ${formatAppointmentDateTime(appointment.scheduledAtMillis)}", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                if (appointment.status == AppointmentStatus.PENDING) "Pendiente de confirmación" else "Confirmada por EdMotor",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            if (!showsItsDay) {
-                TextButton(onClick = onShowItsDay) { Text("Ver día de la cita") }
+            if (appointment != null) {
+                Text("Horario: ${formatAppointmentDateTime(appointment.scheduledAtMillis)}", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    if (appointment.status == AppointmentStatus.PENDING) "Pendiente de confirmación" else "Confirmada por el taller",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                if (!showsItsDay) {
+                    TextButton(onClick = onShowItsDay) { Text("Ver día de la cita") }
+                }
+            } else {
+                Text("No hay citas próximas.", style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -607,7 +635,6 @@ private fun AppointmentCard(
         AppointmentStatus.COMPLETED -> Triple("Cita terminada", colors.tertiaryContainer, colors.onTertiaryContainer)
         AppointmentStatus.PENDING -> Triple("Pendiente", colors.secondaryContainer, colors.onSecondaryContainer)
         AppointmentStatus.REJECTED -> Triple("Rechazada", colors.surfaceVariant, colors.onSurfaceVariant)
-        AppointmentStatus.CANCELLED -> Triple("Cancelada", colors.surfaceVariant, colors.onSurfaceVariant)
         else -> Triple(appointment.status, colors.surfaceVariant, colors.onSurfaceVariant)
     }
     Surface(

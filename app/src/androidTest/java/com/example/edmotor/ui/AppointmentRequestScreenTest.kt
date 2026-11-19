@@ -220,8 +220,8 @@ class AppointmentRequestScreenTest {
                     onCreateAppointment = { _, _, _ -> },
                     onAccept = {},
                     onReject = {},
-                    onCancel = { id ->
-                        assertEquals(original.id, id)
+                    onCancel = { requested ->
+                        assertEquals(appointment, requested)
                         appointment = appointment.copy(status = AppointmentStatus.CANCELLED)
                     },
                     onReschedule = { id, date ->
@@ -236,7 +236,7 @@ class AppointmentRequestScreenTest {
 
         compose.onNodeWithText("Calendario").assertIsSelected()
         compose.onNodeWithText("Solicitar").assertDoesNotExist()
-        compose.onNodeWithText("Tu cita activa").assertExists()
+        compose.onNodeWithText("Próxima cita").assertExists()
         assertAutomaticDay(original.scheduledAtMillis)
         appointmentList().performScrollToKey(original.id)
         compose.onNodeWithText("Reagendar").performScrollTo().performClick()
@@ -254,8 +254,9 @@ class AppointmentRequestScreenTest {
         compose.onNodeWithText("Cancelar cita").performScrollTo().performClick()
         compose.onNodeWithText("Confirmar cancelación").assertIsEnabled().performClick()
         compose.onNodeWithText("Solicitar").assertIsSelected()
-        appointmentList().performScrollToKey(original.id)
-        compose.onNodeWithText("Cancelada").assertExists()
+        compose.onNodeWithText("Todas las citas").performClick().assertIsSelected()
+        compose.onNodeWithText("Todavía no hay citas registradas.").assertExists()
+        compose.onNodeWithText("Cancelada").assertDoesNotExist()
         compose.onNodeWithText("Reagendar").assertDoesNotExist()
     }
 
@@ -269,7 +270,7 @@ class AppointmentRequestScreenTest {
         var syncState by mutableStateOf(AppointmentSyncState.LOADING)
 
         compose.setContent {
-            MaterialTheme { RenderClientAppointments(appointments, syncState) }
+            MaterialTheme { RenderAppointments(appointments, syncState) }
         }
 
         compose.onNodeWithText("Solicitar").assertDoesNotExist()
@@ -279,19 +280,27 @@ class AppointmentRequestScreenTest {
         appointmentList().performScrollToKey("request")
         compose.onNodeWithText("Solicitar cita").assertExists()
 
-        compose.runOnIdle { appointments = listOf(later, earlier) }
+        compose.runOnIdle { appointments = listOf(earlier) }
         compose.onNodeWithText("Calendario").assertIsSelected()
         compose.onNodeWithText("Solicitar").assertDoesNotExist()
+        compose.onNodeWithText("Cita activa").assertExists()
         compose.onNodeWithText("Horario: ${formatDateTime(earlier.scheduledAtMillis)}").assertExists()
         assertAutomaticDay(earlier.scheduledAtMillis)
 
+        compose.runOnIdle { appointments = listOf(later, earlier) }
+        compose.onNodeWithText("Próxima cita").assertExists()
+        assertAutomaticDay(later.scheduledAtMillis)
         compose.runOnIdle { appointments = listOf(later, earlier.copy(status = AppointmentStatus.CANCELLED)) }
         compose.onNodeWithText("Solicitar").assertDoesNotExist()
         assertAutomaticDay(later.scheduledAtMillis)
-        compose.runOnIdle { appointments = appointments.map { it.copy(status = AppointmentStatus.REJECTED) } }
+        compose.runOnIdle {
+            appointments = appointments.map { if (it.id == later.id) it.copy(status = AppointmentStatus.REJECTED) else it }
+        }
         compose.onNodeWithText("Solicitar").assertIsSelected()
+        compose.onNodeWithText("Todas las citas").performClick().assertIsSelected()
         appointmentList().performScrollToKey(later.id)
-        compose.onAllNodesWithText("Rechazada").onFirst().assertExists()
+        compose.onNodeWithText("Rechazada").assertExists()
+        compose.onNodeWithText("Cancelada").assertDoesNotExist()
     }
 
     @Test
@@ -308,7 +317,7 @@ class AppointmentRequestScreenTest {
         var consumed = 0
         compose.setContent {
             MaterialTheme {
-                RenderClientAppointments(appointments, syncState, requestedDay) {
+                RenderAppointments(appointments, syncState, requestedDay) {
                     consumed++
                     requestedDay = null
                 }
@@ -326,9 +335,54 @@ class AppointmentRequestScreenTest {
         appointmentList().performScrollToKey(completed.id)
         compose.onNodeWithText("Cita terminada").assertExists()
 
-        appointmentList().performScrollToKey("activeAppointment")
+        appointmentList().performScrollToKey("nextAppointment")
         compose.onNodeWithText("Ver día de la cita").performScrollTo().performClick()
         assertAutomaticDay(active.scheduledAtMillis)
+    }
+
+    @Test
+    fun workshopSeesNextAppointmentAndAllVisibleDatesInChronologicalOrder() {
+        val next = sampleAppointment(AppointmentStatus.PENDING)
+        val previous = next.copy(
+            id = 42L,
+            status = AppointmentStatus.COMPLETED,
+            scheduledAtMillis = next.scheduledAtMillis - 3 * 24 * 60 * 60_000L
+        )
+        val later = next.copy(
+            id = 43L,
+            status = AppointmentStatus.CONFIRMED,
+            scheduledAtMillis = next.scheduledAtMillis + 24 * 60 * 60_000L
+        )
+        val cancelled = next.copy(
+            id = 44L,
+            status = AppointmentStatus.CANCELLED,
+            scheduledAtMillis = next.scheduledAtMillis - 60 * 60_000L
+        )
+
+        compose.setContent {
+            MaterialTheme {
+                RenderAppointments(
+                    listOf(later, cancelled, previous, next),
+                    AppointmentSyncState.UP_TO_DATE,
+                    isWorkshop = true
+                )
+            }
+        }
+
+        compose.onNodeWithText("Ver citas agendadas").performClick()
+        compose.onNodeWithText("Próxima cita").assertExists()
+        compose.onNodeWithText("Horario: ${formatDateTime(next.scheduledAtMillis)}").assertExists()
+        compose.onNodeWithText("Pendiente de confirmación").assertExists()
+        appointmentList().performScrollToKey("calendar")
+        selectDay(next.scheduledAtMillis, "1 cita")
+
+        compose.onNodeWithText("Todas las citas").performClick().assertIsSelected()
+        val indexFor = appointmentList().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+        assertEquals(-1, indexFor(cancelled.id))
+        assertTrue(indexFor(previous.id) in 0 until indexFor(next.id))
+        assertTrue(indexFor(next.id) in 0 until indexFor(later.id))
+        appointmentList().performScrollToKey(later.id)
+        compose.onNodeWithText("Terminar cita").assertExists()
     }
 
     @Test
@@ -443,6 +497,7 @@ class AppointmentRequestScreenTest {
             }
         }
 
+        compose.onNodeWithText("Todas las citas").performClick().assertIsSelected()
         appointmentList().performScrollToKey(completed.id)
         compose.onNodeWithText("Listo para recoger").assertExists()
         compose.onNodeWithText("Mantenimiento realizado").assertDoesNotExist()
@@ -461,14 +516,15 @@ class AppointmentRequestScreenTest {
     private fun appointmentList() = compose.onNode(hasScrollToIndexAction())
 
     @Composable
-    private fun RenderClientAppointments(
+    private fun RenderAppointments(
         appointments: List<Appointment>,
         syncState: AppointmentSyncState,
         requestedDay: Long? = null,
+        isWorkshop: Boolean = false,
         onDayHandled: () -> Unit = {}
     ) {
         AppointmentsScreen(
-            isWorkshop = false,
+            isWorkshop = isWorkshop,
             appointments = appointments,
             syncState = syncState,
             vehicles = listOf(Vehicle(1, "Marca", "Modelo", 2021, "Motor", ownerUserId = 1)),

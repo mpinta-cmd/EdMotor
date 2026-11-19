@@ -3,9 +3,11 @@ package com.example.edmotor
 import com.example.edmotor.data.remote.MockApiConnection
 import com.example.edmotor.data.remote.MockApiService
 import com.example.edmotor.data.remote.MockAppointmentAvailability
+import com.example.edmotor.data.remote.MockAppointmentCancellation
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
 import com.example.edmotor.data.remote.MockProfileCreateDto
+import com.example.edmotor.data.remote.cancelAppointmentIfMatches
 import com.example.edmotor.data.remote.checkAppointmentAvailability
 import com.example.edmotor.data.remote.createMockApiService
 import com.example.edmotor.data.remote.listAppointments
@@ -412,30 +414,153 @@ class MockApiContractTest {
     }
 
     @Test
-    fun cancelledAppointmentsStayVisibleInTheClientsListing() {
-        val saved = AtomicReference(EXISTING_APPOINTMENT)
-        withAppointmentEndpoint(respond = { route, body ->
+    fun legacyCancelledAppointmentsAreHiddenButCompletedAndRejectedRemainListed() {
+        val cancelled = EXISTING_APPOINTMENT.replace("PENDING", "CANCELLED")
+        val completed = applyUpdate(EXISTING_APPOINTMENT, """{"id":"8","status":"COMPLETED"}""")
+        val rejected = applyUpdate(EXISTING_APPOINTMENT, """{"id":"9","status":"REJECTED"}""")
+        val listing = "[$cancelled,$completed,$rejected]"
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(respond = { route, _ ->
+            routes.add(route)
             when (route) {
-                "GET /api/v1/appointments/7" -> 200 to saved.get()
-                "PUT /api/v1/appointments/7" -> {
-                    val cancelled = applyUpdate(saved.get(), body)
-                    saved.set(cancelled)
-                    200 to cancelled
-                }
-                "GET /api/v1/appointments?profileId=1" -> 200 to "[${saved.get()}]"
+                "GET /api/v1/appointments?profileId=1", "GET /api/v1/appointments" -> 200 to listing
                 else -> 500 to "\"Unexpected route\""
             }
         }) { newApi ->
             val api = newApi()
-            val target = api.getAppointment("7")
-            val update = MockAppointmentStatusDto("CANCELLED", 1_790_000_001_000)
-            api.submitAppointmentStatus(target, update)
+            val expected = mapOf("8" to "COMPLETED", "9" to "REJECTED")
+            assertEquals(expected, api.listAppointments("1").associate { it.id to it.status })
+            assertEquals(expected, api.listAppointments().associate { it.id to it.status })
+        }
+        assertEquals(listOf("GET /api/v1/appointments?profileId=1", "GET /api/v1/appointments"), routes.toList())
+    }
 
+    @Test
+    fun cancellingDeletesOnlyTheSelectedAppointment() {
+        val completed = applyUpdate(EXISTING_APPOINTMENT, """{"id":"8","status":"COMPLETED"}""")
+        val rejected = applyUpdate(EXISTING_APPOINTMENT, """{"id":"9","status":"REJECTED"}""")
+        val saved = AtomicReference(listOf(EXISTING_APPOINTMENT, completed, rejected))
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(respond = { route, _ ->
+            routes.add(route)
+            when (route) {
+                "GET /api/v1/appointments/7" -> 200 to EXISTING_APPOINTMENT
+                "DELETE /api/v1/appointments/7" -> {
+                    saved.set(saved.get() - EXISTING_APPOINTMENT)
+                    200 to EXISTING_APPOINTMENT
+                }
+                "GET /api/v1/appointments?profileId=1" -> 200 to saved.get().joinToString(prefix = "[", postfix = "]")
+                else -> 500 to "\"Unexpected route\""
+            }
+        }) { newApi ->
+            val result = newApi().cancelAppointmentIfMatches("7", "1", REQUEST.createdAtMillis)
+            assertEquals(MockAppointmentCancellation.REMOVED, result)
+            val remaining = newApi().listAppointments("1").associate { it.id to it.status }
+            assertEquals(mapOf("8" to "COMPLETED", "9" to "REJECTED"), remaining)
+        }
+        assertEquals(
+            listOf("GET /api/v1/appointments/7", "DELETE /api/v1/appointments/7", "GET /api/v1/appointments?profileId=1"),
+            routes.toList()
+        )
+    }
+
+    @Test
+    fun ambiguousDeleteChecksAbsenceAndRequiresAnAccessibleCollectionWithoutReplayingTheWrite() {
+        val confirmed = EXISTING_APPOINTMENT.replace("PENDING", "CONFIRMED")
+        for (collectionStatus in listOf(200, 404)) {
+            val saved = AtomicReference<String?>(confirmed)
+            val routes = ConcurrentLinkedQueue<String>()
+            withAppointmentEndpoint(
+                headers = mapOf("Retry-After" to "0"),
+                respond = { route, _ ->
+                    routes.add(route)
+                    when (route) {
+                        "GET /api/v1/appointments/7" -> saved.get()?.let { 200 to it } ?: (404 to "\"Not found\"")
+                        "DELETE /api/v1/appointments/7" -> {
+                            saved.set(null)
+                            503 to "\"Response lost\""
+                        }
+                        "GET /api/v1/appointments?limit=1&page=1" -> {
+                            collectionStatus to if (collectionStatus == 200) "[]" else "\"Not found\""
+                        }
+                        else -> 500 to "\"Unexpected route\""
+                    }
+                }
+            ) { newApi ->
+                val result = runCatching {
+                    newApi().cancelAppointmentIfMatches("7", "1", REQUEST.createdAtMillis)
+                }
+                if (collectionStatus == 200) {
+                    assertEquals(MockAppointmentCancellation.REMOVED, result.getOrThrow())
+                } else {
+                    assertTrue(result.isFailure)
+                }
+            }
             assertEquals(
-                target.copy(status = "CANCELLED", updatedAtMillis = update.updatedAtMillis),
-                newApi().listAppointments(target.profileId).single()
+                listOf(
+                    "GET /api/v1/appointments/7",
+                    "DELETE /api/v1/appointments/7",
+                    "GET /api/v1/appointments/7",
+                    "GET /api/v1/appointments?limit=1&page=1"
+                ),
+                routes.toList()
             )
         }
+    }
+
+    @Test
+    fun cancellingAnAlreadyMissingAppointmentDoesNotWriteWhenItsCollectionExists() {
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(respond = { route, _ ->
+            routes.add(route)
+            when (route) {
+                "GET /api/v1/appointments/7" -> 404 to "\"Not found\""
+                "GET /api/v1/appointments?limit=1&page=1" -> 200 to "[]"
+                else -> 500 to "\"Unexpected route\""
+            }
+        }) { newApi ->
+            val result = newApi().cancelAppointmentIfMatches("7", "1", REQUEST.createdAtMillis)
+            assertEquals(MockAppointmentCancellation.REMOVED, result)
+        }
+        assertEquals(listOf("GET /api/v1/appointments/7", "GET /api/v1/appointments?limit=1&page=1"), routes.toList())
+    }
+
+    @Test
+    fun cancellationChecksIdentityAndStatusBeforeDeleting() {
+        val cases = listOf(
+            applyUpdate(EXISTING_APPOINTMENT, """{"id":"8"}""") to MockAppointmentCancellation.CHANGED,
+            applyUpdate(EXISTING_APPOINTMENT, """{"profileId":"10"}""") to MockAppointmentCancellation.CHANGED,
+            applyUpdate(EXISTING_APPOINTMENT, """{"createdAtMillis":1790000000001}""") to MockAppointmentCancellation.CHANGED,
+            EXISTING_APPOINTMENT.replace("PENDING", "COMPLETED") to MockAppointmentCancellation.NOT_ACTIVE,
+            EXISTING_APPOINTMENT.replace("PENDING", "REJECTED") to MockAppointmentCancellation.NOT_ACTIVE
+        )
+        for ((row, expected) in cases) {
+            val routes = ConcurrentLinkedQueue<String>()
+            withAppointmentEndpoint(respond = { route, _ ->
+                routes.add(route)
+                if (route == "GET /api/v1/appointments/7") 200 to row else 500 to "\"Unexpected route\""
+            }) { newApi ->
+                val result = newApi().cancelAppointmentIfMatches("7", "1", REQUEST.createdAtMillis)
+                assertEquals(row, expected, result)
+            }
+            assertEquals(listOf("GET /api/v1/appointments/7"), routes.toList())
+        }
+    }
+
+    @Test
+    fun cancellationRechecksTheCallerBeforeTheDelete() {
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(respond = { route, _ ->
+            routes.add(route)
+            if (route == "GET /api/v1/appointments/7") 200 to EXISTING_APPOINTMENT else 500 to "\"Unexpected route\""
+        }) { newApi ->
+            val denied = IllegalStateException("Session changed")
+            val failure = runCatching {
+                newApi().cancelAppointmentIfMatches("7", "1", REQUEST.createdAtMillis, beforeDelete = { throw denied })
+            }.exceptionOrNull()
+            assertEquals(denied, failure)
+        }
+        assertEquals(listOf("GET /api/v1/appointments/7"), routes.toList())
     }
 
     @Test

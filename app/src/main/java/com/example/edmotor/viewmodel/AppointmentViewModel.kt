@@ -167,8 +167,8 @@ class AppointmentViewModel(
         repository.rejectAppointment(user, appointmentId)
     }
 
-    fun cancelAppointment(appointmentId: Long) = executeAppointmentChange { user ->
-        repository.cancelAppointment(user, appointmentId)
+    fun cancelAppointment(appointment: Appointment) = executeAppointmentChange { user ->
+        repository.cancelAppointment(user, appointment)
     }
 
     fun rescheduleAppointment(appointmentId: Long, scheduledAtMillis: Long) = executeAppointmentChange { user ->
