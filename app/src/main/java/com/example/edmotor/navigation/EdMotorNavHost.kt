@@ -3,10 +3,15 @@ package com.example.edmotor.navigation
 import android.widget.Toast
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,8 +39,10 @@ import com.example.edmotor.R
 import com.example.edmotor.data.productList
 import com.example.edmotor.data.toProduct
 
+import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.model.Vehicle
 
 import com.example.edmotor.ui.screens.CartScreen
 import com.example.edmotor.ui.screens.ClientGarageScreen
@@ -55,6 +62,7 @@ import com.example.edmotor.viewmodel.ProductViewModel
 import com.example.edmotor.viewmodel.OrderViewModel
 import com.example.edmotor.viewmodel.AppointmentViewModel
 
+private const val APPOINTMENT_WORK_ID = "appointmentWorkId"
 
 /**
  * Navegación principal de EdMotor.
@@ -120,6 +128,11 @@ fun EdMotorNavHost(
     // =====================================================
 
     val isSavingMaintenance by maintenanceViewModel.isSaving.collectAsStateWithLifecycle(initialValue = false)
+
+    val appointmentWorkState by remember(maintenanceViewModel, currentUserId, currentUserRole) {
+        maintenanceViewModel.observeAppointmentWork(currentUserId, currentUserRole)
+    }.collectAsStateWithLifecycle(initialValue = null)
+    val appointmentWork = appointmentWorkState.orEmpty()
 
     // =====================================================
     // 3. ESTADOS DEL INVENTARIO
@@ -610,6 +623,16 @@ fun EdMotorNavHost(
             val recordId =
                 entry.arguments?.getInt("recordId") ?: -1
 
+            val appointmentWorkId by entry.savedStateHandle
+                .getStateFlow<Long?>(APPOINTMENT_WORK_ID, null)
+                .collectAsStateWithLifecycle()
+            val sourceWork = appointmentWork.firstOrNull { it.work.id == appointmentWorkId }?.work
+            val sourceAppointment = sourceWork?.let { work ->
+                appointments.firstOrNull { appointment ->
+                    appointment.clientAuthId == work.clientAuthId && appointment.id == work.appointmentId &&
+                        appointment.createdAtMillis == work.appointmentCreatedAtMillis
+                }
+            }
             val vehicle = vehicleList.firstOrNull {
                 it.id == vehicleId
             }
@@ -640,6 +663,17 @@ fun EdMotorNavHost(
                     onBack = {
                         navController.popBackStack()
                     }
+                )
+
+            } else if (appointmentWorkId != null && appointmentWorkState == null) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+
+            } else if (appointmentWorkId != null && sourceWork?.finishedAtMillis == null) {
+                AccessDeniedScreen(
+                    message = "No se encontró el cierre de esta cita.",
+                    onBack = { navController.popBackStack() }
                 )
 
             } else if (vehicle == null) {
@@ -701,6 +735,10 @@ fun EdMotorNavHost(
 
                     saveError = saveError,
 
+                    appointmentServiceType = sourceAppointment?.description,
+
+                    appointmentFinishedAtMillis = sourceWork?.finishedAtMillis,
+
                     onCreateCategory = { name, onResult ->
                         productViewModel.createCategory(name) { result ->
                             when (result) {
@@ -747,7 +785,9 @@ fun EdMotorNavHost(
                                 it > 0
                             },
 
-                            draft = draft
+                            draft = draft,
+
+                            appointmentWorkId = appointmentWorkId
 
                         ) { success, message ->
                             if (navController.currentBackStackEntry == entry) {
@@ -769,7 +809,34 @@ fun EdMotorNavHost(
         // 9. CITAS Y AGENDA DEL TALLER
         // =================================================
 
-        composable(Routes.APPOINTMENTS) {
+        composable(Routes.APPOINTMENTS) { entry ->
+            var pendingWorkId by rememberSaveable { mutableStateOf<Long?>(null) }
+            val selectedWork = appointmentWork.firstOrNull { it.work.id == pendingWorkId }?.work
+            val clientId = selectedWork?.let { work ->
+                clients.singleOrNull { it.remoteAuthId == work.clientAuthId }?.id
+            }
+            val eligibleVehicles = if (clientId == null) emptyList()
+            else vehicleList.filter { it.ownerUserId == clientId }
+            val linkedVehicle = eligibleVehicles.firstOrNull { it.id == selectedWork?.vehicleId }
+
+            fun openMaintenance(vehicleId: Int) {
+                val work = selectedWork ?: return
+                pendingWorkId = null
+                navController.navigate(Routes.maintenanceForm(vehicleId, work.maintenanceRecordId)) {
+                    launchSingleTop = true
+                }
+                navController.currentBackStackEntry?.savedStateHandle?.set(APPOINTMENT_WORK_ID, work.id)
+            }
+
+            val startAppointmentMaintenance: (Appointment) -> Unit = { appointment ->
+                appointmentViewModel.finishAppointment(appointment) { workId ->
+                    if (navController.currentBackStackEntry == entry) pendingWorkId = workId
+                }
+            }
+
+            LaunchedEffect(selectedWork?.id, linkedVehicle?.id) {
+                if (isWorkshop && linkedVehicle != null) openMaintenance(linkedVehicle.id)
+            }
 
             AppointmentsScreen(
                 isWorkshop = isWorkshop,
@@ -785,8 +852,22 @@ fun EdMotorNavHost(
                 onCancel = appointmentViewModel::cancelAppointment,
                 onReschedule = appointmentViewModel::rescheduleAppointment,
                 onClearMessage = appointmentViewModel::clearMessage,
-                onRefresh = appointmentViewModel::refreshAppointments
+                onRefresh = appointmentViewModel::refreshAppointments,
+                appointmentWork = appointmentWork,
+                onFinish = startAppointmentMaintenance,
+                onRegisterMaintenance = startAppointmentMaintenance,
+                onViewMaintenance = { vehicleId ->
+                    navController.navigate(Routes.maintenanceHistory(vehicleId)) { launchSingleTop = true }
+                }
             )
+
+            if (isWorkshop && selectedWork != null && linkedVehicle == null) {
+                AppointmentVehiclePicker(
+                    vehicles = eligibleVehicles,
+                    onSelect = ::openMaintenance,
+                    onDismiss = { pendingWorkId = null }
+                )
+            }
         }
 
 
@@ -1028,6 +1109,42 @@ fun EdMotorNavHost(
 // =====================================================
 // PANTALLA AUXILIAR: ACCESO DENEGADO
 // =====================================================
+
+@Composable
+private fun AppointmentVehiclePicker(
+    vehicles: List<Vehicle>,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Registrar mantenimiento") },
+        text = {
+            if (vehicles.isEmpty()) {
+                Text("La cita quedó terminada. Para registrar el mantenimiento, el cliente debe tener su vehículo en Mi Garaje de esta instalación.")
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Selecciona el vehículo atendido en esta cita.")
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 300.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(vehicles, key = { it.id }) { vehicle ->
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { onSelect(vehicle.id) }
+                            ) {
+                                Text(listOf("${vehicle.brand} ${vehicle.model}", "${vehicle.year}", vehicle.plate)
+                                    .filter { it.isNotBlank() }.joinToString(" · "))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } }
+    )
+}
 
 @Composable
 private fun AccessDeniedScreen(

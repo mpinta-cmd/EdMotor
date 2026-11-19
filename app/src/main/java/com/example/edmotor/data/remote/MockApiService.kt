@@ -125,14 +125,12 @@ internal suspend fun MockApiService.submitAppointment(request: MockAppointmentCr
 internal suspend fun MockApiService.submitAppointmentStatus(
     target: MockAppointmentDto,
     request: MockAppointmentStatusDto
-) {
-    reconcileMockAppointmentWrite(
-        write = {
-            updateAppointment(target.id, request).also { check(it.matchesUpdate(target, request)) }
-        },
-        readBack = { getAppointment(target.id).takeIf { it.matchesUpdate(target, request) } }
-    )
-}
+): MockAppointmentDto = reconcileMockAppointmentWrite(
+    write = {
+        updateAppointment(target.id, request).also { check(it.matchesUpdate(target, request)) }
+    },
+    readBack = { getAppointment(target.id).takeIf { it.matchesUpdate(target, request) } }
+)
 
 private suspend fun reconcileMockAppointmentWrite(
     write: suspend () -> MockAppointmentDto,
@@ -165,12 +163,14 @@ private fun MockAppointmentDto.matchesSubmission(request: MockAppointmentCreateD
 private fun MockAppointmentDto.matchesUpdate(target: MockAppointmentDto, request: MockAppointmentStatusDto): Boolean =
     id == target.id && profileId == target.profileId && createdAtMillis == target.createdAtMillis &&
         scheduledAtMillis == (request.scheduledAtMillis ?: target.scheduledAtMillis) &&
-        status == (request.status ?: target.status)
+        status == (request.status ?: target.status) &&
+        (request.status != AppointmentStatus.COMPLETED || updatedAtMillis == request.updatedAtMillis)
 
 private val appointmentJson = Gson()
 private val appointmentProfileId = Regex("[A-Za-z0-9_-]{1,64}")
 private val appointmentStatuses = setOf(
-    AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.REJECTED, AppointmentStatus.CANCELLED
+    AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.REJECTED,
+    AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED
 )
 
 private fun JsonElement.toMockAppointment(): MockAppointmentDto? {

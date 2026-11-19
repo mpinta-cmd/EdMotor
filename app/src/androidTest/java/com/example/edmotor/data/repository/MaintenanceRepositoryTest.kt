@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.edmotor.core.common.EdMotorException
+import com.example.edmotor.data.local.AppointmentWorkEntity
 import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.MaintenancePartEntity
 import com.example.edmotor.data.local.MaintenanceRecordEntity
@@ -19,6 +20,8 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -107,6 +110,101 @@ class MaintenanceRepositoryTest {
             assertEquals(1, stock(second))
             assertEquals("100 km", database.vehicleDao().findById(vehicle.id)?.mileage)
             assertTrue(records(vehicle.id, workshop).isEmpty())
+        }
+    }
+
+    @Test
+    fun completedAppointmentLinksOnlyOneMaintenanceAndOnlyOneStockDeduction() = runBlocking {
+        withFixture {
+            val client = insertUser("client", UserRole.CLIENT)
+            val vehicle = insertVehicle(client.id)
+            val otherVehicle = insertVehicle(insertUser("other", UserRole.CLIENT).id)
+            val product = insertProduct("Bujía", stock = 5)
+            val draft = maintenanceDraft().copy(parts = listOf(part(product, 2.0)))
+            val workDao = database.appointmentWorkDao()
+            val workId = workDao.insertIfAbsent(AppointmentWorkEntity(
+                clientAuthId = requireNotNull(client.remoteAuthId),
+                appointmentId = 1L,
+                appointmentCreatedAtMillis = 10L
+            ))
+
+            expectFailure<EdMotorException.Validation> {
+                repository.saveMaintenance(workshop.id, vehicle.id, null, draft, appointmentWorkId = workId)
+            }
+            val work = requireNotNull(workDao.findById(workId))
+            workDao.update(work.copy(finishedAtMillis = 20L))
+
+            expectFailure<EdMotorException.PermissionDenied> {
+                repository.saveMaintenance(workshop.id, otherVehicle.id, null, draft, appointmentWorkId = workId)
+            }
+            expectFailure<EdMotorException.Validation> {
+                repository.saveMaintenance(
+                    workshop.id, vehicle.id, null, draft.copy(description = " "), appointmentWorkId = workId
+                )
+            }
+            assertEquals(5, stock(product))
+            assertTrue(records(vehicle.id, workshop).isEmpty())
+
+            coroutineScope {
+                awaitAll(
+                    async { repository.saveMaintenance(workshop.id, vehicle.id, null, draft, appointmentWorkId = workId) },
+                    async { repository.saveMaintenance(workshop.id, vehicle.id, null, draft, appointmentWorkId = workId) }
+                )
+            }
+            val saved = records(vehicle.id, workshop).single()
+            assertEquals(3, stock(product))
+            val linked = requireNotNull(workDao.findById(workId))
+            assertEquals(vehicle.id, linked.vehicleId)
+            assertEquals(saved.record.id, linked.maintenanceRecordId)
+
+            expectFailure<EdMotorException.Validation> {
+                repository.saveMaintenance(workshop.id, vehicle.id, saved.record.id + 1, draft, appointmentWorkId = workId)
+            }
+            repository.saveMaintenance(
+                workshop.id, vehicle.id, null, draft.copy(description = ""), appointmentWorkId = workId
+            )
+            assertEquals(saved, records(vehicle.id, workshop).single())
+            assertEquals(3, stock(product))
+
+            repository.deleteMaintenance(saved.record.id, vehicle.id, workshop.id)
+            assertEquals(null, workDao.findById(workId)?.maintenanceRecordId)
+            assertEquals(5, stock(product))
+        }
+    }
+
+    @Test
+    fun appointmentMaintenanceIsOnlyVisibleToTheWorkshopAndItsActiveClient() = runBlocking {
+        withFixture {
+            val client = insertUser("client", UserRole.CLIENT)
+            val other = insertUser("other", UserRole.CLIENT)
+            val vehicle = insertVehicle(client.id)
+            val workId = database.appointmentWorkDao().insertIfAbsent(AppointmentWorkEntity(
+                clientAuthId = requireNotNull(client.remoteAuthId),
+                appointmentId = 1L,
+                appointmentCreatedAtMillis = 10L,
+                finishedAtMillis = 20L
+            ))
+            val draft = maintenanceDraft()
+            repository.saveMaintenance(workshop.id, vehicle.id, null, draft, appointmentWorkId = workId)
+            val record = records(vehicle.id, workshop).single()
+            session.selectProfile(client)
+
+            coroutineScope {
+                val work = repository.observeAppointmentWork(client.id, client.role).produceIn(this)
+                try {
+                    val linked = withTimeout(5_000L) { work.receive() }.single()
+                    assertEquals(workId, linked.work.id)
+                    assertEquals(record, linked.maintenance)
+
+                    session.selectProfile(other)
+                    assertTrue(withTimeout(5_000L) { work.receive() }.isEmpty())
+                    assertTrue(withTimeout(5_000L) {
+                        repository.observeAppointmentWork(other.id, other.role).first().isEmpty()
+                    })
+                } finally {
+                    work.cancel()
+                }
+            }
         }
     }
 

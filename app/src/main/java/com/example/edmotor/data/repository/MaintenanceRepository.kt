@@ -3,6 +3,7 @@ package com.example.edmotor.data.repository
 import androidx.room.withTransaction
 import com.example.edmotor.core.common.EdMotorException
 import com.example.edmotor.core.validation.EdMotorValidation
+import com.example.edmotor.data.local.AppointmentWorkWithMaintenance
 import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.MaintenanceDao
 import com.example.edmotor.data.local.MaintenancePartDao
@@ -69,6 +70,18 @@ class MaintenanceRepository(
             flowOf(emptyList())
         }
     }.buffer(0).distinctUntilChanged()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeAppointmentWork(userId: Int, role: String): Flow<List<AppointmentWorkWithMaintenance>> =
+        sessionManager.currentUser.flatMapLatest { user ->
+            if (userId > 0 && user?.id == userId && user.role == role) {
+                database.appointmentWorkDao().observeForViewer(userId, role).map { work ->
+                    if (sessionManager.currentUser.value === user) work else emptyList()
+                }
+            } else {
+                flowOf(emptyList())
+            }
+        }.buffer(0).distinctUntilChanged()
 
     suspend fun findWithParts(
         recordId: Int,
@@ -138,7 +151,8 @@ class MaintenanceRepository(
         workshopUserId: Int,
         vehicleId: Int,
         recordId: Int?,
-        draft: MaintenanceDraft
+        draft: MaintenanceDraft,
+        appointmentWorkId: Long? = null
     ) {
         val workshop = requireActiveWorkshop(workshopUserId)
 
@@ -157,6 +171,9 @@ class MaintenanceRepository(
 
         if (recordId != null && recordId <= 0) {
             throw EdMotorException.Validation("El identificador del mantenimiento no es válido.")
+        }
+        if (appointmentWorkId != null && appointmentWorkId <= 0L) {
+            throw EdMotorException.Validation("La cita no es válida.")
         }
 
         val validParts = draft.parts.filter { it.name.isNotBlank() || it.catalogProductId != null }
@@ -184,6 +201,35 @@ class MaintenanceRepository(
             requireStoredWorkshop(workshop)
             val vehicle = vehicleDao.findById(vehicleId)
                 ?: throw EdMotorException.NotFound("No se encontró el vehículo.")
+
+            val appointmentWork = appointmentWorkId?.let { workId ->
+                val work = database.appointmentWorkDao().findById(workId)
+                    ?: throw EdMotorException.NotFound("No se encontró la cita para este mantenimiento.")
+                if (work.finishedAtMillis == null) {
+                    throw EdMotorException.Validation("Finaliza la cita antes de registrar el mantenimiento.")
+                }
+                val client = vehicle.ownerUserId?.let { database.userDao().findById(it) }
+                if (client == null || client.role != UserRole.CLIENT.name || client.remoteAuthId != work.clientAuthId) {
+                    throw EdMotorException.PermissionDenied("El vehículo debe pertenecer al cliente de la cita.")
+                }
+                if (work.vehicleId != null && work.vehicleId != vehicleId) {
+                    throw EdMotorException.Validation("El vehículo seleccionado no coincide con el de la cita.")
+                }
+                work
+            }
+            if (appointmentWork != null) {
+                val linkedRecordId = appointmentWork.maintenanceRecordId
+                if (recordId == null && linkedRecordId != null) {
+                    requireCurrentSession(workshop)
+                    return@withTransaction
+                }
+                if (recordId != linkedRecordId) {
+                    throw EdMotorException.Validation("El mantenimiento seleccionado no coincide con el de la cita.")
+                }
+                if (linkedRecordId == null && draft.description.isBlank()) {
+                    throw EdMotorException.Validation("Describe el trabajo realizado en el vehículo.")
+                }
+            }
 
             val existing = recordId?.let { id ->
                 maintenanceDao.findWithParts(id, vehicleId)
@@ -257,6 +303,13 @@ class MaintenanceRepository(
                 )
             }
             if (parts.isNotEmpty()) partDao.insertAll(parts)
+
+            if (appointmentWork != null && appointmentWork.maintenanceRecordId == null) {
+                val linked = appointmentWork.copy(vehicleId = vehicle.id, maintenanceRecordId = savedId)
+                if (database.appointmentWorkDao().update(linked) != 1) {
+                    throw EdMotorException.NotFound("No fue posible vincular el mantenimiento con la cita.")
+                }
+            }
 
             val currentKm = vehicle.mileage.filter { it.isDigit() }.toIntOrNull() ?: 0
             if (draft.mileageKm >= currentKm) {

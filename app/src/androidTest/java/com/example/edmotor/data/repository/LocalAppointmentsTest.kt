@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -118,6 +119,44 @@ class LocalAppointmentsTest {
             assertTrue(repository.rejectAppointment(workshop, pending.id) is AppointmentOperationResult.Success)
             assertEquals(AppointmentStatus.REJECTED, dao.findLocalAppointment(pending.id)?.status)
             assertTrue(repository.acceptAppointment(workshop, pending.id) is AppointmentOperationResult.Error)
+
+            session.selectProfile(client)
+            assertTrue(repository.createAppointment(client, firstVehicle, workshopStart, service) is AppointmentOperationResult.Success)
+            val next = withTimeout(5_000L) {
+                repository.observeAppointments(clientAccount).first().appointments.single { it.status == AppointmentStatus.PENDING }
+            }
+            session.selectProfile(workshop)
+            assertTrue(repository.finishAppointment(workshop, next.id, next) is AppointmentOperationResult.Error)
+            assertTrue(repository.acceptAppointment(workshop, next.id) is AppointmentOperationResult.Success)
+            session.selectProfile(client)
+            assertTrue(repository.finishAppointment(client, next.id, next) is AppointmentOperationResult.Error)
+            session.selectProfile(workshop)
+            val reusedId = next.copy(createdAtMillis = next.createdAtMillis + 1)
+            assertTrue(repository.finishAppointment(workshop, next.id, reusedId) is AppointmentOperationResult.Error)
+
+            val beforeFinish = System.currentTimeMillis()
+            val result = repository.finishAppointment(workshop, next.id, next) as AppointmentOperationResult.Success
+            val afterFinish = System.currentTimeMillis()
+            val closed = withTimeout(5_000L) {
+                repository.observeAppointments(workshopAccount).first().appointments.single { it.id == next.id }
+            }
+            assertEquals(AppointmentStatus.COMPLETED, closed.status)
+            assertEquals(next.scheduledAtMillis, closed.scheduledAtMillis)
+            val closedAt = requireNotNull(closed.finishedAtMillis)
+            assertTrue(closedAt in beforeFinish..afterFinish)
+            val work = requireNotNull(database.appointmentWorkDao().findById(requireNotNull(result.workId)))
+            assertEquals(next.clientAuthId, work.clientAuthId)
+            assertEquals(next.id, work.appointmentId)
+            assertEquals(next.createdAtMillis, work.appointmentCreatedAtMillis)
+            assertEquals(firstVehicle.id, work.vehicleId)
+            assertEquals(closedAt, work.finishedAtMillis)
+
+            delay(25L)
+            val retry = repository.finishAppointment(workshop, next.id, closed) as AppointmentOperationResult.Success
+            assertEquals(work.id, retry.workId)
+            assertEquals(closedAt, dao.findLocalAppointment(next.id)?.updatedAtMillis)
+            assertEquals(work, database.appointmentWorkDao().findById(work.id))
+            assertTrue(repository.cancelAppointment(workshop, next.id) is AppointmentOperationResult.Error)
         } finally {
             storeJob.cancelAndJoin()
             database.close()

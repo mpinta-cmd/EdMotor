@@ -20,6 +20,11 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.edmotor.data.local.AppointmentWorkEntity
+import com.example.edmotor.data.local.AppointmentWorkWithMaintenance
+import com.example.edmotor.data.local.MaintenancePartEntity
+import com.example.edmotor.data.local.MaintenanceRecordEntity
+import com.example.edmotor.data.local.MaintenanceWithParts
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentServiceType
 import com.example.edmotor.model.AppointmentStatus
@@ -245,6 +250,133 @@ class AppointmentRequestScreenTest {
         compose.onNodeWithText("Confirmar cancelación").assertIsEnabled().performClick()
         compose.onNodeWithText("Cancelada").assertExists()
         compose.onNodeWithText("Reagendar").assertDoesNotExist()
+    }
+
+    @Test
+    fun workshopFinishesConfirmedAppointmentAndCanRegisterMaintenance() {
+        val confirmed = sampleAppointment(AppointmentStatus.CONFIRMED)
+        val finishTime = confirmed.scheduledAtMillis + 47 * 60_000L
+        val completed = confirmed.copy(status = AppointmentStatus.COMPLETED, updatedAtMillis = finishTime)
+        var appointment by mutableStateOf(confirmed)
+        var finishRequested: Appointment? = null
+        var maintenanceRequested: Appointment? = null
+
+        compose.setContent {
+            MaterialTheme {
+                AppointmentsScreen(
+                    isWorkshop = true,
+                    appointments = listOf(appointment),
+                    syncState = AppointmentSyncState.UP_TO_DATE,
+                    vehicles = emptyList(),
+                    isProcessing = false,
+                    message = null,
+                    isError = false,
+                    onCreateAppointment = { _, _, _ -> },
+                    onAccept = {},
+                    onReject = {},
+                    onCancel = {},
+                    onReschedule = { _, _ -> },
+                    onClearMessage = {},
+                    onRefresh = {},
+                    onFinish = {
+                        finishRequested = it
+                        appointment = completed
+                    },
+                    onRegisterMaintenance = { maintenanceRequested = it }
+                )
+            }
+        }
+
+        compose.onNodeWithText("Ver citas agendadas").performClick()
+        appointmentList().performScrollToKey(confirmed.id)
+        compose.onNodeWithText("Terminar cita").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(null, finishRequested) }
+        compose.onNodeWithText("Confirmar finalización").assertIsEnabled().performClick()
+        compose.onNodeWithText("Cita terminada").assertExists()
+        val formattedFinish = SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO")).format(Date(finishTime))
+        compose.onNodeWithText("Terminada el $formattedFinish").assertExists()
+        compose.onNodeWithText("Terminar cita").assertDoesNotExist()
+        compose.onNodeWithText("Cancelar cita").assertDoesNotExist()
+        compose.onNodeWithText("Reagendar").assertDoesNotExist()
+        compose.onNodeWithText("Registrar mantenimiento").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(confirmed, finishRequested)
+            assertEquals(completed, maintenanceRequested)
+        }
+    }
+
+    @Test
+    fun clientSeesPickupStatusAndOnlyTheMatchingMaintenanceReport() {
+        val original = sampleAppointment(AppointmentStatus.COMPLETED)
+        val completed = original.copy(updatedAtMillis = original.scheduledAtMillis + 47 * 60_000L)
+        val report = MaintenanceWithParts(
+            record = MaintenanceRecordEntity(
+                id = 72,
+                vehicleId = 5,
+                createdByUserId = 1,
+                serviceType = "Cambio de aceite",
+                serviceDate = "2026-11-19",
+                mileageKm = 42_000,
+                description = "Se reemplazó el filtro y se revisaron las fugas."
+            ),
+            parts = listOf(
+                MaintenancePartEntity(maintenanceRecordId = 72, name = "Filtro del motor"),
+                MaintenancePartEntity(maintenanceRecordId = 73, name = "Repuesto de otro informe")
+            )
+        )
+        val work = AppointmentWorkEntity(
+            clientAuthId = completed.clientAuthId,
+            appointmentId = completed.id,
+            appointmentCreatedAtMillis = completed.createdAtMillis,
+            vehicleId = report.record.vehicleId,
+            finishedAtMillis = completed.finishedAtMillis,
+            maintenanceRecordId = report.record.id
+        )
+        var linkedWork by mutableStateOf(
+            listOf(
+                AppointmentWorkWithMaintenance(work.copy(clientAuthId = "otro-cliente"), report),
+                AppointmentWorkWithMaintenance(work.copy(appointmentCreatedAtMillis = work.appointmentCreatedAtMillis - 1), report),
+                AppointmentWorkWithMaintenance(work.copy(vehicleId = 6), report)
+            )
+        )
+        var historyVehicle: Int? = null
+
+        compose.setContent {
+            MaterialTheme {
+                AppointmentsScreen(
+                    isWorkshop = false,
+                    appointments = listOf(completed),
+                    syncState = AppointmentSyncState.UP_TO_DATE,
+                    vehicles = emptyList(),
+                    isProcessing = false,
+                    message = null,
+                    isError = false,
+                    onCreateAppointment = { _, _, _ -> },
+                    onAccept = {},
+                    onReject = {},
+                    onCancel = {},
+                    onReschedule = { _, _ -> },
+                    onClearMessage = {},
+                    onRefresh = {},
+                    appointmentWork = linkedWork,
+                    onViewMaintenance = { historyVehicle = it }
+                )
+            }
+        }
+
+        appointmentList().performScrollToKey(completed.id)
+        compose.onNodeWithText("Listo para recoger").assertExists()
+        compose.onNodeWithText("Mantenimiento realizado").assertDoesNotExist()
+        compose.onNodeWithText("Registrar mantenimiento").assertDoesNotExist()
+        compose.onNodeWithText("Terminar cita").assertDoesNotExist()
+
+        compose.runOnIdle { linkedWork = listOf(AppointmentWorkWithMaintenance(work, report)) }
+        compose.onNodeWithText("Mantenimiento realizado").assertExists()
+        compose.onNodeWithText(report.record.description).assertExists()
+        compose.onNodeWithText("Filtro del motor · 1 unidad").assertExists()
+        compose.onNodeWithText("Repuesto de otro informe", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Ver mantenimiento").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(report.record.vehicleId, historyVehicle) }
     }
 
     private fun appointmentList() = compose.onNode(hasScrollToIndexAction())

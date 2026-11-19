@@ -30,9 +30,10 @@ import androidx.room.RoomDatabase
 
         // Citas
         AppointmentEntity::class,
-        AppointmentCacheEntity::class
+        AppointmentCacheEntity::class,
+        AppointmentWorkEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class EdMotorDatabase : RoomDatabase() {
@@ -60,6 +61,7 @@ abstract class EdMotorDatabase : RoomDatabase() {
 
     // CITAS
     abstract fun appointmentDao(): AppointmentDao
+    abstract fun appointmentWorkDao(): AppointmentWorkDao
 
 
     companion object {

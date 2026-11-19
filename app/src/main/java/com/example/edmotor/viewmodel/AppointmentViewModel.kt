@@ -6,6 +6,7 @@ import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.repository.AppointmentAccount
 import com.example.edmotor.data.repository.AppointmentRepository
 import com.example.edmotor.data.repository.AppointmentSnapshot
+import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentOperationResult
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -101,6 +103,13 @@ class AppointmentViewModel(
         repository.acceptAppointment(user, appointmentId)
     }
 
+    fun finishAppointment(appointment: Appointment, onFinished: (Long?) -> Unit) = executeAppointmentChange(
+        workshopOnly = true,
+        onSuccess = { onFinished(it.workId) }
+    ) { user ->
+        repository.finishAppointment(user, appointment.id, expected = appointment)
+    }
+
     fun rejectAppointment(appointmentId: Long) = executeAppointmentChange(workshopOnly = true) { user ->
         repository.rejectAppointment(user, appointmentId)
     }
@@ -115,6 +124,7 @@ class AppointmentViewModel(
 
     private fun executeAppointmentChange(
         workshopOnly: Boolean = false,
+        onSuccess: (AppointmentOperationResult.Success) -> Unit = {},
         request: suspend (UserEntity) -> AppointmentOperationResult
     ) {
         val user = sessionManager.currentUser.value
@@ -127,10 +137,14 @@ class AppointmentViewModel(
             showMessage(account, "Entra como dueño para revisar las solicitudes de cita.", isError = true)
             return
         }
-        execute(account) { request(user) }
+        execute(account, onSuccess) { request(user) }
     }
 
-    private fun execute(account: AppointmentAccount, request: suspend () -> AppointmentOperationResult) {
+    private fun execute(
+        account: AppointmentAccount,
+        onSuccess: (AppointmentOperationResult.Success) -> Unit = {},
+        request: suspend () -> AppointmentOperationResult
+    ) {
         val activeUser = sessionManager.currentUser.value
         val currentOperation = operation.value
         if (currentOperation.account == account && currentOperation.isProcessing) return
@@ -155,7 +169,12 @@ class AppointmentViewModel(
                     is AppointmentOperationResult.Error -> OperationState(account, message = result.message, isError = true)
                 }
             }
-            operation.update { if (it === processing) completed else it }
+            val applied = operation.updateAndGet { if (it === processing) completed else it }
+            if (applied === completed && result is AppointmentOperationResult.Success &&
+                sessionManager.currentUser.value === activeUser
+            ) {
+                onSuccess(result)
+            }
         }
     }
 

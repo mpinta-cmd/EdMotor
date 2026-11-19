@@ -92,13 +92,18 @@ fun MaintenanceFormScreen(
         (Int?, String?) -> Unit
     ) -> Unit,
     onSave: (MaintenanceDraft) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    appointmentServiceType: String? = null,
+    appointmentFinishedAtMillis: Long? = null
 ) {
-    var serviceType by rememberSaveable(existingRecord?.record?.id) {
-        mutableStateOf(existingRecord?.record?.serviceType ?: "Cambio de aceite")
+    val fromAppointment = appointmentFinishedAtMillis != null
+    var serviceType by rememberSaveable(existingRecord?.record?.id, appointmentFinishedAtMillis) {
+        val initialType = if (fromAppointment) appointmentServiceType.orEmpty() else "Cambio de aceite"
+        mutableStateOf(existingRecord?.record?.serviceType ?: initialType)
     }
-    var serviceDate by rememberSaveable(existingRecord?.record?.id) {
-        mutableStateOf(existingRecord?.record?.serviceDate ?: SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()))
+    var serviceDate by rememberSaveable(existingRecord?.record?.id, appointmentFinishedAtMillis) {
+        val initialDate = appointmentFinishedAtMillis?.let { Date(it) } ?: Date()
+        mutableStateOf(existingRecord?.record?.serviceDate ?: SimpleDateFormat("yyyy-MM-dd", Locale.US).format(initialDate))
     }
     var mileage by rememberSaveable(existingRecord?.record?.id) {
         mutableStateOf(existingRecord?.record?.mileageKm?.toString() ?: "")
@@ -201,7 +206,9 @@ fun MaintenanceFormScreen(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        TextButton(onClick = onBack, enabled = !isSaving) { Text("← Volver al historial") }
+        TextButton(onClick = onBack, enabled = !isSaving) {
+            Text(if (fromAppointment) "← Volver a Citas" else "← Volver al historial")
+        }
         Text(
             if (existingRecord == null) "Registrar mantenimiento" else "Editar mantenimiento",
             style = MaterialTheme.typography.headlineSmall,
@@ -242,6 +249,9 @@ fun MaintenanceFormScreen(
                     value = description,
                     onValueChange = { description = it },
                     label = { Text("Descripción del trabajo realizado") },
+                    supportingText = if (fromAppointment) {
+                        { Text("El cliente verá este detalle en Citas.") }
+                    } else null,
                     minLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )

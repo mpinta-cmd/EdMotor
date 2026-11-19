@@ -134,10 +134,8 @@ internal fun AppointmentRequestForm(
                 enabled = !isProcessing && selectedVehicle != null && availableService != null && selectedSlot != null,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
-                    val checkedSlot = appointmentTimeSlots(selectedDate, System.currentTimeMillis())
-                        .firstOrNull { it.time == selectedSlot?.time }
-                    if (selectedVehicle != null && availableService != null && checkedSlot != null) {
-                        onCreateAppointment(selectedVehicle, checkedSlot.startsAtMillis, availableService)
+                    if (selectedVehicle != null && availableService != null && selectedSlot != null) {
+                        onCreateAppointment(selectedVehicle, selectedSlot.startsAtMillis, availableService)
                     }
                 }
             ) {

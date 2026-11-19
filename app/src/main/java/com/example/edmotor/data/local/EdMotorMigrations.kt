@@ -21,6 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * 7 -> 8: identidad remota histórica
  * 8 -> 9: citas
  * 9 -> 10: caché de citas por cuenta y rol
+ * 10 -> 11: vínculo del trabajo de una cita con el mantenimiento local
  */
 object EdMotorMigrations {
 
@@ -559,6 +560,7 @@ object EdMotorMigrations {
         MIGRATION_6_7,
         MIGRATION_7_8,
         AppointmentMigration.MIGRATION_8_9,
-        AppointmentMigration.MIGRATION_9_10
+        AppointmentMigration.MIGRATION_9_10,
+        AppointmentMigration.MIGRATION_10_11
     )
 }

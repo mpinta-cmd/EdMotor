@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.example.edmotor.data.local.AppointmentCacheEntity
 import com.example.edmotor.data.local.AppointmentDao
 import com.example.edmotor.data.local.AppointmentEntity
+import com.example.edmotor.data.local.AppointmentWorkEntity
 import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.remote.MockApiConnection
@@ -68,11 +69,12 @@ class AppointmentRepository(
     private val appointmentDao: AppointmentDao,
     private val mockApi: MockApiConnection?,
     private val sessionManager: SessionManager,
-    private val localDatabase: EdMotorDatabase? = null
+    private val localDatabase: EdMotorDatabase? = null,
+    private val workDatabase: EdMotorDatabase? = localDatabase
 ) {
     private val refreshRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     private val remoteWrites = Mutex()
-    private val pendingSubmissions = mutableMapOf<RemoteBooking, MockAppointmentCreateDto>()
+    private val pendingSubmissions = mutableMapOf<RemoteBooking, RemoteSubmission>()
     private var lastRemoteCreationMillis = 0L
 
     internal fun accountFor(user: UserEntity?): AppointmentAccount? {
@@ -206,33 +208,44 @@ class AppointmentRepository(
                     )
                 )
                 check(savedId in 1..Int.MAX_VALUE.toLong())
+                saveAppointmentWork(
+                    database,
+                    AppointmentWorkEntity(
+                        clientAuthId = account.profileKey,
+                        appointmentId = savedId,
+                        appointmentCreatedAtMillis = now,
+                        vehicleId = registeredVehicle.id
+                    )
+                )
                 AppointmentOperationResult.Success("Solicitud de cita guardada en este dispositivo.")
             }
         }
 
+        val database = workDatabase
+            ?: return AppointmentOperationResult.Error("No fue posible guardar el vínculo con el vehículo.")
         return performRemoteOperation(
             account,
             fallback = "No fue posible comprobar el envío. Actualiza las citas antes de volver a solicitarla."
         ) { connection, user ->
             check(user.id == client.id)
+            if (database.vehicleDao().findById(vehicle.id)?.ownerUserId != user.id) {
+                return@performRemoteOperation AppointmentOperationResult.Error(
+                    "Selecciona un vehículo registrado en tu garaje."
+                )
+            }
             val booking = RemoteBooking(account.profileKey, vehicle.id, scheduledAtMillis, serviceType)
             val sendTime = System.currentTimeMillis()
             pendingSubmissions.keys.removeAll { it.scheduledAtMillis <= sendTime }
             val previous = pendingSubmissions[booking]
-            if (previous != null && connection.service.findSubmittedAppointment(previous) != null) {
-                pendingSubmissions.remove(booking)
-                return@performRemoteOperation AppointmentOperationResult.Success(
-                    "La solicitud anterior ya estaba registrada."
-                )
-            }
-            if (scheduledAtMillis < System.currentTimeMillis() + APPOINTMENT_MINIMUM_NOTICE_MILLIS) {
+            val recovered = previous?.let { it.appointment ?: connection.service.findSubmittedAppointment(it.request) }
+            if (recovered == null && scheduledAtMillis < System.currentTimeMillis() + APPOINTMENT_MINIMUM_NOTICE_MILLIS) {
                 return@performRemoteOperation AppointmentOperationResult.Error(
                     "Selecciona una fecha y hora con al menos 15 minutos de anticipación."
                 )
             }
 
             val createdAt = maxOf(sendTime, lastRemoteCreationMillis + 1)
-            val body = previous ?: MockAppointmentCreateDto(
+            val body = previous?.request ?: MockAppointmentCreateDto(
                 profileId = account.profileId,
                 serviceType = serviceType,
                 vehicleBrand = SHARED_VEHICLE_BRAND,
@@ -243,22 +256,160 @@ class AppointmentRepository(
                 createdAtMillis = createdAt,
                 updatedAtMillis = createdAt
             )
-            requireActiveAccount(account, user)
-            lastRemoteCreationMillis = maxOf(lastRemoteCreationMillis, body.createdAtMillis)
-            pendingSubmissions[booking] = body
-            try {
-                connection.service.submitAppointment(body)
-            } catch (error: HttpException) {
-                if (isDefinitiveMockAppointmentFailure(error.code())) pendingSubmissions.remove(booking)
-                throw error
+            val submitted = recovered ?: run {
+                requireActiveAccount(account, user)
+                lastRemoteCreationMillis = maxOf(lastRemoteCreationMillis, body.createdAtMillis)
+                pendingSubmissions[booking] = RemoteSubmission(body)
+                try {
+                    connection.service.submitAppointment(body)
+                } catch (error: HttpException) {
+                    if (isDefinitiveMockAppointmentFailure(error.code())) pendingSubmissions.remove(booking)
+                    throw error
+                }
+            }
+            pendingSubmissions[booking] = RemoteSubmission(body, submitted)
+            database.withTransaction {
+                requireActiveAccount(account, user)
+                val registeredVehicle = database.vehicleDao().findById(vehicle.id)?.takeIf { it.ownerUserId == user.id }
+                saveAppointmentWork(
+                    database,
+                    AppointmentWorkEntity(
+                        clientAuthId = account.profileKey,
+                        appointmentId = requireNotNull(mockAppointmentId(submitted.id)),
+                        appointmentCreatedAtMillis = submitted.createdAtMillis,
+                        vehicleId = registeredVehicle?.id,
+                        finishedAtMillis = submitted.updatedAtMillis.takeIf {
+                            submitted.status == AppointmentStatus.COMPLETED && it > 0
+                        }
+                    )
+                )
+                requireActiveAccount(account, user)
             }
             pendingSubmissions.remove(booking)
-            AppointmentOperationResult.Success("Solicitud de cita enviada.")
+            val message = if (recovered == null) "Solicitud de cita enviada."
+            else "La solicitud anterior ya estaba registrada."
+            AppointmentOperationResult.Success(message)
         }
     }
 
     suspend fun acceptAppointment(workshop: UserEntity, appointmentId: Long): AppointmentOperationResult =
         changeAppointment(workshop, appointmentId, AppointmentAction.CONFIRM)
+
+    suspend fun finishAppointment(
+        workshop: UserEntity,
+        appointmentId: Long,
+        expected: Appointment? = null
+    ): AppointmentOperationResult {
+        val account = accountFor(workshop)?.takeIf { it.role == UserRole.WORKSHOP }
+            ?: return AppointmentOperationResult.Error("Entra como dueño para terminar la cita.")
+        if (appointmentId <= 0L) return AppointmentOperationResult.Error("La cita no es válida.")
+        val requestedFinish = System.currentTimeMillis()
+        val changed = AppointmentOperationResult.Error("La cita cambió. Actualiza la agenda y vuelve a intentarlo.")
+
+        localDatabase?.let { database ->
+            return performLocalOperation(database, account) {
+                val target = appointmentDao.findLocalAppointment(appointmentId)
+                    ?: return@performLocalOperation AppointmentOperationResult.Error("La cita ya no está disponible.")
+                if (!expected.matchesAppointment(appointmentId, target.clientAuthId, target.createdAtMillis)) {
+                    return@performLocalOperation changed
+                }
+                applyAppointmentFinish(appointmentId, target.status, target.updatedAtMillis, requestedFinish) { finishedAt ->
+                    if (target.status != AppointmentStatus.COMPLETED) {
+                        check(appointmentDao.updateLocalAppointment(
+                            appointmentId = appointmentId,
+                            previousStatus = AppointmentStatus.CONFIRMED,
+                            status = AppointmentStatus.COMPLETED,
+                            scheduledAtMillis = null,
+                            updatedAtMillis = finishedAt
+                        ) == 1)
+                    }
+                    saveAppointmentWork(
+                        database,
+                        AppointmentWorkEntity(
+                            clientAuthId = target.clientAuthId,
+                            appointmentId = appointmentId,
+                            appointmentCreatedAtMillis = target.createdAtMillis,
+                            finishedAtMillis = finishedAt
+                        )
+                    )
+                }
+            }
+        }
+
+        val database = workDatabase
+            ?: return AppointmentOperationResult.Error("No fue posible guardar el cierre en este dispositivo.")
+        return performRemoteOperation(
+            account,
+            fallback = "No fue posible comprobar el cierre. Actualiza la agenda y vuelve a abrir la cita."
+        ) { connection, user ->
+            val target = connection.service.getAppointment(appointmentId.toString())
+            check(mockAppointmentId(target.id) == appointmentId)
+            val clientAuthId = connection.profileKey(target.profileId)
+            if (!expected.matchesAppointment(appointmentId, clientAuthId, target.createdAtMillis)) {
+                return@performRemoteOperation changed
+            }
+            applyAppointmentFinish(appointmentId, target.status, target.updatedAtMillis, requestedFinish) { finishedAt ->
+                requireActiveAccount(account, user)
+                val closed = if (target.status == AppointmentStatus.COMPLETED) target else {
+                    connection.service.submitAppointmentStatus(
+                        target,
+                        MockAppointmentStatusDto(AppointmentStatus.COMPLETED, finishedAt)
+                    )
+                }
+                database.withTransaction {
+                    requireActiveAccount(account, user)
+                    val workId = saveAppointmentWork(
+                        database,
+                        AppointmentWorkEntity(
+                            clientAuthId = clientAuthId,
+                            appointmentId = appointmentId,
+                            appointmentCreatedAtMillis = closed.createdAtMillis,
+                            finishedAtMillis = closed.updatedAtMillis
+                        )
+                    )
+                    requireActiveAccount(account, user)
+                    workId
+                }
+            }
+        }
+    }
+
+    private suspend fun applyAppointmentFinish(
+        appointmentId: Long,
+        currentStatus: String,
+        updatedAtMillis: Long,
+        requestedFinish: Long,
+        persist: suspend (finishedAtMillis: Long) -> Long
+    ): AppointmentOperationResult {
+        val finishedAt = when (currentStatus) {
+            AppointmentStatus.CONFIRMED -> requestedFinish
+            AppointmentStatus.COMPLETED -> updatedAtMillis
+            else -> return AppointmentOperationResult.Error("Solo puedes terminar una cita confirmada.")
+        }
+        if (finishedAt <= 0L) {
+            return AppointmentOperationResult.Error("No se encontró la hora en que se terminó esta cita.")
+        }
+        val workId = persist(finishedAt)
+        return AppointmentOperationResult.Success("Cita #$appointmentId finalizada.", workId)
+    }
+
+    private fun Appointment?.matchesAppointment(id: Long, clientAuthId: String, createdAtMillis: Long): Boolean =
+        this == null || (this.id == id && this.clientAuthId == clientAuthId && this.createdAtMillis == createdAtMillis)
+
+    private suspend fun saveAppointmentWork(database: EdMotorDatabase, incoming: AppointmentWorkEntity): Long {
+        val dao = database.appointmentWorkDao()
+        val existing = dao.findForAppointment(
+            incoming.clientAuthId, incoming.appointmentId, incoming.appointmentCreatedAtMillis
+        )
+        if (existing == null) return dao.insertIfAbsent(incoming).also { check(it > 0L) }
+
+        val merged = existing.copy(
+            vehicleId = existing.vehicleId ?: incoming.vehicleId,
+            finishedAtMillis = existing.finishedAtMillis ?: incoming.finishedAtMillis
+        )
+        if (merged != existing) check(dao.update(merged) == 1)
+        return existing.id
+    }
 
     suspend fun rejectAppointment(workshop: UserEntity, appointmentId: Long): AppointmentOperationResult =
         changeAppointment(workshop, appointmentId, AppointmentAction.REJECT)
@@ -520,6 +671,11 @@ class AppointmentRepository(
         val vehicleId: Int,
         val scheduledAtMillis: Long,
         val serviceType: String
+    )
+
+    private data class RemoteSubmission(
+        val request: MockAppointmentCreateDto,
+        val appointment: MockAppointmentDto? = null
     )
 
     private enum class AppointmentAction(val workshopOnly: Boolean, val resultDescription: String) {

@@ -47,6 +47,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.BuildConfig
+import com.example.edmotor.data.local.AppointmentWorkWithMaintenance
+import com.example.edmotor.data.local.MaintenanceWithParts
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
@@ -55,6 +57,7 @@ import com.example.edmotor.model.appointmentDateUtcMillis
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,11 +77,16 @@ fun AppointmentsScreen(
     onCancel: (Long) -> Unit,
     onReschedule: (Long, Long) -> Unit,
     onClearMessage: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    appointmentWork: List<AppointmentWorkWithMaintenance> = emptyList(),
+    onFinish: (Appointment) -> Unit = {},
+    onRegisterMaintenance: (Appointment) -> Unit = {},
+    onViewMaintenance: ((Int) -> Unit)? = null
 ) {
     var showCalendar by rememberSaveable(isWorkshop) { mutableStateOf(false) }
     var rescheduleId by rememberSaveable { mutableStateOf<Long?>(null) }
     var cancelId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pendingFinish by remember(isWorkshop) { mutableStateOf<Appointment?>(null) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val today = remember(nowMillis) { appointmentDateUtcMillis(nowMillis) }
     var selectedDay by rememberSaveable(isWorkshop) { mutableLongStateOf(today) }
@@ -94,6 +102,11 @@ fun AppointmentsScreen(
     }
     val appointmentsByDay = remember(orderedAppointments) {
         orderedAppointments.groupBy { appointmentDateUtcMillis(it.scheduledAtMillis) }
+    }
+    val workByAppointment = remember(appointmentWork) {
+        appointmentWork.associateBy { (work) ->
+            Triple(work.clientAuthId, work.appointmentId, work.appointmentCreatedAtMillis)
+        }
     }
     val requests = remember(orderedAppointments) {
         orderedAppointments.filter { it.status == AppointmentStatus.PENDING }
@@ -119,15 +132,25 @@ fun AppointmentsScreen(
     BackHandler(enabled = showCalendar) { showCalendar = false }
 
     val appointmentContent: @Composable (Appointment) -> Unit = { appointment ->
+        val report = workByAppointment[appointment.identity()]?.let { (work, maintenance) ->
+            maintenance?.takeIf {
+                work.finishedAtMillis == appointment.finishedAtMillis &&
+                    it.record.id == work.maintenanceRecordId && it.record.vehicleId == work.vehicleId
+            }
+        }
         AppointmentCard(
             appointment = appointment,
             isWorkshop = isWorkshop,
             showsReview = isWorkshop && !showCalendar,
             canManage = canManage,
+            maintenance = report,
             onAccept = { onAccept(appointment.id) },
             onReject = { onReject(appointment.id) },
             onReschedule = { rescheduleId = appointment.id },
-            onCancel = { cancelId = appointment.id }
+            onCancel = { cancelId = appointment.id },
+            onFinish = { pendingFinish = appointment },
+            onRegisterMaintenance = { onRegisterMaintenance(appointment) },
+            onViewMaintenance = onViewMaintenance
         )
     }
 
@@ -295,6 +318,30 @@ fun AppointmentsScreen(
             dismissButton = { TextButton(onClick = { cancelId = null }) { Text("Conservar cita") } }
         )
     }
+
+    val appointmentToFinish = pendingFinish?.let { selected ->
+        appointments.firstOrNull {
+            it.identity() == selected.identity() && it.status == AppointmentStatus.CONFIRMED
+        }
+    }
+    if (isWorkshop && appointmentToFinish != null) {
+        AlertDialog(
+            icon = { Icon(Icons.Outlined.EventAvailable, contentDescription = null) },
+            title = { Text("Terminar la cita") },
+            text = { Text("El cliente verá que su vehículo está listo para recoger. Después podrás registrar el mantenimiento realizado.") },
+            onDismissRequest = { pendingFinish = null },
+            confirmButton = {
+                Button(
+                    enabled = canManage,
+                    onClick = {
+                        pendingFinish = null
+                        onFinish(appointmentToFinish)
+                    }
+                ) { Text("Confirmar finalización") }
+            },
+            dismissButton = { TextButton(onClick = { pendingFinish = null }) { Text("Volver") } }
+        )
+    }
 }
 
 @Composable
@@ -393,14 +440,19 @@ private fun AppointmentCard(
     isWorkshop: Boolean,
     showsReview: Boolean,
     canManage: Boolean,
+    maintenance: MaintenanceWithParts?,
     onAccept: () -> Unit,
     onReject: () -> Unit,
     onReschedule: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    onFinish: () -> Unit,
+    onRegisterMaintenance: () -> Unit,
+    onViewMaintenance: ((Int) -> Unit)?
 ) {
     val colors = MaterialTheme.colorScheme
     val (statusLabel, statusContainer, statusColor) = when (appointment.status) {
         AppointmentStatus.CONFIRMED -> Triple("Confirmada", colors.primaryContainer, colors.onPrimaryContainer)
+        AppointmentStatus.COMPLETED -> Triple("Cita terminada", colors.tertiaryContainer, colors.onTertiaryContainer)
         AppointmentStatus.PENDING -> Triple("Pendiente", colors.secondaryContainer, colors.onSecondaryContainer)
         AppointmentStatus.REJECTED -> Triple("Rechazada", colors.surfaceVariant, colors.onSurfaceVariant)
         AppointmentStatus.CANCELLED -> Triple("Cancelada", colors.surfaceVariant, colors.onSurfaceVariant)
@@ -457,6 +509,9 @@ private fun AppointmentCard(
             if (appointment.canBeChanged()) {
                 val requiresReview = showsReview && appointment.status == AppointmentStatus.PENDING
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (isWorkshop && appointment.status == AppointmentStatus.CONFIRMED) {
+                        Button(onClick = onFinish, enabled = canManage) { Text("Terminar cita") }
+                    }
                     if (requiresReview) {
                         Button(onClick = onAccept, enabled = canManage) { Text("Confirmar") }
                         OutlinedButton(onClick = onReject, enabled = canManage) { Text("Rechazar") }
@@ -466,6 +521,70 @@ private fun AppointmentCard(
                     }
                     TextButton(onClick = onCancel, enabled = canManage) { Text("Cancelar cita") }
                 }
+            }
+
+            if (appointment.status == AppointmentStatus.COMPLETED) {
+                appointment.finishedAtMillis?.let { finishedAt ->
+                    Text(
+                        "Terminada el ${formatAppointmentDateTime(finishedAt)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+                if (!isWorkshop) {
+                    Text(
+                        "Listo para recoger",
+                        color = colors.primary,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (maintenance != null) {
+                    AppointmentMaintenanceSummary(maintenance)
+                    if (onViewMaintenance != null) {
+                        OutlinedButton(onClick = { onViewMaintenance(maintenance.record.vehicleId) }) {
+                            Text("Ver mantenimiento")
+                        }
+                    }
+                } else if (isWorkshop) {
+                    Button(onClick = onRegisterMaintenance, enabled = canManage) { Text("Registrar mantenimiento") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppointmentMaintenanceSummary(maintenance: MaintenanceWithParts) {
+    val numbers = remember { NumberFormat.getNumberInstance(Locale("es", "CO")) }
+    val colors = MaterialTheme.colorScheme
+    val record = maintenance.record
+    val parts = maintenance.parts.filter { it.maintenanceRecordId == record.id }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = colors.surfaceVariant,
+        contentColor = colors.onSurfaceVariant
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Mantenimiento realizado", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(record.serviceType, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text(record.description, style = MaterialTheme.typography.bodyMedium)
+            if (parts.isNotEmpty()) {
+                Text("Repuestos utilizados", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                parts.forEach { part ->
+                    Text(
+                        "${part.name} · ${numbers.format(part.quantity)} ${part.unit}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    val details = listOf(part.brand, part.reference, part.specification).filter { it.isNotBlank() }
+                    if (details.isNotEmpty()) {
+                        Text(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            if (record.observations.isNotBlank()) {
+                Text("Observaciones: ${record.observations}", style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -484,6 +603,8 @@ private fun EmptyAppointmentsMessage(message: String) {
 }
 
 private fun Appointment.canBeChanged(): Boolean = AppointmentStatus.isActive(status)
+
+private fun Appointment.identity() = Triple(clientAuthId, id, createdAtMillis)
 
 internal fun formatAppointmentDateTime(millis: Long): String =
     SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO")).format(Date(millis))

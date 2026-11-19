@@ -92,7 +92,8 @@ class AppContainer(context: Context) {
         appointmentDao = database.appointmentDao(),
         mockApi = mockApi,
         sessionManager = sessionManager,
-        localDatabase = database.takeIf { privateMode }
+        localDatabase = database.takeIf { privateMode },
+        workDatabase = database
     )
 
     val authViewModelFactory = AuthViewModelFactory(authRepository)

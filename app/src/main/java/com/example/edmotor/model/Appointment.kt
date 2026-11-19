@@ -5,6 +5,7 @@ object AppointmentStatus {
     const val CONFIRMED = "CONFIRMED"
     const val REJECTED = "REJECTED"
     const val CANCELLED = "CANCELLED"
+    const val COMPLETED = "COMPLETED"
 
     fun isActive(status: String): Boolean = status == PENDING || status == CONFIRMED
 }
@@ -37,9 +38,12 @@ data class Appointment(
     val status: String,
     val createdAtMillis: Long,
     val updatedAtMillis: Long
-)
+) {
+    val finishedAtMillis: Long?
+        get() = updatedAtMillis.takeIf { status == AppointmentStatus.COMPLETED }
+}
 
 sealed interface AppointmentOperationResult {
-    data class Success(val message: String) : AppointmentOperationResult
+    data class Success(val message: String, val workId: Long? = null) : AppointmentOperationResult
     data class Error(val message: String) : AppointmentOperationResult
 }

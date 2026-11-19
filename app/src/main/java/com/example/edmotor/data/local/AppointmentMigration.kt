@@ -95,4 +95,45 @@ object AppointmentMigration {
             )
         }
     }
+
+    val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `appointment_work` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `clientAuthId` TEXT NOT NULL,
+                    `appointmentId` INTEGER NOT NULL,
+                    `appointmentCreatedAtMillis` INTEGER NOT NULL,
+                    `vehicleId` INTEGER,
+                    `finishedAtMillis` INTEGER,
+                    `maintenanceRecordId` INTEGER,
+                    FOREIGN KEY(`vehicleId`) REFERENCES `vehicles`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL,
+                    FOREIGN KEY(`maintenanceRecordId`) REFERENCES `maintenance_records`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL
+                )
+                """.trimIndent()
+            )
+
+            database.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS `index_appointment_work_clientAuthId_appointmentId_appointmentCreatedAtMillis`
+                ON `appointment_work` (`clientAuthId`, `appointmentId`, `appointmentCreatedAtMillis`)
+                """.trimIndent()
+            )
+
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_appointment_work_vehicleId`
+                ON `appointment_work` (`vehicleId`)
+                """.trimIndent()
+            )
+
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_appointment_work_maintenanceRecordId`
+                ON `appointment_work` (`maintenanceRecordId`)
+                """.trimIndent()
+            )
+        }
+    }
 }

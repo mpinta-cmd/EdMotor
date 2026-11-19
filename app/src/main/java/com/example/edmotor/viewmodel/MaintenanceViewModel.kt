@@ -2,6 +2,7 @@ package com.example.edmotor.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.edmotor.data.local.AppointmentWorkWithMaintenance
 import com.example.edmotor.data.local.MaintenanceWithParts
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.repository.MaintenanceRepository
@@ -60,6 +61,9 @@ class MaintenanceViewModel(
     fun observeRecords(vehicleId: Int, userId: Int, role: String): Flow<List<MaintenanceWithParts>> =
         repository.observeForVehicle(vehicleId, userId, role)
 
+    fun observeAppointmentWork(userId: Int, role: String): Flow<List<AppointmentWorkWithMaintenance>> =
+        repository.observeAppointmentWork(userId, role)
+
     fun observeEditor(vehicleId: Int, recordId: Int): Flow<MaintenanceEditorState?> =
         combine(sessionManager.currentUser, editing) { user, result ->
             result?.takeIf {
@@ -113,6 +117,7 @@ class MaintenanceViewModel(
         vehicleId: Int,
         recordId: Int?,
         draft: MaintenanceDraft,
+        appointmentWorkId: Long? = null,
         onResult: (Boolean, String?) -> Unit
     ) = mutate(
         vehicleId = vehicleId,
@@ -123,7 +128,15 @@ class MaintenanceViewModel(
             if (success && recordId != null) clearEditorFor(vehicleId, recordId)
             onResult(success, message)
         }
-    ) { userId -> repository.saveMaintenance(userId, vehicleId, recordId, draft) }
+    ) { userId ->
+        repository.saveMaintenance(
+            workshopUserId = userId,
+            vehicleId = vehicleId,
+            recordId = recordId,
+            draft = draft,
+            appointmentWorkId = appointmentWorkId
+        )
+    }
 
     fun deleteMaintenance(vehicleId: Int, recordId: Int) = mutate(
         vehicleId = vehicleId,

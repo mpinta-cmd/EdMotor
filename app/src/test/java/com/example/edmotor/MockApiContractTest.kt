@@ -353,6 +353,77 @@ class MockApiContractTest {
     }
 
     @Test
+    fun completingAConfirmedAppointmentRecoversTheSameAppointmentAfterAnAmbiguousPut() {
+        val confirmed = EXISTING_APPOINTMENT.replace("PENDING", "CONFIRMED")
+        val saved = AtomicReference(confirmed)
+        val updateBody = AtomicReference<String>()
+        val routes = ConcurrentLinkedQueue<String>()
+        val completedAt = 1_800_003_600_000L
+        withAppointmentEndpoint(
+            headers = mapOf("Retry-After" to "0"),
+            respond = { route, body ->
+                routes.add(route)
+                when (route) {
+                    "GET /api/v1/appointments/7" -> 200 to saved.get()
+                    "PUT /api/v1/appointments/7" -> {
+                        updateBody.set(body)
+                        saved.set(applyUpdate(saved.get(), body))
+                        503 to "\"Response lost\""
+                    }
+                    "GET /api/v1/appointments?profileId=1" -> 200 to "[${saved.get()}]"
+                    else -> 500 to "\"Unexpected route\""
+                }
+            }
+        ) { newApi ->
+            val api = newApi()
+            val target = api.getAppointment("7")
+            val expected = target.copy(status = "COMPLETED", updatedAtMillis = completedAt)
+            val result = api.submitAppointmentStatus(target, MockAppointmentStatusDto("COMPLETED", completedAt))
+            assertEquals(expected, result)
+            assertEquals(expected, newApi().listAppointments(target.profileId).single())
+        }
+        assertEquals(
+            setOf("status", "updatedAtMillis"),
+            JsonParser.parseString(updateBody.get()).asJsonObject.keySet()
+        )
+        assertEquals(
+            listOf(
+                "GET /api/v1/appointments/7",
+                "PUT /api/v1/appointments/7",
+                "GET /api/v1/appointments/7",
+                "GET /api/v1/appointments?profileId=1"
+            ),
+            routes.toList()
+        )
+    }
+
+    @Test
+    fun completingAnAppointmentRequiresTheExpectedTimestampToReconcileAnAmbiguousPut() {
+        val confirmed = EXISTING_APPOINTMENT.replace("PENDING", "CONFIRMED")
+        val saved = AtomicReference(confirmed)
+        withAppointmentEndpoint(
+            headers = mapOf("Retry-After" to "0"),
+            respond = { route, _ ->
+                when (route) {
+                    "GET /api/v1/appointments/7" -> 200 to saved.get()
+                    "PUT /api/v1/appointments/7" -> {
+                        saved.set(applyUpdate(confirmed, """{"status":"COMPLETED","updatedAtMillis":1800001800000}"""))
+                        503 to "\"Response lost\""
+                    }
+                    else -> 500 to "\"Unexpected route\""
+                }
+            }
+        ) { newApi ->
+            val api = newApi()
+            val target = api.getAppointment("7")
+            val failure = runCatching {
+                api.submitAppointmentStatus(target, MockAppointmentStatusDto("COMPLETED", 1_800_003_600_000))
+            }.exceptionOrNull()
+            assertEquals(503, (failure as? HttpException)?.code())
+        }
+    }
+
+    @Test
     fun missingAppointmentCollectionRemainsAnError() {
         val routes = ConcurrentLinkedQueue<String>()
         withAppointmentEndpoint(
