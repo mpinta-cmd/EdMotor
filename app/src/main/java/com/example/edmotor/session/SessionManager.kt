@@ -27,30 +27,42 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
     private val _currentUser = MutableStateFlow<UserEntity?>(null)
     val currentUser: StateFlow<UserEntity?> = _currentUser.asStateFlow()
 
-    suspend fun restoreProfile(loadProfile: suspend (String) -> UserEntity?): UserEntity? =
+    suspend fun restoreProfile(
+        credentialedDemo: Boolean = false,
+        loadProfile: suspend (String) -> UserEntity?
+    ): UserEntity? =
         sessionMutex.withLock {
             val preferences = dataStore.data.first()
-            val key = preferences[PROFILE_KEY]
-            val role = preferences[PROFILE_ROLE]
+            val key = preferences[if (credentialedDemo) DEMO_CREDENTIAL_PROFILE_KEY else PROFILE_KEY]
+            val role = preferences[if (credentialedDemo) DEMO_CREDENTIAL_PROFILE_ROLE else PROFILE_ROLE]
             val user = key?.takeIf { it.isNotBlank() }?.let { loadProfile(it) }
             val restored = user?.takeIf {
                 it.id > 0 && it.remoteAuthId == key && it.role == role && it.hasKnownRole()
             }
 
-            if (restored == null && (key != null || role != null)) removeRememberedProfile()
+            if (restored == null && (key != null || role != null ||
+                (credentialedDemo && (preferences[PROFILE_KEY] != null || preferences[PROFILE_ROLE] != null))
+            )) removeRememberedProfile()
             _currentUser.value = restored
             restored
         }
 
-    suspend fun selectProfile(user: UserEntity) {
+    suspend fun selectProfile(user: UserEntity, credentialedDemo: Boolean = false) {
         val key = requireNotNull(user.remoteAuthId)
         require(user.id > 0 && key.isNotBlank() && user.hasKnownRole())
 
         withContext(NonCancellable) {
             sessionMutex.withLock {
                 dataStore.edit { preferences ->
-                    preferences[PROFILE_KEY] = key
-                    preferences[PROFILE_ROLE] = user.role
+                    if (credentialedDemo) {
+                        preferences.remove(PROFILE_KEY)
+                        preferences.remove(PROFILE_ROLE)
+                        preferences[DEMO_CREDENTIAL_PROFILE_KEY] = key
+                        preferences[DEMO_CREDENTIAL_PROFILE_ROLE] = user.role
+                    } else {
+                        preferences[PROFILE_KEY] = key
+                        preferences[PROFILE_ROLE] = user.role
+                    }
                 }
                 _currentUser.value = user
             }
@@ -70,6 +82,8 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
         dataStore.edit { preferences ->
             preferences.remove(PROFILE_KEY)
             preferences.remove(PROFILE_ROLE)
+            preferences.remove(DEMO_CREDENTIAL_PROFILE_KEY)
+            preferences.remove(DEMO_CREDENTIAL_PROFILE_ROLE)
         }
     }
 
@@ -78,5 +92,8 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
     private companion object {
         val PROFILE_KEY = stringPreferencesKey("selected_profile_key")
         val PROFILE_ROLE = stringPreferencesKey("selected_profile_role")
+        // Las selecciones antiguas de la demostración no prueban que se ingresó una contraseña.
+        val DEMO_CREDENTIAL_PROFILE_KEY = stringPreferencesKey("demo_credential_profile_key")
+        val DEMO_CREDENTIAL_PROFILE_ROLE = stringPreferencesKey("demo_credential_profile_role")
     }
 }

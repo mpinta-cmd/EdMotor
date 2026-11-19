@@ -31,15 +31,18 @@ class AppContainer(context: Context) {
     }
     private val database = EdMotorDatabase.getDatabase(context.applicationContext, privateMode)
 
-    private val privateAuth = if (privateMode) {
-        PrivateAuthRepository(database, database.userDao(), sessionManager)
-    } else null
-
     private val userRepository = UserRepository(
         database = database,
         userDao = database.userDao(),
         mockApi = mockApi,
         privateAccounts = privateMode
+    )
+
+    private val authRepository = PrivateAuthRepository(
+        database = database,
+        userDao = database.userDao(),
+        sessionManager = sessionManager,
+        demoProfiles = userRepository.takeUnless { privateMode }
     )
 
     private val vehicleRepository = VehicleRepository(
@@ -91,12 +94,7 @@ class AppContainer(context: Context) {
         localDatabase = database.takeIf { privateMode }
     )
 
-    val authViewModelFactory = AuthViewModelFactory(
-        userRepository,
-        sessionManager,
-        privateMode = privateMode,
-        privateAuth = privateAuth
-    )
+    val authViewModelFactory = AuthViewModelFactory(authRepository)
 
     val appViewModelFactory = EdMotorViewModelFactory(
         vehicleRepository,

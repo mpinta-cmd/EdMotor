@@ -68,6 +68,31 @@ class SessionManagerTest {
         }
     }
 
+    @Test
+    fun credentialedDemoDoesNotRestoreLegacyPickerSession() = runBlocking {
+        val file = File(scratch.root, "demo-credential.preferences_pb")
+        val owner = demoOwner()
+        withFreshStore(file) { it.selectProfile(owner) }
+
+        withFreshStore(file) { session ->
+            assertNull(session.restoreProfile(credentialedDemo = true) { error("Selección antigua rechazada") })
+            assertNull(session.currentUser.value)
+            session.selectProfile(owner, credentialedDemo = true)
+        }
+
+        withFreshStore(file) { session ->
+            assertEquals(owner, session.restoreProfile(credentialedDemo = true) { key ->
+                assertEquals(owner.remoteAuthId, key)
+                owner
+            })
+            session.clearSession()
+        }
+
+        withFreshStore(file) { session ->
+            assertNull(session.restoreProfile(credentialedDemo = true) { error("Sesión de credenciales eliminada") })
+        }
+    }
+
     private suspend fun withFreshStore(file: File, action: suspend (SessionManager) -> Unit) {
         val job = SupervisorJob()
         val dataStore = PreferenceDataStoreFactory.create(

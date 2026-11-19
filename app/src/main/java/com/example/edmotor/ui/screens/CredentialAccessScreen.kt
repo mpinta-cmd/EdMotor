@@ -16,13 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -49,8 +44,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.example.edmotor.session.DemoOwnerProfile
 import com.example.edmotor.session.LocalCredentialValidation
 
 private enum class CredentialMode { SIGN_IN, REGISTER_CLIENT, SETUP_OWNER }
@@ -62,6 +57,7 @@ fun CredentialAccessScreen(
     isError: Boolean,
     canRetry: Boolean,
     ownerConfigured: Boolean?,
+    isPrivateMode: Boolean,
     onSignIn: (username: String, password: String) -> Unit,
     onRegisterClient: (username: String, displayName: String, password: String) -> Unit,
     onSetupOwner: (username: String, password: String) -> Unit,
@@ -73,7 +69,6 @@ fun CredentialAccessScreen(
     var displayName by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var passwordInput by remember { mutableStateOf("") }
-    var passwordVisible by remember { mutableStateOf(false) }
     var validationMessage by remember { mutableStateOf<String?>(null) }
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
@@ -81,7 +76,8 @@ fun CredentialAccessScreen(
     val mode = if (requestedMode == CredentialMode.SETUP_OWNER && !canSetupOwner) {
         CredentialMode.SIGN_IN
     } else requestedMode
-    val cleanUsername = username.trim()
+    val usesFixedOwnerUsername = mode == CredentialMode.SETUP_OWNER && !isPrivateMode
+    val cleanUsername = if (usesFixedOwnerUsername) DemoOwnerProfile.USERNAME else username.trim()
     val cleanName = displayName.trim()
     val canEdit = ownerConfigured != null && !isSubmitting
     val canSubmit = canEdit && cleanUsername.isNotEmpty() && passwordInput.isNotEmpty() &&
@@ -98,7 +94,6 @@ fun CredentialAccessScreen(
         focusManager.clearFocus()
         clearFeedback()
         passwordInput = ""
-        passwordVisible = false
         requestedMode = nextMode
     }
 
@@ -114,7 +109,6 @@ fun CredentialAccessScreen(
         focusManager.clearFocus()
         val submittedPassword = passwordInput
         passwordInput = ""
-        passwordVisible = false
         when (mode) {
             CredentialMode.SIGN_IN -> onSignIn(cleanUsername, submittedPassword)
             CredentialMode.REGISTER_CLIENT -> onRegisterClient(cleanUsername, cleanName, submittedPassword)
@@ -163,10 +157,12 @@ fun CredentialAccessScreen(
                         style = MaterialTheme.typography.titleLarge
                     )
                     Text(
-                        if (mode == CredentialMode.SETUP_OWNER) {
-                            "La cuenta de EdMotor permite administrar el inventario, los pedidos y el mantenimiento."
-                        } else {
-                            "Las cuentas se guardan en este dispositivo."
+                        when {
+                            mode == CredentialMode.SETUP_OWNER ->
+                                "La cuenta de EdMotor permite administrar el inventario, los pedidos y el mantenimiento."
+                            !isPrivateMode && mode == CredentialMode.REGISTER_CLIENT ->
+                                "Tus datos de acceso se guardan en este dispositivo. Las citas en línea usan un identificador generado."
+                            else -> "Las cuentas se guardan en este dispositivo."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -205,17 +201,18 @@ fun CredentialAccessScreen(
                         )
                     }
                     OutlinedTextField(
-                        value = username,
+                        value = if (usesFixedOwnerUsername) DemoOwnerProfile.DISPLAY_NAME else username,
                         onValueChange = {
                             username = it
                             clearFeedback()
                         },
                         label = { Text("Nombre de usuario") },
-                        supportingText = if (mode != CredentialMode.SIGN_IN) {
+                        supportingText = if (mode != CredentialMode.SIGN_IN && !usesFixedOwnerUsername) {
                             { Text("Usa de 3 a 20 minúsculas, números o guiones bajos.") }
                         } else null,
                         modifier = Modifier.fillMaxWidth(),
                         enabled = canEdit,
+                        readOnly = usesFixedOwnerUsername,
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
                         keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
@@ -233,20 +230,9 @@ fun CredentialAccessScreen(
                         modifier = Modifier.fillMaxWidth().semantics { password() },
                         enabled = canEdit,
                         singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { submit() }),
-                        trailingIcon = {
-                            IconButton(
-                                onClick = { passwordVisible = !passwordVisible },
-                                enabled = canEdit
-                            ) {
-                                Icon(
-                                    imageVector = if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                    contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña"
-                                )
-                            }
-                        }
+                        keyboardActions = KeyboardActions(onDone = { submit() })
                     )
                     Button(
                         onClick = ::submit,

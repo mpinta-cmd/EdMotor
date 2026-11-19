@@ -2,7 +2,7 @@
 
 EdMotor Automotriz sigue el patrón de TaskFlow Master. Room guarda vehículos, favoritos, carrito, repuestos, pedidos, mantenimientos y los perfiles usados en el dispositivo. Retrofit carga y crea perfiles de práctica y envía las citas al proyecto MockAPI. En el navegador puedes ver esos recursos en JSON.
 
-La app se instala como **EdMotor Automotriz** con el identificador `com.example.edmotor.mockapi`. Android le asigna su propia base de datos. Para consultar los datos de una instalación anterior de EdMotor, abre la app original. Usa datos de práctica en el proyecto de MockAPI. El selector de perfiles funciona sin contraseña y sus roles simulan el flujo de cliente y dueño. MockAPI no aplica reglas de autorización sobre esas acciones.
+La app se instala como **EdMotor Automotriz** con el identificador `com.example.edmotor.mockapi`. El acceso de práctica pide usuario y contraseña. En la primera apertura, pulsa **Configurar cuenta del dueño** para elegir la contraseña de **EdMotor** desde el teléfono. Room conserva la cuenta local. MockAPI expone los recursos de prueba en JSON. Usa datos de práctica en ese proyecto.
 
 ## Compilar y probar Room
 
@@ -56,10 +56,12 @@ Sincroniza Gradle y ejecuta **EdMotor Automotriz**. Como alternativa, puedes com
 
 ## Ver cómo cambia el JSON
 
-1. En **EdMotor Tecnológica**, entra por la opción de clientes y crea un perfil con un alias de práctica. Con MockAPI configurado, encontrarás el perfil nuevo en el JSON de `profiles` con rol `CLIENT`. También puedes elegir un cliente existente.
+1. En **EdMotor Tecnológica**, toca **Crear cuenta de cliente** y completa tu nombre para mostrar, nombre de usuario y contraseña. Con MockAPI configurado, encontrarás un alias generado para la nueva cuenta en el JSON de `profiles` con rol `CLIENT`. El nombre y las credenciales de la cuenta se guardan en el teléfono.
 2. Registra un vehículo ficticio en **Mi Garaje**. Abre **Citas**, selecciona ese vehículo y solicita una revisión futura. La app escribe el registro en `appointments` con estado `PENDING`.
 3. En el navegador, abre tu URL base seguida de `appointments`. Encontrarás la cita en JSON junto a su `id` y `profileId`.
-4. Cierra sesión en **Mi Garaje**, entra como propietario **EdMotor** y confirma la cita. Recarga el endpoint. Verás que la misma cita tiene `status: "CONFIRMED"`.
+4. Cierra sesión en **Mi Garaje**, entra con el usuario **EdMotor** y la contraseña que configuraste, y confirma la cita. Recarga el endpoint. Verás que la misma cita tiene `status: "CONFIRMED"`.
 5. Cierra la app sin cerrar sesión y vuelve a abrirla. Se abrirá el inicio del mismo perfil. Puedes repetir el proceso con un cliente para comprobar ambos accesos.
 
 Los pedidos nuevos y el inventario se comprueban desde **App Inspection → Database Inspector → edmotor_database**. Las citas guardan una copia local tras una lectura correcta. La creación y los cambios de estado se envían a MockAPI con conexión.
+
+Al actualizar desde el antiguo selector de perfiles, la app pide identificarte. Los perfiles de cliente de aquella práctica conservan sus registros históricos. Usa **Crear cuenta de cliente** para probar el nuevo acceso.

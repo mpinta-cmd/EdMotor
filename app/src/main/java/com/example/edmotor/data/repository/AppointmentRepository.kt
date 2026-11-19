@@ -17,6 +17,7 @@ import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.session.DemoOwnerProfile
 import com.example.edmotor.session.LocalAccountIdentity
 import com.example.edmotor.session.SessionManager
 import kotlinx.coroutines.CancellationException
@@ -42,7 +43,8 @@ internal data class AppointmentAccount(
     val profileKey: String,
     val profileId: String,
     val role: UserRole,
-    val localUserId: Int? = null
+    val localUserId: Int? = null,
+    val cacheKey: String = profileKey
 )
 
 internal data class AppointmentSnapshot(
@@ -65,8 +67,20 @@ class AppointmentRepository(
             if (user.id <= 0 || !LocalAccountIdentity.matchesRole(profileKey, role.name)) return null
             return AppointmentAccount(profileKey, user.id.toString(), role, localUserId = user.id)
         }
-        val profileId = mockApi?.profileId(profileKey) ?: return null
-        return AppointmentAccount(profileKey, profileId, role)
+        val connection = mockApi ?: return null
+        val profileId = connection.profileId(profileKey)
+        if (role == UserRole.WORKSHOP) {
+            if (user.id <= 0 || user.username != DemoOwnerProfile.USERNAME ||
+                !user.displayName.trim().equals(DemoOwnerProfile.DISPLAY_NAME, ignoreCase = true)
+            ) return null
+            if (profileId == null) {
+                if (profileKey != DEMO_LOCAL_OWNER_KEY && !isStoredDemoMockApiProfileKey(profileKey)) return null
+                // Conserva la cuenta Room y separa la agenda por proyecto.
+                val agendaKey = "$DEMO_LOCAL_OWNER_KEY:${connection.projectKey}"
+                return AppointmentAccount(profileKey, "", role, cacheKey = agendaKey)
+            }
+        }
+        return profileId?.let { AppointmentAccount(profileKey, it, role) }
     }
 
     internal fun observeAppointments(account: AppointmentAccount): Flow<AppointmentSnapshot> {
@@ -78,7 +92,7 @@ class AppointmentRepository(
             }
         } else {
             combine(
-                appointmentDao.observeCachedAppointments(account.profileKey, account.role.name),
+                appointmentDao.observeCachedAppointments(account.cacheKey, account.role.name),
                 observeSync(account)
             ) { rows, syncState ->
                 AppointmentSnapshot(rows.map { it.toModel() }, syncState)
@@ -120,7 +134,7 @@ class AppointmentRepository(
 
             currentCoroutineContext().ensureActive()
             requireActiveAccount(account)
-            appointmentDao.replaceCachedAppointments(account.profileKey, account.role.name, snapshot)
+            appointmentDao.replaceCachedAppointments(account.cacheKey, account.role.name, snapshot)
             AppointmentSyncState.UP_TO_DATE
         } catch (e: CancellationException) {
             throw e
@@ -344,7 +358,7 @@ class AppointmentRepository(
         check(status == AppointmentStatus.PENDING || status == AppointmentStatus.CONFIRMED || status == AppointmentStatus.REJECTED)
 
         return AppointmentCacheEntity(
-            accountAuthId = account.profileKey,
+            accountAuthId = account.cacheKey,
             accountRole = account.role.name,
             id = remoteId,
             clientAuthId = ownerKey,

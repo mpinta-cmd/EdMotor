@@ -31,7 +31,6 @@ import com.example.edmotor.app.EdMotorApplication
 import com.example.edmotor.navigation.EdMotorNavHost
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.ui.components.EdMotorScaffold
-import com.example.edmotor.ui.screens.AuthFlowScreen
 import com.example.edmotor.ui.screens.CredentialAccessScreen
 import com.example.edmotor.ui.theme.AppThemeMode
 
@@ -115,36 +114,20 @@ fun EdMotorApp(
         AuthState.SignedOut -> {
             LaunchedEffect(Unit) { appViewModel.clearActiveUser() }
 
-            if (BuildConfig.EDMOTOR_PRIVATE_MODE) {
-                val privateAccess by authViewModel.privateAccess.collectAsStateWithLifecycle()
-                CredentialAccessScreen(
-                    isSubmitting = privateAccess.isSubmitting,
-                    message = privateAccess.message,
-                    isError = privateAccess.isError,
-                    canRetry = privateAccess.canRetry,
-                    ownerConfigured = privateAccess.ownerConfigured,
-                    onSignIn = authViewModel::signInPrivate,
-                    onRegisterClient = authViewModel::registerPrivateClient,
-                    onSetupOwner = authViewModel::createPrivateOwner,
-                    onClearMessage = authViewModel::clearPrivateMessage,
-                    onRetry = authViewModel::retryPrivateRestore
-                )
-            } else {
-                val profileSelection by authViewModel.profileSelection.collectAsStateWithLifecycle()
-                AuthFlowScreen(
-                    profiles = profileSelection.profiles,
-                    mockApiConfigured = profileSelection.mockApiConfigured,
-                    isLoading = profileSelection.isLoading,
-                    selectingKey = profileSelection.selectingKey,
-                    isCreating = profileSelection.isCreating,
-                    message = profileSelection.message,
-                    onSelectOwner = authViewModel::selectOwner,
-                    onSelectProfile = authViewModel::selectProfile,
-                    onCreateClientProfile = authViewModel::createClientProfile,
-                    onClearMessage = authViewModel::clearProfileMessage,
-                    onRetry = authViewModel::reloadProfiles
-                )
-            }
+            val access by authViewModel.privateAccess.collectAsStateWithLifecycle()
+            CredentialAccessScreen(
+                isSubmitting = access.isSubmitting,
+                message = access.message,
+                isError = access.isError,
+                canRetry = access.canRetry,
+                ownerConfigured = access.ownerConfigured,
+                isPrivateMode = BuildConfig.EDMOTOR_PRIVATE_MODE,
+                onSignIn = authViewModel::signInPrivate,
+                onRegisterClient = authViewModel::registerPrivateClient,
+                onSetupOwner = authViewModel::createPrivateOwner,
+                onClearMessage = authViewModel::clearPrivateMessage,
+                onRetry = authViewModel::retryPrivateRestore
+            )
         }
 
         is AuthState.SignedIn -> {
