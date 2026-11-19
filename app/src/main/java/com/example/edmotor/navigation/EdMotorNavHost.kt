@@ -61,7 +61,7 @@ import com.example.edmotor.viewmodel.AppointmentViewModel
  * - Catálogo dinámico.
  * - Detalle de productos.
  * - Carrito.
- * - Registro local de pedidos y consulta del histórico en línea.
+ * - Registro e historial local de pedidos.
  * - Administración de pedidos y ventas.
  * - Servicios.
  * - Garaje.
@@ -830,13 +830,7 @@ fun EdMotorNavHost(
                 isProcessing = isProcessingAppointment,
                 message = appointmentMessage,
                 isError = appointmentIsError,
-                onCreateAppointment = { vehicle, scheduledAtMillis, description ->
-                    appointmentViewModel.createAppointment(
-                        vehicle = vehicle,
-                        scheduledAtMillis = scheduledAtMillis,
-                        description = description
-                    )
-                },
+                onCreateAppointment = appointmentViewModel::createAppointment,
                 onAccept = appointmentViewModel::acceptAppointment,
                 onReject = appointmentViewModel::rejectAppointment,
                 onClearMessage = appointmentViewModel::clearMessage,

@@ -1,19 +1,20 @@
 package com.example.edmotor.data.repository
 
-import android.util.Log
 import com.example.edmotor.data.local.AppointmentCacheEntity
 import com.example.edmotor.data.local.AppointmentDao
 import com.example.edmotor.data.local.UserEntity
-import com.example.edmotor.data.remote.SupabaseClient
-import com.example.edmotor.data.remote.SupabaseConfig
+import com.example.edmotor.data.remote.MockApiConnection
+import com.example.edmotor.data.remote.MockAppointmentCreateDto
+import com.example.edmotor.data.remote.MockAppointmentDto
+import com.example.edmotor.data.remote.MockAppointmentStatusDto
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentOperationResult
+import com.example.edmotor.model.AppointmentServiceType
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
 import com.example.edmotor.session.SessionManager
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -27,22 +28,12 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import org.json.JSONArray
-import org.json.JSONObject
 
-internal data class AppointmentAccount(val authId: String, val role: UserRole)
-
-internal fun UserEntity?.appointmentAccount(): AppointmentAccount? {
-    val user = this ?: return null
-    val authId = user.remoteAuthId?.let(::normalizeAuthId) ?: return null
-    val role = UserRole.entries.firstOrNull { it.name == user.role } ?: return null
-    return AppointmentAccount(authId, role)
-}
+internal data class AppointmentAccount(val profileKey: String, val profileId: String, val role: UserRole)
 
 internal data class AppointmentSnapshot(
     val appointments: List<Appointment>,
@@ -51,20 +42,27 @@ internal data class AppointmentSnapshot(
 
 class AppointmentRepository(
     private val appointmentDao: AppointmentDao,
-    private val supabase: SupabaseClient,
+    private val mockApi: MockApiConnection?,
     private val sessionManager: SessionManager
 ) {
     private val refreshRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
+    internal fun accountFor(user: UserEntity?): AppointmentAccount? {
+        val profileKey = user?.remoteAuthId ?: return null
+        val profileId = mockApi?.profileId(profileKey) ?: return null
+        val role = UserRole.entries.firstOrNull { it.name == user.role } ?: return null
+        return AppointmentAccount(profileKey, profileId, role)
+    }
+
     internal fun observeAppointments(account: AppointmentAccount): Flow<AppointmentSnapshot> =
         combine(
-            appointmentDao.observeCachedAppointments(account.authId, account.role.name),
+            appointmentDao.observeCachedAppointments(account.profileKey, account.role.name),
             observeSync(account)
         ) { rows, syncState ->
             AppointmentSnapshot(rows.map { it.toModel() }, syncState)
         }.retryWhen { _, _ ->
             emit(AppointmentSnapshot(emptyList(), AppointmentSyncState.UNAVAILABLE))
-            delay(SupabaseConfig.REALTIME_POLL_FALLBACK_MS)
+            delay(POLL_INTERVAL_MS)
             true
         }.distinctUntilChanged().flowOn(Dispatchers.IO)
 
@@ -75,194 +73,190 @@ class AppointmentRepository(
     private fun observeSync(account: AppointmentAccount): Flow<AppointmentSyncState> = channelFlow {
         val requests = Channel<Unit>(Channel.CONFLATED)
         launch {
-            merge(supabase.realtimeChanges, refreshRequests).collect { requests.trySend(Unit) }
+            refreshRequests.collect { requests.trySend(Unit) }
         }
 
         send(AppointmentSyncState.LOADING)
         while (isActive) {
             send(refreshCache(account))
-            withTimeoutOrNull(SupabaseConfig.REALTIME_POLL_FALLBACK_MS) { requests.receive() }
+            withTimeoutOrNull(POLL_INTERVAL_MS) { requests.receive() }
         }
     }.distinctUntilChanged()
 
     private suspend fun refreshCache(account: AppointmentAccount): AppointmentSyncState {
+        val connection = mockApi ?: return AppointmentSyncState.NOT_CONFIGURED
         return try {
-            val snapshot = fetchSnapshot(account)
+            requireActiveAccount(account)
+            val profileFilter = account.profileId.takeIf { account.role == UserRole.CLIENT }
+            val snapshot = connection.service.getAppointments(profileFilter)
+                .filter { profileFilter == null || it.profileId == profileFilter }
+                .map { it.toCacheEntity(connection, account) }
+                .sortedWith(compareBy(AppointmentCacheEntity::scheduledAtMillis, AppointmentCacheEntity::id))
+
             currentCoroutineContext().ensureActive()
             requireActiveAccount(account)
-            appointmentDao.replaceCachedAppointments(account.authId, account.role.name, snapshot)
+            appointmentDao.replaceCachedAppointments(account.profileKey, account.role.name, snapshot)
             AppointmentSyncState.UP_TO_DATE
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            Log.w("EdMotorAppointments", "No fue posible actualizar las citas.")
             AppointmentSyncState.UNAVAILABLE
         }
-    }
-
-    private suspend fun fetchSnapshot(account: AppointmentAccount): List<AppointmentCacheEntity> {
-        val rows = mutableListOf<AppointmentCacheEntity>()
-        val clientFilter = if (account.role == UserRole.CLIENT) {
-            "&client_auth_id=eq.${account.authId}"
-        } else {
-            ""
-        }
-        var beforeId: Long? = null
-
-        // Consultar por ID descendente evita que las citas nuevas alarguen el recorrido.
-        // La última página es la vacía, incluso si el servidor limita el tamaño de las anteriores.
-        while (true) {
-            requireActiveAccount(account)
-            val cursor = beforeId?.let { "&id=lt.$it" }.orEmpty()
-            val result = supabase.get(
-                "/rest/v1/appointments?select=$APPOINTMENT_COLUMNS&order=id.desc&limit=$PAGE_SIZE$clientFilter$cursor",
-                expectedUserId = account.authId
-            )
-            currentCoroutineContext().ensureActive()
-            requireActiveAccount(account)
-
-            val page = JSONArray(result)
-            if (page.length() == 0) break
-
-            for (index in 0 until page.length()) {
-                val appointment = page.getJSONObject(index).toCacheEntity(account)
-                val previousId = beforeId
-                check(previousId == null || appointment.id < previousId) {
-                    "El servidor no devolvió las citas en el orden esperado."
-                }
-                beforeId = appointment.id
-                rows.add(appointment)
-            }
-        }
-
-        return rows.sortedWith(compareBy(AppointmentCacheEntity::scheduledAtMillis, AppointmentCacheEntity::id))
     }
 
     suspend fun createAppointment(
         client: UserEntity,
         vehicle: Vehicle,
         scheduledAtMillis: Long,
-        description: String
+        serviceType: String
     ): AppointmentOperationResult {
-        val account = client.appointmentAccount()
+        val account = accountFor(client)
         if (account == null || account.role != UserRole.CLIENT) {
-            return AppointmentOperationResult.Error("Solo un cliente con sesión remota activa puede solicitar una cita.")
+            return AppointmentOperationResult.Error("Selecciona un perfil de cliente de MockAPI para solicitar citas de prueba.")
         }
-        if (scheduledAtMillis < System.currentTimeMillis() + 15 * 60 * 1000L) {
+        val now = System.currentTimeMillis()
+        if (scheduledAtMillis < now + MINIMUM_NOTICE_MS || !isValidStart(scheduledAtMillis)) {
             return AppointmentOperationResult.Error("Selecciona una fecha y hora con al menos 15 minutos de anticipación.")
         }
-        val cleanDescription = description.trim()
-        if (cleanDescription.length !in 8..600) {
-            return AppointmentOperationResult.Error("La descripción debe tener entre 8 y 600 caracteres.")
+        if (serviceType !in AppointmentServiceType.options) {
+            return AppointmentOperationResult.Error("Selecciona un servicio de demostración.")
         }
         if (vehicle.id <= 0 || vehicle.ownerUserId != client.id) {
             return AppointmentOperationResult.Error("Selecciona un vehículo registrado en tu garaje.")
         }
 
         return performRemoteOperation(
-            account = account,
-            success = "Solicitud enviada. EdMotor revisará la fecha y la hora.",
-            fallback = "No fue posible enviar la solicitud de cita."
-        ) {
-            val body = JSONObject()
-                .put("client_auth_id", account.authId)
-                .put("client_name", client.displayName)
-                .put("client_username", client.username)
-                .put("client_phone", client.phone ?: JSONObject.NULL)
-                .put("vehicle_brand", vehicle.brand)
-                .put("vehicle_model", vehicle.model)
-                .put("vehicle_year", vehicle.year)
-                .put("vehicle_plate", vehicle.plate)
-                .put("scheduled_at_ms", scheduledAtMillis)
-                .put("description", cleanDescription)
-                .put("status", AppointmentStatus.PENDING)
-
-            supabase.post("/rest/v1/appointments", body, expectedUserId = account.authId)
+            account,
+            fallback = "No fue posible comprobar el envío. Actualiza las citas antes de volver a solicitarla."
+        ) { connection ->
+            val body = MockAppointmentCreateDto(
+                profileId = account.profileId,
+                serviceType = serviceType,
+                vehicleBrand = DEMO_VEHICLE_BRAND,
+                vehicleModel = DEMO_VEHICLE_MODEL,
+                vehicleYear = DEMO_VEHICLE_YEAR,
+                scheduledAtMillis = scheduledAtMillis,
+                status = AppointmentStatus.PENDING,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            )
+            val created = connection.service.createAppointment(body)
+            check(appointmentId(created.id) != null && created.profileId == account.profileId)
+            check(created.status == AppointmentStatus.PENDING && created.scheduledAtMillis == scheduledAtMillis)
+            AppointmentOperationResult.Success("Solicitud de demostración enviada.")
         }
     }
 
     suspend fun acceptAppointment(workshop: UserEntity, appointmentId: Long): AppointmentOperationResult =
-        reviewAppointment(
-            workshop,
-            appointmentId,
-            function = "accept_appointment",
-            success = "Cita #$appointmentId confirmada.",
-            fallback = "No fue posible confirmar la cita."
-        )
+        reviewAppointment(workshop, appointmentId, AppointmentStatus.CONFIRMED)
 
     suspend fun rejectAppointment(workshop: UserEntity, appointmentId: Long): AppointmentOperationResult =
-        reviewAppointment(
-            workshop,
-            appointmentId,
-            function = "reject_appointment",
-            success = "Solicitud de cita #$appointmentId rechazada.",
-            fallback = "No fue posible rechazar la cita."
-        )
+        reviewAppointment(workshop, appointmentId, AppointmentStatus.REJECTED)
 
     private suspend fun reviewAppointment(
         workshop: UserEntity,
         appointmentId: Long,
-        function: String,
-        success: String,
-        fallback: String
+        newStatus: String
     ): AppointmentOperationResult {
-        val account = workshop.appointmentAccount()
+        val account = accountFor(workshop)
         if (account == null || account.role != UserRole.WORKSHOP) {
-            return AppointmentOperationResult.Error("Solo EdMotor puede administrar las citas.")
+            return AppointmentOperationResult.Error("Selecciona un perfil de taller de MockAPI para administrar citas de prueba.")
         }
         if (appointmentId <= 0L) return AppointmentOperationResult.Error("La cita no es válida.")
 
-        return performRemoteOperation(account, success, fallback) {
-            supabase.rpc(function, JSONObject().put("p_appointment_id", appointmentId), expectedUserId = account.authId)
+        return performRemoteOperation(
+            account,
+            fallback = "No fue posible comprobar el cambio. Actualiza la agenda antes de volver a intentarlo."
+        ) { connection ->
+            val id = appointmentId.toString()
+            val agenda = if (newStatus == AppointmentStatus.CONFIRMED) connection.service.getAppointments() else null
+            val target = if (agenda == null) connection.service.getAppointment(id) else agenda.singleOrNull { it.id == id }
+            if (target == null || target.id != id || target.status != AppointmentStatus.PENDING) {
+                return@performRemoteOperation AppointmentOperationResult.Error("La solicitud ya no está pendiente.")
+            }
+
+            if (agenda != null) {
+                val start = target.scheduledAtMillis
+                if (!isValidStart(start) || start <= System.currentTimeMillis()) {
+                    return@performRemoteOperation AppointmentOperationResult.Error("La hora de esta solicitud ya pasó o es inválida.")
+                }
+                val overlaps = agenda.any { appointment ->
+                    appointment.status == AppointmentStatus.CONFIRMED &&
+                        isValidStart(appointment.scheduledAtMillis) &&
+                        appointment.scheduledAtMillis < start + APPOINTMENT_DURATION_MS &&
+                        appointment.scheduledAtMillis + APPOINTMENT_DURATION_MS > start
+                }
+                if (overlaps) {
+                    return@performRemoteOperation AppointmentOperationResult.Error("Ese horario ya está ocupado en la agenda de prueba.")
+                }
+            }
+
+            requireActiveAccount(account)
+            val updated = connection.service.updateAppointment(
+                id,
+                MockAppointmentStatusDto(status = newStatus, updatedAtMillis = System.currentTimeMillis())
+            )
+            check(updated.id == id && updated.status == newStatus)
+            val message = if (newStatus == AppointmentStatus.CONFIRMED) {
+                "Cita de prueba #$id confirmada."
+            } else {
+                "Cita de prueba #$id rechazada."
+            }
+            AppointmentOperationResult.Success(message)
         }
     }
 
     private suspend fun performRemoteOperation(
         account: AppointmentAccount,
-        success: String,
         fallback: String,
-        request: suspend () -> Unit
+        request: suspend (MockApiConnection) -> AppointmentOperationResult
     ): AppointmentOperationResult {
+        val connection = mockApi ?: return AppointmentOperationResult.Error("MockAPI no está configurado.")
         return try {
             requireActiveAccount(account)
-            request()
-            refreshAppointments()
-            AppointmentOperationResult.Success(success)
+            val result = request(connection)
+            currentCoroutineContext().ensureActive()
+            requireActiveAccount(account)
+            result
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            AppointmentOperationResult.Error(e.message ?: fallback)
+        } catch (_: Exception) {
+            AppointmentOperationResult.Error(fallback)
+        } finally {
+            if (accountFor(sessionManager.currentUser.value) == account) refreshAppointments()
         }
     }
 
     private fun requireActiveAccount(account: AppointmentAccount) {
-        check(
-            sessionManager.currentUser.value.appointmentAccount() == account &&
-                sessionManager.remoteSession?.userId.equals(account.authId, ignoreCase = true)
-        ) { "No hay una sesión remota activa para esta cuenta." }
+        check(accountFor(sessionManager.currentUser.value) == account)
     }
 
-    private fun JSONObject.toCacheEntity(account: AppointmentAccount): AppointmentCacheEntity {
-        val clientAuthId = requireNotNull(normalizeAuthId(getString("client_auth_id")))
-        check(account.role == UserRole.WORKSHOP || clientAuthId == account.authId)
+    private fun MockAppointmentDto.toCacheEntity(
+        connection: MockApiConnection,
+        account: AppointmentAccount
+    ): AppointmentCacheEntity {
+        val ownerKey = connection.profileKey(profileId)
+        val remoteId = requireNotNull(appointmentId(id))
+        check(isValidStart(scheduledAtMillis))
+        check(status == AppointmentStatus.PENDING || status == AppointmentStatus.CONFIRMED || status == AppointmentStatus.REJECTED)
 
         return AppointmentCacheEntity(
-            accountAuthId = account.authId,
+            accountAuthId = account.profileKey,
             accountRole = account.role.name,
-            id = getLong("id"),
-            clientAuthId = clientAuthId,
-            clientName = getString("client_name"),
-            clientUsername = getString("client_username"),
-            clientPhone = if (isNull("client_phone")) null else getString("client_phone").takeIf { it.isNotBlank() },
-            vehicleBrand = getString("vehicle_brand"),
-            vehicleModel = getString("vehicle_model"),
-            vehicleYear = getInt("vehicle_year"),
-            vehiclePlate = getString("vehicle_plate"),
-            scheduledAtMillis = getLong("scheduled_at_ms"),
-            description = getString("description"),
-            status = getString("status"),
-            createdAtMillis = getLong("created_at_ms"),
-            updatedAtMillis = getLong("updated_at_ms")
+            id = remoteId,
+            clientAuthId = ownerKey,
+            clientName = "Cliente demo $profileId",
+            clientUsername = "demo-$profileId",
+            clientPhone = null,
+            vehicleBrand = DEMO_VEHICLE_BRAND,
+            vehicleModel = DEMO_VEHICLE_MODEL,
+            vehicleYear = DEMO_VEHICLE_YEAR,
+            vehiclePlate = "",
+            scheduledAtMillis = scheduledAtMillis,
+            description = serviceType.takeIf { it in AppointmentServiceType.options } ?: "Servicio de demostración",
+            status = status,
+            createdAtMillis = createdAtMillis,
+            updatedAtMillis = updatedAtMillis
         )
     }
 
@@ -283,16 +277,17 @@ class AppointmentRepository(
         updatedAtMillis = updatedAtMillis
     )
 
-    private companion object {
-        const val PAGE_SIZE = 200
-        const val APPOINTMENT_COLUMNS = "id,client_auth_id,client_name,client_username,client_phone," +
-            "vehicle_brand,vehicle_model,vehicle_year,vehicle_plate,scheduled_at_ms,description," +
-            "status,created_at_ms,updated_at_ms"
-    }
-}
+    private fun appointmentId(value: String): Long? =
+        value.toLongOrNull()?.takeIf { it > 0L && it.toString() == value }
 
-private fun normalizeAuthId(value: String): String? = try {
-    UUID.fromString(value).toString().takeIf { it.equals(value, ignoreCase = true) }
-} catch (_: IllegalArgumentException) {
-    null
+    private fun isValidStart(start: Long): Boolean = start in 1..(Long.MAX_VALUE - APPOINTMENT_DURATION_MS)
+
+    private companion object {
+        const val POLL_INTERVAL_MS = 30_000L
+        const val MINIMUM_NOTICE_MS = 15 * 60_000L
+        const val APPOINTMENT_DURATION_MS = 60 * 60_000L
+        const val DEMO_VEHICLE_BRAND = "Demostración"
+        const val DEMO_VEHICLE_MODEL = "Vehículo de prueba"
+        const val DEMO_VEHICLE_YEAR = 2020
+    }
 }

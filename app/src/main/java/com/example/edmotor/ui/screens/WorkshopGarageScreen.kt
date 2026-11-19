@@ -30,7 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.edmotor.model.OrderSource
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.data.local.UserEntity
@@ -103,11 +102,7 @@ fun WorkshopGarageScreen(
                     ) {
                         items(clients, key = { "client_${it.id}" }) { client ->
                             val clientVehicles = vehicles.filter { it.ownerUserId == client.id }
-                            val clientOrders = orders.filter { entry ->
-                                val order = entry.order
-                                order.clientUserId == client.id ||
-                                    (client.remoteAuthId != null && order.clientAuthId == client.remoteAuthId)
-                            }
+                            val clientOrders = orders.filter { it.order.clientUserId == client.id }
                             val expanded = expandedClientId == client.id
 
                             Card(
@@ -118,11 +113,6 @@ fun WorkshopGarageScreen(
                             ) {
                                 Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(client.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                                    Text(
-                                        "@${client.username}" + (client.phone?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Vehículos: ${clientVehicles.size}")
                                         Text("Pedidos: ${clientOrders.size}")
@@ -208,8 +198,7 @@ fun WorkshopGarageScreen(
                                     Text("Placa: ${vehicle.plate.ifBlank { "No registrada" }}")
                                     Text("Kilometraje: ${vehicle.mileage.ifBlank { "No registrado" }}")
                                     Text(
-                                        "Cliente: ${vehicle.ownerName ?: "Sin propietario asignado"}" +
-                                                (vehicle.ownerUsername?.let { " (@$it)" } ?: ""),
+                                        "Cliente: ${vehicle.ownerName ?: "Sin propietario asignado"}",
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = FontWeight.SemiBold
                                     )
@@ -227,7 +216,7 @@ fun WorkshopGarageScreen(
                 if (orders.isEmpty()) {
                     EmptyWorkshopMessage(
                         "Todavía no hay compras registradas",
-                    "Aquí aparecen los pedidos de este dispositivo y el histórico disponible en línea."
+                    "Aquí aparecen los pedidos guardados en este dispositivo."
                     )
                 } else {
                     LazyColumn(
@@ -235,7 +224,7 @@ fun WorkshopGarageScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(orders, key = { "${it.order.reference.source}:${it.order.id}" }) { order ->
+                        items(orders, key = { it.order.id }) { order ->
                             WorkshopOrderCard(order = order, showClient = true)
                         }
                     }
@@ -279,21 +268,15 @@ private fun WorkshopOrderCard(
             }
             if (showClient) {
                 Text(
-                    "Cliente: ${order.order.clientName} (@${order.order.clientUsername})",
+                    "Cliente: ${order.order.clientName}",
                     fontWeight = FontWeight.SemiBold
                 )
-                order.order.clientPhone?.takeIf { it.isNotBlank() }?.let {
-                    Text("Teléfono: $it", style = MaterialTheme.typography.bodySmall)
-                }
             }
             Text(
                 dateFormat.format(Date(order.order.createdAtMillis)),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (order.order.reference.source == OrderSource.REMOTE) {
-                Text("Histórico en línea", style = MaterialTheme.typography.labelMedium)
-            }
             order.items.forEach { item ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column(Modifier.weight(1f)) {

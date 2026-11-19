@@ -6,7 +6,6 @@ import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.repository.AppointmentAccount
 import com.example.edmotor.data.repository.AppointmentRepository
 import com.example.edmotor.data.repository.AppointmentSnapshot
-import com.example.edmotor.data.repository.appointmentAccount
 import com.example.edmotor.model.AppointmentOperationResult
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
@@ -33,7 +32,7 @@ class AppointmentViewModel(
     private val sessionManager: SessionManager
 ) : ViewModel() {
     private val currentAccount = sessionManager.currentUser
-        .map { it.appointmentAccount() }
+        .map(repository::accountFor)
         .distinctUntilChanged()
 
     private val cachedSnapshots = currentAccount.flatMapLatest { account ->
@@ -49,13 +48,13 @@ class AppointmentViewModel(
     )
 
     private val visibleSnapshot = combine(currentAccount, cachedSnapshots) { _, cached ->
-        val account = sessionManager.currentUser.value.appointmentAccount()
+        val account = repository.accountFor(sessionManager.currentUser.value)
         if (cached != null && cached.account == account) {
             cached.snapshot
         } else {
             AppointmentSnapshot(
                 appointments = emptyList(),
-                syncState = if (account == null) AppointmentSyncState.UNAVAILABLE else AppointmentSyncState.LOADING
+                syncState = if (account == null) AppointmentSyncState.NOT_CONFIGURED else AppointmentSyncState.LOADING
             )
         }
     }
@@ -68,7 +67,7 @@ class AppointmentViewModel(
 
     private val operation = MutableStateFlow(OperationState())
     private val visibleOperation = combine(currentAccount, operation) { _, state ->
-        if (state.account == sessionManager.currentUser.value.appointmentAccount()) state else OperationState()
+        if (state.account == repository.accountFor(sessionManager.currentUser.value)) state else OperationState()
     }
 
     val isProcessing = visibleOperation.map { it.isProcessing }.distinctUntilChanged()
@@ -79,7 +78,7 @@ class AppointmentViewModel(
         viewModelScope.launch {
             currentAccount.collect {
                 operation.update { current ->
-                    if (current.account == sessionManager.currentUser.value.appointmentAccount()) current
+                    if (current.account == repository.accountFor(sessionManager.currentUser.value)) current
                     else OperationState()
                 }
             }
@@ -88,14 +87,14 @@ class AppointmentViewModel(
 
     fun refreshAppointments() = repository.refreshAppointments()
 
-    fun createAppointment(vehicle: Vehicle, scheduledAtMillis: Long, description: String) {
+    fun createAppointment(vehicle: Vehicle, scheduledAtMillis: Long, serviceType: String) {
         val user = sessionManager.currentUser.value
-        val account = user.appointmentAccount()
+        val account = repository.accountFor(user)
         if (user == null || account == null || account.role != UserRole.CLIENT) {
-            showMessage(account, "Solo los clientes pueden solicitar citas.", isError = true)
+            showMessage(account, "Selecciona un perfil de cliente de MockAPI para solicitar citas de prueba.", isError = true)
             return
         }
-        execute(account) { repository.createAppointment(user, vehicle, scheduledAtMillis, description) }
+        execute(account) { repository.createAppointment(user, vehicle, scheduledAtMillis, serviceType) }
     }
 
     fun acceptAppointment(appointmentId: Long) = executeAsWorkshop { user ->
@@ -108,9 +107,9 @@ class AppointmentViewModel(
 
     private fun executeAsWorkshop(request: suspend (UserEntity) -> AppointmentOperationResult) {
         val user = sessionManager.currentUser.value
-        val account = user.appointmentAccount()
+        val account = repository.accountFor(user)
         if (user == null || account == null || account.role != UserRole.WORKSHOP) {
-            showMessage(account, "Solo EdMotor puede administrar las citas.", isError = true)
+            showMessage(account, "Selecciona un perfil de taller de MockAPI para administrar citas de prueba.", isError = true)
             return
         }
         execute(account) { request(user) }
@@ -132,7 +131,7 @@ class AppointmentViewModel(
                 AppointmentOperationResult.Error(e.message ?: "No fue posible completar la operación.")
             }
 
-            val completed = if (sessionManager.currentUser.value.appointmentAccount() != account) {
+            val completed = if (repository.accountFor(sessionManager.currentUser.value) != account) {
                 OperationState()
             } else {
                 when (result) {

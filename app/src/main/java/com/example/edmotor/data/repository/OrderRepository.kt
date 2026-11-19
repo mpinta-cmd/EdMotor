@@ -11,15 +11,12 @@ import com.example.edmotor.data.local.ProductDao
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.Order
 import com.example.edmotor.model.OrderItem
-import com.example.edmotor.model.OrderReference
-import com.example.edmotor.model.OrderSource
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
@@ -33,30 +30,15 @@ class OrderRepository(
     private val orderDao: OrderDao,
     private val productDao: ProductDao,
     private val cartDao: CartDao,
-    private val sessionManager: SessionManager,
-    private val remoteOrders: RemoteOrderRepository
+    private val sessionManager: SessionManager
 ) {
 
-    fun observeOrders(user: UserEntity): Flow<List<OrderWithItems>> {
-        val localOrders = when (user.role) {
+    fun observeOrders(user: UserEntity): Flow<List<OrderWithItems>> =
+        when (user.role) {
             UserRole.WORKSHOP.name -> orderDao.observeAllWithItems()
             UserRole.CLIENT.name -> orderDao.observeByClientWithItems(user.id)
-            else -> return flowOf(emptyList())
+            else -> flowOf(emptyList())
         }.map { orders -> orders.map { it.toModel() } }
-
-        val authId = user.remoteAuthId?.takeIf { it.isNotBlank() } ?: return localOrders
-        val remoteHistory = remoteOrders.observeOrders(
-            authId = authId,
-            isWorkshop = user.role == UserRole.WORKSHOP.name,
-            isSessionActive = {
-                sessionManager.currentUser.value?.id == user.id &&
-                    sessionManager.remoteSession?.userId == authId
-            }
-        )
-        return combine(localOrders, remoteHistory) { local, remote ->
-            (local + remote).sortedByDescending { it.order.createdAtMillis }
-        }
-    }
 
     suspend fun createPendingOrder(client: UserEntity): OrderOperationResult =
         orderOperation("No fue posible guardar el pedido.") {
@@ -111,16 +93,16 @@ class OrderRepository(
 
     suspend fun confirmOrder(
         workshop: UserEntity,
-        reference: OrderReference
+        orderId: Int
     ): OrderOperationResult = orderOperation("No fue posible confirmar el pedido.") {
         database.withTransaction {
             val activeWorkshop = requireActiveUser(workshop, UserRole.WORKSHOP)
-            val orderId = reference.requireLocalId()
-            val order = orderDao.getOrderById(orderId)
+            val storedOrderId = requireOrderId(orderId)
+            val order = orderDao.getOrderById(storedOrderId)
                 ?: error("No encontramos el pedido solicitado.")
             check(order.status == OrderStatus.PENDING) { "Este pedido ya fue procesado." }
 
-            val items = orderDao.getOrderItems(orderId)
+            val items = orderDao.getOrderItems(storedOrderId)
             check(items.isNotEmpty()) { "El pedido no contiene productos." }
 
             val now = System.currentTimeMillis()
@@ -134,30 +116,29 @@ class OrderRepository(
             }
 
             val updated = orderDao.confirmOrder(
-                orderId = orderId,
+                orderId = storedOrderId,
                 status = OrderStatus.CONFIRMED,
                 ownerUserId = activeWorkshop.id.toLong(),
                 confirmedAtMillis = now,
                 updatedAtMillis = now
             )
             check(updated == 1) { "Este pedido ya fue procesado." }
-            OrderOperationResult.Success("Pedido #${reference.id} confirmado. Inventario actualizado.")
+            OrderOperationResult.Success("Pedido #$orderId confirmado. Inventario actualizado.")
         }
     }
 
     suspend fun rejectOrder(
         workshop: UserEntity,
-        reference: OrderReference
+        orderId: Int
     ): OrderOperationResult = orderOperation("No fue posible rechazar el pedido.") {
         requireActiveUser(workshop, UserRole.WORKSHOP)
-        val orderId = reference.requireLocalId()
         val updated = orderDao.updateOrderStatus(
-            orderId = orderId,
+            orderId = requireOrderId(orderId),
             status = OrderStatus.REJECTED,
             updatedAtMillis = System.currentTimeMillis()
         )
         check(updated == 1) { "El pedido no existe o ya fue procesado." }
-        OrderOperationResult.Success("Pedido #${reference.id} rechazado.")
+        OrderOperationResult.Success("Pedido #$orderId rechazado.")
     }
 
     private fun requireActiveUser(user: UserEntity, requiredRole: UserRole): UserEntity {
@@ -168,10 +149,9 @@ class OrderRepository(
         return active
     }
 
-    private fun OrderReference.requireLocalId(): Long {
-        check(source == OrderSource.LOCAL) { "Los pedidos del historial en línea son de consulta." }
-        require(id > 0) { "El pedido no es válido." }
-        return id.toLong()
+    private fun requireOrderId(orderId: Int): Long {
+        require(orderId > 0) { "El pedido no es válido." }
+        return orderId.toLong()
     }
 
     private suspend inline fun orderOperation(
@@ -190,9 +170,8 @@ class OrderRepository(
 
 private fun StoredOrderWithItems.toModel() = OrderWithItems(
     order = Order(
-        reference = OrderReference(OrderSource.LOCAL, order.id),
+        id = order.id,
         clientUserId = order.clientUserId,
-        clientAuthId = null,
         clientName = order.clientName,
         clientUsername = order.clientUsername,
         clientPhone = order.clientPhone,

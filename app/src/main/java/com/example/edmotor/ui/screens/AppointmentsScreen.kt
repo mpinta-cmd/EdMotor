@@ -37,7 +37,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
@@ -59,6 +58,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.example.edmotor.model.Appointment
+import com.example.edmotor.model.AppointmentServiceType
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.Vehicle
@@ -105,10 +105,11 @@ fun AppointmentsScreen(
         )
     }
     var selectedTime by rememberSaveable { mutableStateOf("09:00") }
-    var description by rememberSaveable { mutableStateOf("") }
+    var selectedService by rememberSaveable { mutableStateOf<String?>(null) }
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
     var showTimeMenu by remember { mutableStateOf(false) }
     var showVehicleMenu by remember { mutableStateOf(false) }
+    var showServiceMenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(vehicles) {
         if (selectedVehicleId <= 0 && vehicles.isNotEmpty()) {
@@ -117,6 +118,7 @@ fun AppointmentsScreen(
     }
 
     val selectedVehicle = vehicles.firstOrNull { it.id == selectedVehicleId }
+    val canChangeAppointments = syncState == AppointmentSyncState.UP_TO_DATE && !isProcessing
     val visibleAppointments = remember(appointments, isWorkshop) {
         if (isWorkshop) {
             appointments.sortedWith(
@@ -149,21 +151,21 @@ fun AppointmentsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = if (isWorkshop) "AGENDA DEL TALLER" else "AGENDA TU CITA",
+            text = if (isWorkshop) "AGENDA DE PRUEBA DEL TALLER" else "CITAS DE PRUEBA",
             color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = if (isWorkshop) "Solicitudes de servicio" else "Reserva una revisión para tu vehículo",
+            text = if (isWorkshop) "Solicitudes de servicio" else "Solicita una cita de prueba",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.ExtraBold
         )
         Text(
             text = if (isWorkshop) {
-                "Consulta las citas por día y horario. Revisa las solicitudes y administra la agenda del taller."
+                "Consulta las solicitudes de demostración por día y horario."
             } else {
-                "Selecciona tu vehículo, el día, la hora y cuéntanos qué está sucediendo."
+                "Elige un vehículo de prueba, el día, la hora y el tipo de servicio. Los detalles del vehículo quedan en este dispositivo."
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
@@ -200,7 +202,13 @@ fun AppointmentsScreen(
             }
         }
 
-        if (syncState == AppointmentSyncState.LOADING) {
+        if (syncState == AppointmentSyncState.NOT_CONFIGURED) {
+            Text(
+                "Las citas de prueba necesitan MockAPI configurado y un perfil seleccionado de MockAPI. El garaje, el catálogo y los pedidos siguen disponibles en este dispositivo.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else if (syncState == AppointmentSyncState.LOADING) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         } else if (syncState == AppointmentSyncState.UNAVAILABLE) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -211,20 +219,22 @@ fun AppointmentsScreen(
                 )
                 TextButton(onClick = onRefresh) { Text("Reintentar") }
             }
+        } else {
+            TextButton(onClick = onRefresh, enabled = !isProcessing) { Text("Actualizar citas") }
         }
 
         if (isWorkshop) {
             if (syncState == AppointmentSyncState.UP_TO_DATE || appointments.isNotEmpty()) {
                 WorkshopDailyAgenda(
                     appointments = visibleAppointments,
-                    isProcessing = isProcessing,
+                    canReview = canChangeAppointments,
                     onAccept = onAccept,
                     onReject = onReject,
                     showEmptyDay = syncState == AppointmentSyncState.UP_TO_DATE,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-        } else {
+        } else if (syncState != AppointmentSyncState.NOT_CONFIGURED) {
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -261,7 +271,7 @@ fun AppointmentsScreen(
                                     Spacer(Modifier.size(8.dp))
                                     Text(
                                         selectedVehicle?.let { vehicle ->
-                                            "${vehicle.brand} ${vehicle.model} · ${vehicle.plate.ifBlank { vehicle.year.toString() }}"
+                                            "${vehicle.brand} ${vehicle.model} · ${vehicle.year}"
                                         } ?: "Seleccionar vehículo"
                                     )
                                 }
@@ -285,7 +295,7 @@ fun AppointmentsScreen(
 
                             if (vehicles.isEmpty()) {
                                 Text(
-                                    "Primero registra un vehículo en Mi Garaje para poder solicitar una cita.",
+                                    "Registra un vehículo ficticio en Mi Garaje para solicitar una cita de prueba.",
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -325,39 +335,45 @@ fun AppointmentsScreen(
                                 }
                             }
 
-                            OutlinedTextField(
-                                value = description,
-                                onValueChange = { description = it.take(600) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("¿Qué le sucede al vehículo?") },
-                                placeholder = {
-                                    Text("Ej. Hace un ruido al frenar, vibra al acelerar...")
-                                },
-                                minLines = 3,
-                                maxLines = 5
-                            )
-
-                            Text(
-                                "${description.length}/600 caracteres",
-                                modifier = Modifier.align(Alignment.End),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelSmall
-                            )
+                            Box {
+                                OutlinedButton(
+                                    onClick = { showServiceMenu = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(selectedService ?: "Seleccionar tipo de servicio")
+                                }
+                                DropdownMenu(
+                                    expanded = showServiceMenu,
+                                    onDismissRequest = { showServiceMenu = false }
+                                ) {
+                                    AppointmentServiceType.options.forEach { service ->
+                                        DropdownMenuItem(
+                                            text = { Text(service) },
+                                            onClick = {
+                                                selectedService = service
+                                                showServiceMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
 
                             Button(
                                 onClick = {
-                                    selectedVehicle?.let { vehicle ->
+                                    val vehicle = selectedVehicle
+                                    val service = selectedService
+                                    if (vehicle != null && service != null) {
                                         val scheduledAt = buildLocalDateTime(
                                             selectedDateMillis,
                                             selectedTime
                                         )
-                                        onCreateAppointment(vehicle, scheduledAt, description)
+                                        onCreateAppointment(vehicle, scheduledAt, service)
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                enabled = !isProcessing &&
+                                enabled = canChangeAppointments &&
                                         selectedVehicle != null &&
-                                        description.trim().length >= 8
+                                        selectedService != null
                             ) {
                                 if (isProcessing) {
                                     CircularProgressIndicator(
@@ -366,7 +382,7 @@ fun AppointmentsScreen(
                                     )
                                     Spacer(Modifier.padding(4.dp))
                                 }
-                                Text("Solicitar cita")
+                                Text("Solicitar cita de prueba")
                             }
                         }
                     }
@@ -391,11 +407,7 @@ fun AppointmentsScreen(
                     items(visibleAppointments, key = { it.id }) { appointment ->
                         AppointmentCard(
                             appointment = appointment,
-                            isWorkshop = false,
-                            isProcessing = isProcessing,
-                            dateTimeFormatter = dateTimeFormatter,
-                            onAccept = {},
-                            onReject = {}
+                            dateTimeFormatter = dateTimeFormatter
                         )
                     }
                 }
@@ -445,7 +457,7 @@ fun AppointmentsScreen(
 @Composable
 private fun WorkshopDailyAgenda(
     appointments: List<Appointment>,
-    isProcessing: Boolean,
+    canReview: Boolean,
     onAccept: (Long) -> Unit,
     onReject: (Long) -> Unit,
     showEmptyDay: Boolean,
@@ -682,7 +694,7 @@ private fun WorkshopDailyAgenda(
                     WorkshopAppointmentTimelineItem(
                         appointment = appointment,
                         timeLabel = timeFormatter.format(Date(appointment.scheduledAtMillis)),
-                        isProcessing = isProcessing,
+                        canReview = canReview,
                         onAccept = { onAccept(appointment.id) },
                         onReject = { onReject(appointment.id) }
                     )
@@ -745,7 +757,7 @@ private fun AgendaSummaryPill(
 private fun WorkshopAppointmentTimelineItem(
     appointment: Appointment,
     timeLabel: String,
-    isProcessing: Boolean,
+    canReview: Boolean,
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
@@ -836,34 +848,12 @@ private fun WorkshopAppointmentTimelineItem(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "Vehículo: ${appointment.vehicleBrand} ${appointment.vehicleModel} · ${appointment.vehicleYear}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (appointment.vehiclePlate.isNotBlank()) {
-                    Text(
-                        "Placa: ${appointment.vehiclePlate}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Text(
-                    "Usuario: @${appointment.clientUsername}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "Teléfono: ${appointment.clientPhone ?: "Sin teléfono registrado"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "Descripción del servicio:",
+                    "Servicio solicitado",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    appointment.description.ifBlank { "Sin descripción proporcionada." },
+                    appointment.description,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -871,12 +861,12 @@ private fun WorkshopAppointmentTimelineItem(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = onAccept,
-                            enabled = !isProcessing,
+                            enabled = canReview,
                             modifier = Modifier.weight(1f)
                         ) { Text("Confirmar") }
                         OutlinedButton(
                             onClick = onReject,
-                            enabled = !isProcessing,
+                            enabled = canReview,
                             modifier = Modifier.weight(1f)
                         ) { Text("Rechazar") }
                     }
@@ -950,11 +940,7 @@ private fun utcDateToLocalDayMillis(utcMillis: Long): Long {
 @Composable
 private fun AppointmentCard(
     appointment: Appointment,
-    isWorkshop: Boolean,
-    isProcessing: Boolean,
-    dateTimeFormatter: SimpleDateFormat,
-    onAccept: () -> Unit,
-    onReject: () -> Unit
+    dateTimeFormatter: SimpleDateFormat
 ) {
     val statusText = when (appointment.status) {
         AppointmentStatus.PENDING -> "PENDIENTE"
@@ -1003,23 +989,7 @@ private fun AppointmentCard(
             )
 
             Text(
-                "${appointment.vehicleBrand} ${appointment.vehicleModel} · ${appointment.vehicleYear}",
-                fontWeight = FontWeight.SemiBold
-            )
-            if (appointment.vehiclePlate.isNotBlank()) {
-                Text("Placa: ${appointment.vehiclePlate}")
-            }
-
-            if (isWorkshop) {
-                Text("CLIENTE", color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                Text(appointment.clientName, fontWeight = FontWeight.SemiBold)
-                Text("@${appointment.clientUsername}")
-                Text("Teléfono: ${appointment.clientPhone ?: "No registrado"}")
-            }
-
-            Text(
-                "Descripción del problema",
+                "Servicio solicitado",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -1027,24 +997,6 @@ private fun AppointmentCard(
                 appointment.description,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
-            if (isWorkshop && appointment.status == AppointmentStatus.PENDING) {
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = onAccept,
-                    enabled = !isProcessing,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Aceptar cita")
-                }
-                OutlinedButton(
-                    onClick = onReject,
-                    enabled = !isProcessing,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Rechazar solicitud")
-                }
-            }
         }
     }
 }

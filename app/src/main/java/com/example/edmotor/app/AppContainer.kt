@@ -1,15 +1,15 @@
 package com.example.edmotor.app
 
 import android.content.Context
+import com.example.edmotor.BuildConfig
 import com.example.edmotor.data.local.EdMotorDatabase
-import com.example.edmotor.data.remote.SupabaseClient
+import com.example.edmotor.data.remote.MockApiConnection
 import com.example.edmotor.data.repository.AppointmentRepository
 import com.example.edmotor.data.repository.CartRepository
 import com.example.edmotor.data.repository.FavoriteRepository
 import com.example.edmotor.data.repository.MaintenanceRepository
 import com.example.edmotor.data.repository.OrderRepository
 import com.example.edmotor.data.repository.ProductRepository
-import com.example.edmotor.data.repository.RemoteOrderRepository
 import com.example.edmotor.data.repository.UserRepository
 import com.example.edmotor.data.repository.VehicleRepository
 import com.example.edmotor.session.SessionManager
@@ -26,17 +26,14 @@ class AppContainer(context: Context) {
         context.applicationContext
     )
 
-    val sessionManager = SessionManager(context.applicationContext)
+    val sessionManager = SessionManager()
 
-    // Cliente único para Auth, REST y Realtime de Supabase.
-    private val supabaseClient = SupabaseClient(sessionManager)
+    private val mockApi = MockApiConnection.fromBaseUrl(BuildConfig.EDMOTOR_MOCKAPI_URL)
 
     private val userRepository = UserRepository(
         database = database,
         userDao = database.userDao(),
-        cartDao = database.cartDao(),
-        favoriteDao = database.favoriteProductDao(),
-        supabase = supabaseClient
+        mockApi = mockApi
     )
 
     private val vehicleRepository = VehicleRepository(
@@ -77,14 +74,13 @@ class AppContainer(context: Context) {
         orderDao = database.orderDao(),
         productDao = database.productDao(),
         cartDao = database.cartDao(),
-        sessionManager = sessionManager,
-        remoteOrders = RemoteOrderRepository(supabaseClient)
+        sessionManager = sessionManager
     )
 
 
     private val appointmentRepository = AppointmentRepository(
         appointmentDao = database.appointmentDao(),
-        supabase = supabaseClient,
+        mockApi = mockApi,
         sessionManager = sessionManager
     )
 

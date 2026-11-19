@@ -5,8 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.repository.OrderOperationResult
 import com.example.edmotor.data.repository.OrderRepository
-import com.example.edmotor.model.OrderReference
-import com.example.edmotor.model.OrderSource
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.model.UserRole
@@ -51,12 +49,7 @@ class OrderViewModel(
     }.distinctUntilChanged()
 
     val pendingOrdersCount = orders
-        .map { orders ->
-            orders.count {
-                it.order.reference.source == OrderSource.LOCAL &&
-                    it.order.status == OrderStatus.PENDING
-            }
-        }
+        .map { orders -> orders.count { it.order.status == OrderStatus.PENDING } }
         .distinctUntilChanged()
 
     private val _isProcessing = MutableStateFlow(false)
@@ -75,15 +68,15 @@ class OrderViewModel(
         action = repository::createPendingOrder
     )
 
-    fun confirmOrder(reference: OrderReference) = perform(
+    fun confirmOrder(orderId: Int) = perform(
         role = UserRole.WORKSHOP,
         permissionMessage = "Solo el taller puede confirmar pedidos."
-    ) { workshop -> repository.confirmOrder(workshop, reference) }
+    ) { workshop -> repository.confirmOrder(workshop, orderId) }
 
-    fun rejectOrder(reference: OrderReference) = perform(
+    fun rejectOrder(orderId: Int) = perform(
         role = UserRole.WORKSHOP,
         permissionMessage = "Solo el taller puede rechazar pedidos."
-    ) { workshop -> repository.rejectOrder(workshop, reference) }
+    ) { workshop -> repository.rejectOrder(workshop, orderId) }
 
     fun clearMessage() {
         feedback.value = null

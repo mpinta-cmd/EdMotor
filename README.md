@@ -646,6 +646,6 @@ La aplicación integra tres módulos principales: uno que expande la base trabaj
 ![Guía de Diagnóstico](screenshots/img_3.png)
 
 
-## Compilación, Room y Supabase
+## Compilación, Room y MockAPI
 
-La [guía de persistencia](README_Supabase_Citas.md) describe la versión vigente e incluye requisitos de compilación, migraciones, alcance de Room y Supabase, y cómo comprobar los recorridos de pedidos y citas. Las secciones anteriores muestran la interfaz original del proyecto.
+La [guía de persistencia](README_MockAPI.md) describe la versión vigente e incluye requisitos de compilación, migraciones, alcance de Room y MockAPI, y cómo comprobar los recorridos de pedidos y citas. Las secciones anteriores muestran la interfaz original del proyecto.

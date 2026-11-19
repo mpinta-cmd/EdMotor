@@ -31,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.edmotor.model.OrderSource
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.model.Vehicle
@@ -136,7 +135,7 @@ fun ClientGarageScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Text(
-                        "Aquí aparecen los pedidos de este dispositivo y tu histórico disponible en línea.",
+                        "Aquí aparecen tu historial y los pedidos guardados en este dispositivo.",
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -147,7 +146,7 @@ fun ClientGarageScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(orders, key = { "${it.order.reference.source}:${it.order.id}" }) { orderWithItems ->
+                    items(orders, key = { it.order.id }) { orderWithItems ->
                         val order = orderWithItems.order
                         val (statusLabel, statusColor) = when (order.status) {
                             OrderStatus.PENDING -> "PENDIENTE DE CONFIRMACIÓN" to MaterialTheme.colorScheme.tertiary
@@ -190,15 +189,11 @@ fun ClientGarageScreen(
                                     Text("Total", fontWeight = FontWeight.Bold)
                                     Text("$${currency.format(order.totalCop)}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
                                 }
-                                if (order.reference.source == OrderSource.REMOTE) {
-                                    Text("Histórico en línea", style = MaterialTheme.typography.bodySmall)
-                                } else {
-                                    when (order.status) {
-                                        OrderStatus.PENDING -> Text("Pedido guardado en este dispositivo. Pendiente de revisión.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                                        OrderStatus.CONFIRMED -> Text("El taller confirmó tu pedido.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                                        OrderStatus.REJECTED -> Text("El taller rechazó este pedido. El inventario se conserva.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                                        else -> Unit
-                                    }
+                                when (order.status) {
+                                    OrderStatus.PENDING -> Text("Pedido guardado en este dispositivo. Pendiente de revisión.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                                    OrderStatus.CONFIRMED -> Text("El taller confirmó tu pedido.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                    OrderStatus.REJECTED -> Text("El taller rechazó este pedido. El inventario se conserva.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                    else -> Unit
                                 }
                             }
                         }

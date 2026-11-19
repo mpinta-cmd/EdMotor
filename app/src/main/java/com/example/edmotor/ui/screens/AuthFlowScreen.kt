@@ -1,22 +1,26 @@
 package com.example.edmotor.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,344 +30,156 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-
-private enum class AuthMode {
-    LOGIN,
-    REGISTER
-}
+import com.example.edmotor.model.DemoProfile
+import com.example.edmotor.model.UserRole
 
 @Composable
 fun AuthFlowScreen(
+    profiles: List<DemoProfile>,
+    mockApiConfigured: Boolean,
+    isLoading: Boolean,
+    selectingKey: String?,
     message: String?,
-    onLogin: (String, String) -> Unit,
-    onRegister: (String, String, String, String?) -> Unit,
-    onClearMessage: () -> Unit
+    onSelectProfile: (String) -> Unit,
+    onRetry: () -> Unit
 ) {
+    var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedProfile = profiles.firstOrNull { it.key == selectedKey }
+    val isSelecting = selectingKey != null
+    val localProfiles = profiles.filter { it.remoteId == null }
+    val remoteProfiles = profiles.filter { it.remoteId != null }
 
-    var mode by rememberSaveable {
-        mutableStateOf(AuthMode.LOGIN)
-    }
-
-    var username by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    var password by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    var confirmPassword by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    var displayName by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    var phone by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    var localError by rememberSaveable {
-        mutableStateOf<String?>(null)
-    }
-
-    val isRegister = mode == AuthMode.REGISTER
-
-    val title = if (isRegister) {
-        "Crear cuenta de cliente"
-    } else {
-        "Bienvenido a EdMotor"
-    }
-
-    val subtitle = if (isRegister) {
-        "Regístrate para guardar tus vehículos y consultar su historial."
-    } else {
-        "Ingresa para consultar tus vehículos y servicios."
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding()
-            .verticalScroll(rememberScrollState())
-            .padding(22.dp),
-        contentAlignment = Alignment.Center
-    ) {
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            elevation = CardDefaults.cardElevation(
-                defaultElevation = 4.dp
-            )
-        ) {
-
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(13.dp)
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+            LazyColumn(
+                modifier = Modifier.weight(1f).selectableGroup(),
+                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 26.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-
-                Text(
-                    text = "ED MOTOR",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.ExtraBold
-                )
-
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                // ==================================
-                // DATOS DEL CLIENTE
-                // ==================================
-
-                if (isRegister) {
-
-                    OutlinedTextField(
-                        value = displayName,
-                        onValueChange = {
-                            displayName = it
-                            localError = null
-                            onClearMessage()
-                        },
-                        label = {
-                            Text("Nombre completo")
-                        },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                // ==================================
-                // USUARIO
-                // ==================================
-
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = {
-                        username = it
-                        localError = null
-                        onClearMessage()
-                    },
-                    label = {
-                        Text("Nombre de usuario")
-                    },
-                    supportingText = {
-                        Text(
-                            "3 a 20 caracteres: letras, números o guion bajo."
-                        )
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // ==================================
-                // TELÉFONO
-                // ==================================
-
-                if (isRegister) {
-
-                    OutlinedTextField(
-                        value = phone,
-                        onValueChange = {
-                            phone = it
-                        },
-                        label = {
-                            Text("Teléfono (opcional)")
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Phone
-                        ),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                // ==================================
-                // CONTRASEÑA
-                // ==================================
-
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = {
-                        password = it
-                        localError = null
-                        onClearMessage()
-                    },
-                    label = {
-                        Text("Contraseña")
-                    },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // ==================================
-                // CONFIRMAR CONTRASEÑA
-                // ==================================
-
-                if (isRegister) {
-
-                    OutlinedTextField(
-                        value = confirmPassword,
-                        onValueChange = {
-                            confirmPassword = it
-                            localError = null
-                        },
-                        label = {
-                            Text("Confirmar contraseña")
-                        },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                // ==================================
-                // MENSAJES
-                // ==================================
-
-                val visibleMessage = localError ?: message
-
-                if (!visibleMessage.isNullOrBlank()) {
-
-                    Text(
-                        text = visibleMessage,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-
-                // ==================================
-                // BOTÓN PRINCIPAL
-                // ==================================
-
-                Button(
-                    onClick = {
-
-                        localError = null
-
-                        if (isRegister) {
-
-                            when {
-
-                                password != confirmPassword -> {
-
-                                    localError =
-                                        "Las contraseñas no coinciden."
-                                }
-
-                                displayName.isBlank() -> {
-
-                                    localError =
-                                        "Escribe tu nombre."
-                                }
-
-                                password.length < 6 -> {
-
-                                    localError =
-                                        "La contraseña debe tener al menos 6 caracteres."
-                                }
-
-                                else -> {
-
-                                    onRegister(
-                                        username,
-                                        password,
-                                        displayName,
-                                        phone
-                                    )
-                                }
-                            }
-
-                        } else {
-
-                            onLogin(
-                                username,
-                                password
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        shadowElevation = 4.dp
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "ED MOTOR",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                "Selecciona un perfil de prueba",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Puedes explorar EdMotor como cliente o taller. Elige un perfil de MockAPI para probar las citas en línea. Usa datos ficticios para esta demostración.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    },
-                    enabled = username.isNotBlank() &&
-                            password.isNotBlank() &&
-                            (
-                                    !isRegister ||
-                                            (
-                                                    displayName.isNotBlank() &&
-                                                            confirmPassword.isNotBlank()
-                                                    )
-                                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(15.dp)
-                ) {
-
-                    Text(
-                        text = if (isRegister) {
-                            "Crear mi cuenta"
-                        } else {
-                            "Iniciar sesión"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // ==================================
-                // CAMBIAR ENTRE REGISTRO Y LOGIN
-                // ==================================
-
-                if (isRegister) {
-
-                    TextButton(
-                        onClick = {
-
-                            mode = AuthMode.LOGIN
-                            localError = null
-                            onClearMessage()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-
-                        Text(
-                            "Ya tengo una cuenta · Iniciar sesión"
-                        )
-                    }
-
-                } else {
-
-                    TextButton(
-                        onClick = {
-
-                            mode = AuthMode.REGISTER
-                            localError = null
-                            onClearMessage()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-
-                        Text(
-                            "¿Eres cliente nuevo? Crear cuenta"
-                        )
                     }
                 }
+
+                item {
+                    Text("En este dispositivo", style = MaterialTheme.typography.titleMedium)
+                }
+                items(localProfiles, key = { it.key }) { profile ->
+                    DemoProfileCard(profile, selectedKey == profile.key, !isSelecting) {
+                        selectedKey = profile.key
+                    }
+                }
+
+                item {
+                    Text("MockAPI", style = MaterialTheme.typography.titleMedium)
+                }
+                items(remoteProfiles, key = { it.key }) { profile ->
+                    DemoProfileCard(profile, selectedKey == profile.key, !isSelecting) {
+                        selectedKey = profile.key
+                    }
+                }
+                item {
+                    when {
+                        !mockApiConfigured -> Text(
+                            "MockAPI está sin configurar. Los perfiles de este dispositivo siguen disponibles.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        isLoading -> Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Text("Consultando perfiles…")
+                        }
+                        else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (remoteProfiles.isEmpty() && message == null) {
+                                Text("No hay perfiles de prueba en MockAPI.", modifier = Modifier.weight(1f))
+                            }
+                            TextButton(onClick = onRetry, enabled = !isSelecting) { Text("Actualizar perfiles") }
+                        }
+                    }
+                }
+                if (message != null) {
+                    item { Text(message, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+
+            Button(
+                onClick = { selectedProfile?.let { onSelectProfile(it.key) } },
+                enabled = selectedProfile != null && !isSelecting,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp).heightIn(min = 52.dp),
+                shape = RoundedCornerShape(15.dp)
+            ) {
+                if (isSelecting) {
+                    CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp).size(18.dp), strokeWidth = 2.dp)
+                }
+                Text(if (isSelecting) "Abriendo perfil…" else "Continuar", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DemoProfileCard(
+    profile: DemoProfile,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth().selectable(
+            selected = selected,
+            enabled = enabled,
+            role = Role.RadioButton,
+            onClick = onClick
+        ),
+        color = if (selected) colors.primaryContainer else colors.surface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, if (selected) colors.primary else colors.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(profile.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (profile.role == UserRole.WORKSHOP) "Taller" else "Cliente",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
             }
         }
     }

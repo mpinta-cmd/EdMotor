@@ -61,7 +61,7 @@ object AppointmentMigration {
     val MIGRATION_9_10 = object : Migration(9, 10) {
         override fun migrate(database: SupportSQLiteDatabase) {
             // Las citas locales de v9 no identifican la cuenta que descargó el dato.
-            // La caché se llena con respuestas de Supabase de una sesión autenticada.
+            // La caché se llena con respuestas de la API remota de una sesión autenticada.
             database.execSQL(
                 """
                 CREATE TABLE IF NOT EXISTS `appointment_cache` (

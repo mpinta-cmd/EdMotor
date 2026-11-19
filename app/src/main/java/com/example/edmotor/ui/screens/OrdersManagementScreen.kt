@@ -24,8 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.edmotor.model.OrderReference
-import com.example.edmotor.model.OrderSource
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
 import java.text.NumberFormat
@@ -39,8 +37,8 @@ fun OrdersManagementScreen(
     isProcessing: Boolean,
     message: String?,
     isError: Boolean,
-    onConfirm: (OrderReference) -> Unit,
-    onReject: (OrderReference) -> Unit,
+    onConfirm: (Int) -> Unit,
+    onReject: (Int) -> Unit,
     onBack: () -> Unit
 ) {
 
@@ -97,7 +95,7 @@ fun OrdersManagementScreen(
         Spacer(Modifier.height(12.dp))
 
         Text(
-            "Confirma los pedidos de este dispositivo para actualizar el inventario. El histórico en línea se puede consultar aquí.",
+            "Confirma los pedidos de este dispositivo para actualizar el inventario.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -143,7 +141,7 @@ fun OrdersManagementScreen(
                 )
 
                 Text(
-                    "Aquí aparecen los pedidos guardados en este dispositivo y el histórico en línea.",
+                    "Aquí aparecen los pedidos guardados en este dispositivo.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -157,7 +155,7 @@ fun OrdersManagementScreen(
 
                 items(
                     items = orders,
-                    key = { "${it.order.reference.source}:${it.order.id}" }
+                    key = { it.order.id }
                 ) { orderWithItems ->
 
                     val order = orderWithItems.order
@@ -237,14 +235,6 @@ fun OrdersManagementScreen(
                                 fontWeight = FontWeight.Bold
                             )
 
-                            Text(
-                                "@${order.clientUsername}"
-                            )
-
-                            Text(
-                                "Teléfono: ${order.clientPhone ?: "No registrado"}"
-                            )
-
                             // PRODUCTOS
 
                             Text(
@@ -304,19 +294,13 @@ fun OrdersManagementScreen(
 
                             // ACCIONES DEL DUEÑO
 
-                            if (order.reference.source == OrderSource.REMOTE) {
-                                Text(
-                                    "Histórico en línea · Solo consulta",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            } else if (isPending) {
+                            if (isPending) {
 
                                 Spacer(Modifier.height(6.dp))
 
                                 Button(
                                     onClick = {
-                                        onConfirm(order.reference)
+                                        onConfirm(order.id)
                                     },
                                     enabled = !isProcessing,
                                     modifier = Modifier.fillMaxWidth(),
@@ -335,7 +319,7 @@ fun OrdersManagementScreen(
 
                                 OutlinedButton(
                                     onClick = {
-                                        onReject(order.reference)
+                                        onReject(order.id)
                                     },
                                     enabled = !isProcessing,
                                     modifier = Modifier.fillMaxWidth(),

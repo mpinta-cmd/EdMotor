@@ -1,17 +1,13 @@
 
 package com.example.edmotor.ui
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 
@@ -92,7 +88,7 @@ fun EdMotorApp(
     val authState by authViewModel.authState
         .collectAsStateWithLifecycle()
 
-    val authMessage by authViewModel.message
+    val profileSelection by authViewModel.profileSelection
         .collectAsStateWithLifecycle()
 
     // ==========================================
@@ -101,26 +97,16 @@ fun EdMotorApp(
 
     when (val state = authState) {
 
-        AuthState.Loading -> {
-
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-
         AuthState.SignedOut -> {
 
             AuthFlowScreen(
-                message = authMessage,
-                onLogin = authViewModel::login,
-                onRegister = authViewModel::registerClient,
-                onClearMessage = authViewModel::clearMessage
+                profiles = profileSelection.profiles,
+                mockApiConfigured = profileSelection.mockApiConfigured,
+                isLoading = profileSelection.isLoading,
+                selectingKey = profileSelection.selectingKey,
+                message = profileSelection.message,
+                onSelectProfile = authViewModel::selectProfile,
+                onRetry = authViewModel::reloadProfiles
             )
         }
 

@@ -6,7 +6,18 @@ object AppointmentStatus {
     const val REJECTED = "REJECTED"
 }
 
-enum class AppointmentSyncState { LOADING, UP_TO_DATE, UNAVAILABLE }
+enum class AppointmentSyncState { NOT_CONFIGURED, LOADING, UP_TO_DATE, UNAVAILABLE }
+
+object AppointmentServiceType {
+    val options = listOf(
+        "Revisión general",
+        "Mantenimiento preventivo",
+        "Diagnóstico",
+        "Cambio de aceite",
+        "Frenos",
+        "Neumáticos"
+    )
+}
 
 data class Appointment(
     val id: Long,

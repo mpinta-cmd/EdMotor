@@ -1,3 +1,4 @@
+import groovy.json.JsonOutput
 import org.gradle.kotlin.dsl.dependencies
 
 plugins {
@@ -5,6 +6,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+val mockApiUrl = providers.gradleProperty("EDMOTOR_MOCKAPI_URL")
+    .orElse(providers.environmentVariable("EDMOTOR_MOCKAPI_URL"))
+    .orElse("")
 
 // ==========================================
 // CONFIGURACIÓN ANDROID
@@ -21,6 +26,7 @@ android {
     defaultConfig {
 
         applicationId = "com.example.edmotor"
+        applicationIdSuffix = ".mockapi"
 
         minSdk = 24
 
@@ -29,6 +35,8 @@ android {
         versionCode = 1
 
         versionName = "1.0"
+
+        buildConfigField("String", "EDMOTOR_MOCKAPI_URL", JsonOutput.toJson(mockApiUrl.get()))
 
         testInstrumentationRunner =
             "androidx.test.runner.AndroidJUnitRunner"
@@ -66,6 +74,7 @@ android {
     buildFeatures {
 
         compose = true
+        buildConfig = true
     }
 }
 
@@ -124,8 +133,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.transport.api)
 
-    // SUPABASE REST + REALTIME (WebSocket)
-    implementation(libs.okhttp)
+    // MOCKAPI REST
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.gson)
 
     ksp(libs.androidx.room.compiler)
 
