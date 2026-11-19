@@ -5,12 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
-
-object OrderStatus {
-    const val PENDING = "PENDING"
-    const val CONFIRMED = "CONFIRMED"
-    const val REJECTED = "REJECTED"
-}
+import com.example.edmotor.model.OrderStatus
 
 @Entity(
     tableName = "orders",

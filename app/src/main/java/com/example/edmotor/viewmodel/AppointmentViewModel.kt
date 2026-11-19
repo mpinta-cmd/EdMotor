@@ -3,21 +3,28 @@ package com.example.edmotor.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.edmotor.data.local.UserEntity
+import com.example.edmotor.data.repository.AppointmentAccount
 import com.example.edmotor.data.repository.AppointmentRepository
-import com.example.edmotor.model.Appointment
+import com.example.edmotor.data.repository.AppointmentSnapshot
+import com.example.edmotor.data.repository.appointmentAccount
 import com.example.edmotor.model.AppointmentOperationResult
 import com.example.edmotor.model.AppointmentStatus
+import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
 import com.example.edmotor.session.SessionManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -25,100 +32,135 @@ class AppointmentViewModel(
     private val repository: AppointmentRepository,
     private val sessionManager: SessionManager
 ) : ViewModel() {
+    private val currentAccount = sessionManager.currentUser
+        .map { it.appointmentAccount() }
+        .distinctUntilChanged()
 
-    val appointments = sessionManager.currentUser
-        .flatMapLatest { user ->
-            if (user == null) {
-                flowOf(emptyList<Appointment>())
-            } else {
-                repository.observeForCurrentUser(
-                    isWorkshop = user.role == UserRole.WORKSHOP.name
-                )
-            }
+    private val cachedSnapshots = currentAccount.flatMapLatest { account ->
+        if (account == null) {
+            flowOf(null)
+        } else {
+            repository.observeAppointments(account).map { ScopedSnapshot(account, it) }
         }
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            emptyList()
-        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000, replayExpirationMillis = 0),
+        null
+    )
 
-    val pendingCount = appointments
-        .map { list -> list.count { it.status == AppointmentStatus.PENDING } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-
-    private val _isProcessing = MutableStateFlow(false)
-    val isProcessing = _isProcessing.asStateFlow()
-
-    private val _message = MutableStateFlow<String?>(null)
-    val message = _message.asStateFlow()
-
-    private val _isError = MutableStateFlow(false)
-    val isError = _isError.asStateFlow()
-
-    fun createAppointment(
-        vehicle: Vehicle,
-        scheduledAtMillis: Long,
-        description: String
-    ) {
-        val user = sessionManager.currentUser.value
-        if (user == null || user.role != UserRole.CLIENT.name) {
-            showMessage("Solo los clientes pueden solicitar citas.", true)
-            return
-        }
-        execute {
-            repository.createAppointment(
-                client = user,
-                vehicle = vehicle,
-                scheduledAtMillis = scheduledAtMillis,
-                description = description
+    private val visibleSnapshot = combine(currentAccount, cachedSnapshots) { _, cached ->
+        val account = sessionManager.currentUser.value.appointmentAccount()
+        if (cached != null && cached.account == account) {
+            cached.snapshot
+        } else {
+            AppointmentSnapshot(
+                appointments = emptyList(),
+                syncState = if (account == null) AppointmentSyncState.UNAVAILABLE else AppointmentSyncState.LOADING
             )
         }
     }
 
-    fun acceptAppointment(appointmentId: Long) {
-        val user = workshopUser() ?: return
-        execute { repository.acceptAppointment(user, appointmentId) }
+    val appointments = visibleSnapshot.map { it.appointments }.distinctUntilChanged()
+    val syncState = visibleSnapshot.map { it.syncState }.distinctUntilChanged()
+    val pendingCount = appointments.map { list ->
+        list.count { it.status == AppointmentStatus.PENDING }
+    }.distinctUntilChanged()
+
+    private val operation = MutableStateFlow(OperationState())
+    private val visibleOperation = combine(currentAccount, operation) { _, state ->
+        if (state.account == sessionManager.currentUser.value.appointmentAccount()) state else OperationState()
     }
 
-    fun rejectAppointment(appointmentId: Long) {
-        val user = workshopUser() ?: return
-        execute { repository.rejectAppointment(user, appointmentId) }
-    }
+    val isProcessing = visibleOperation.map { it.isProcessing }.distinctUntilChanged()
+    val message = visibleOperation.map { it.message }.distinctUntilChanged()
+    val isError = visibleOperation.map { it.isError }.distinctUntilChanged()
 
-    private fun workshopUser(): UserEntity? {
-        val user = sessionManager.currentUser.value
-        if (user == null || user.role != UserRole.WORKSHOP.name) {
-            showMessage("Solo EdMotor puede administrar las citas.", true)
-            return null
-        }
-        return user
-    }
-
-    private fun execute(operation: suspend () -> AppointmentOperationResult) {
-        if (_isProcessing.value) return
+    init {
         viewModelScope.launch {
-            _isProcessing.value = true
-            _message.value = null
-            try {
-                when (val result = operation()) {
-                    is AppointmentOperationResult.Success -> showMessage(result.message)
-                    is AppointmentOperationResult.Error -> showMessage(result.message, true)
+            currentAccount.collect {
+                operation.update { current ->
+                    if (current.account == sessionManager.currentUser.value.appointmentAccount()) current
+                    else OperationState()
                 }
-            } catch (e: Exception) {
-                showMessage(e.message ?: "No fue posible completar la operación.", true)
-            } finally {
-                _isProcessing.value = false
             }
         }
     }
 
-    private fun showMessage(message: String, error: Boolean = false) {
-        _message.value = message
-        _isError.value = error
+    fun refreshAppointments() = repository.refreshAppointments()
+
+    fun createAppointment(vehicle: Vehicle, scheduledAtMillis: Long, description: String) {
+        val user = sessionManager.currentUser.value
+        val account = user.appointmentAccount()
+        if (user == null || account == null || account.role != UserRole.CLIENT) {
+            showMessage(account, "Solo los clientes pueden solicitar citas.", isError = true)
+            return
+        }
+        execute(account) { repository.createAppointment(user, vehicle, scheduledAtMillis, description) }
+    }
+
+    fun acceptAppointment(appointmentId: Long) = executeAsWorkshop { user ->
+        repository.acceptAppointment(user, appointmentId)
+    }
+
+    fun rejectAppointment(appointmentId: Long) = executeAsWorkshop { user ->
+        repository.rejectAppointment(user, appointmentId)
+    }
+
+    private fun executeAsWorkshop(request: suspend (UserEntity) -> AppointmentOperationResult) {
+        val user = sessionManager.currentUser.value
+        val account = user.appointmentAccount()
+        if (user == null || account == null || account.role != UserRole.WORKSHOP) {
+            showMessage(account, "Solo EdMotor puede administrar las citas.", isError = true)
+            return
+        }
+        execute(account) { request(user) }
+    }
+
+    private fun execute(account: AppointmentAccount, request: suspend () -> AppointmentOperationResult) {
+        val currentOperation = operation.value
+        if (currentOperation.account == account && currentOperation.isProcessing) return
+
+        val processing = OperationState(account, isProcessing = true)
+        operation.value = processing
+        viewModelScope.launch {
+            val result = try {
+                request()
+            } catch (e: CancellationException) {
+                operation.update { if (it === processing) OperationState() else it }
+                throw e
+            } catch (e: Exception) {
+                AppointmentOperationResult.Error(e.message ?: "No fue posible completar la operación.")
+            }
+
+            val completed = if (sessionManager.currentUser.value.appointmentAccount() != account) {
+                OperationState()
+            } else {
+                when (result) {
+                    is AppointmentOperationResult.Success -> OperationState(account, message = result.message)
+                    is AppointmentOperationResult.Error -> OperationState(account, message = result.message, isError = true)
+                }
+            }
+            operation.update { if (it === processing) completed else it }
+        }
+    }
+
+    private fun showMessage(account: AppointmentAccount?, message: String, isError: Boolean) {
+        operation.update { current ->
+            if (current.account == account && current.isProcessing) current
+            else OperationState(account, message = message, isError = isError)
+        }
     }
 
     fun clearMessage() {
-        _message.value = null
-        _isError.value = false
+        operation.update { if (it.message == null) it else it.copy(message = null, isError = false) }
     }
+
+    private data class ScopedSnapshot(val account: AppointmentAccount, val snapshot: AppointmentSnapshot)
+
+    private data class OperationState(
+        val account: AppointmentAccount? = null,
+        val isProcessing: Boolean = false,
+        val message: String? = null,
+        val isError: Boolean = false
+    )
 }

@@ -31,6 +31,7 @@ import com.example.edmotor.R
 import com.example.edmotor.data.productList
 import com.example.edmotor.data.toProduct
 
+import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 
 import com.example.edmotor.ui.screens.CartScreen
@@ -60,7 +61,7 @@ import com.example.edmotor.viewmodel.AppointmentViewModel
  * - Catálogo dinámico.
  * - Detalle de productos.
  * - Carrito.
- * - Envío de pedidos.
+ * - Registro local de pedidos y consulta del histórico en línea.
  * - Administración de pedidos y ventas.
  * - Servicios.
  * - Garaje.
@@ -74,6 +75,7 @@ import com.example.edmotor.viewmodel.AppointmentViewModel
 @Composable
 fun EdMotorNavHost(
     navController: NavHostController,
+    currentUserId: Int,
     currentUserRole: String,
     appViewModel: EdMotorViewModel,
     maintenanceViewModel: MaintenanceViewModel,
@@ -101,7 +103,7 @@ fun EdMotorNavHost(
     val cartMessage by appViewModel.cartMessage
         .collectAsStateWithLifecycle()
 
-    val vehicleList by appViewModel.vehicles
+    val vehicles by appViewModel.vehicles
         .collectAsStateWithLifecycle()
 
     val favoriteProductIds by appViewModel.favoriteProductIds
@@ -153,32 +155,35 @@ fun EdMotorNavHost(
     // =====================================================
 
     val orders by orderViewModel.orders
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = emptyList())
 
     val isProcessingOrder by orderViewModel.isProcessing
         .collectAsStateWithLifecycle()
 
     val orderMessage by orderViewModel.message
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = null)
 
     val orderIsError by orderViewModel.isError
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = false)
 
     // =====================================================
     // 5. ESTADOS DE CITAS
     // =====================================================
 
     val appointments by appointmentViewModel.appointments
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val appointmentSyncState by appointmentViewModel.syncState
+        .collectAsStateWithLifecycle(initialValue = AppointmentSyncState.LOADING)
 
     val isProcessingAppointment by appointmentViewModel.isProcessing
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = false)
 
     val appointmentMessage by appointmentViewModel.message
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = null)
 
     val appointmentIsError by appointmentViewModel.isError
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = false)
 
 
     // =====================================================
@@ -188,28 +193,14 @@ fun EdMotorNavHost(
     val isWorkshop =
         UserRole.from(currentUserRole) == UserRole.WORKSHOP
 
+    val vehicleList = remember(vehicles, isWorkshop, currentUserId) {
+        if (isWorkshop) vehicles else vehicles.filter { it.ownerUserId == currentUserId }
+    }
+
     val context = LocalContext.current
 
     val carCount = cartQuantity.values.sum()
 
-
-    // =====================================================
-    // 6. MENSAJES PARA EL CLIENTE
-    // =====================================================
-
-    LaunchedEffect(orderMessage, isWorkshop) {
-
-        if (!isWorkshop && !orderMessage.isNullOrBlank()) {
-
-            Toast.makeText(
-                context,
-                orderMessage.orEmpty(),
-                Toast.LENGTH_LONG
-            ).show()
-
-            orderViewModel.clearMessage()
-        }
-    }
 
     // =====================================================
     // 7. MENSAJES DE VALIDACIÓN DEL CARRITO
@@ -404,7 +395,7 @@ fun EdMotorNavHost(
 
 
         // =================================================
-        // 3. CARRITO Y ENVÍO DE PEDIDOS
+        // 3. CARRITO Y REGISTRO DE PEDIDOS
         // =================================================
 
         composable(Routes.CAR) {
@@ -415,11 +406,16 @@ fun EdMotorNavHost(
                 )
             } else {
                 CartScreen(
-                    products = catalogProducts,
+                    products = productEntities,
                     cartQuantity = cartQuantity,
                     onIncrease = appViewModel::increaseQuantity,
                     onDecrease = appViewModel::decreaseQuantity,
-                    onSubmitOrder = { orderViewModel.submitOrder() }
+                    onRemove = appViewModel::removeProductFromCart,
+                    onSubmitOrder = orderViewModel::submitOrder,
+                    isSubmittingOrder = isProcessingOrder,
+                    orderMessage = orderMessage,
+                    isOrderError = orderIsError,
+                    onClearOrderMessage = orderViewModel::clearMessage
                 )
             }
         }
@@ -493,25 +489,7 @@ fun EdMotorNavHost(
 
                     orders = orders,
 
-                    onAddVehicle = {
-                            brand,
-                            model,
-                            year,
-                            engine,
-                            plate,
-                            mileage,
-                            notes ->
-
-                        appViewModel.addVehicle(
-                            brand = brand,
-                            model = model,
-                            year = year,
-                            engine = engine,
-                            plate = plate,
-                            mileage = mileage,
-                            notes = notes
-                        )
-                    },
+                    onAddVehicle = appViewModel::addVehicle,
 
                     onVehicleClick = { vehicleId ->
 
@@ -847,6 +825,7 @@ fun EdMotorNavHost(
             AppointmentsScreen(
                 isWorkshop = isWorkshop,
                 appointments = appointments,
+                syncState = appointmentSyncState,
                 vehicles = vehicleList,
                 isProcessing = isProcessingAppointment,
                 message = appointmentMessage,
@@ -860,7 +839,8 @@ fun EdMotorNavHost(
                 },
                 onAccept = appointmentViewModel::acceptAppointment,
                 onReject = appointmentViewModel::rejectAppointment,
-                onClearMessage = appointmentViewModel::clearMessage
+                onClearMessage = appointmentViewModel::clearMessage,
+                onRefresh = appointmentViewModel::refreshAppointments
             )
         }
 

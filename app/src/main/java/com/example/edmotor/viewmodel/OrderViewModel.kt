@@ -1,21 +1,26 @@
-
 package com.example.edmotor.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.edmotor.data.local.OrderWithItems
+import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.repository.OrderOperationResult
 import com.example.edmotor.data.repository.OrderRepository
-import com.example.edmotor.data.local.UserEntity
+import com.example.edmotor.model.OrderReference
+import com.example.edmotor.model.OrderSource
+import com.example.edmotor.model.OrderStatus
+import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.session.SessionManager
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -25,212 +30,95 @@ class OrderViewModel(
     private val sessionManager: SessionManager
 ) : ViewModel() {
 
-    // ==========================================
-    // PEDIDOS SEGÚN EL USUARIO AUTENTICADO
-    // ==========================================
-
-    val orders = sessionManager.currentUser
+    private val history = sessionManager.currentUser
         .flatMapLatest { user ->
-
             if (user == null) {
-
-                flowOf(emptyList<OrderWithItems>())
-
+                flowOf(OrderHistory(null, emptyList()))
             } else {
-
-                when (user.role) {
-
-                    UserRole.WORKSHOP.name ->
-                        repository.observeAllOrders()
-
-                    UserRole.CLIENT.name ->
-                        repository.observeOrdersForClient(user.id)
-
-                    else ->
-                        flowOf(emptyList())
-                }
+                repository.observeOrders(user)
+                    .map { OrderHistory(user.id, it) }
+                    .onStart { emit(OrderHistory(user.id, emptyList())) }
             }
         }
         .stateIn(
             viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            emptyList()
+            SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
+            OrderHistory(null, emptyList())
         )
+
+    val orders = combine(sessionManager.currentUser, history) { user, currentHistory ->
+        if (user?.id == currentHistory.userId) currentHistory.orders else emptyList()
+    }.distinctUntilChanged()
 
     val pendingOrdersCount = orders
-        .map { list -> list.count { it.order.status == com.example.edmotor.data.local.OrderStatus.PENDING } }
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            0
-        )
-
-    // ==========================================
-    // ESTADO DE OPERACIONES
-    // ==========================================
+        .map { orders ->
+            orders.count {
+                it.order.reference.source == OrderSource.LOCAL &&
+                    it.order.status == OrderStatus.PENDING
+            }
+        }
+        .distinctUntilChanged()
 
     private val _isProcessing = MutableStateFlow(false)
-
     val isProcessing = _isProcessing.asStateFlow()
 
-    private val _message = MutableStateFlow<String?>(null)
-
-    val message = _message.asStateFlow()
-
-    private val _isError = MutableStateFlow(false)
-
-    val isError = _isError.asStateFlow()
-
-    // ==========================================
-    // ENVIAR PEDIDO
-    // EXCLUSIVO DEL CLIENTE
-    // ==========================================
-
-    fun submitOrder() {
-
-        val user = sessionManager.currentUser.value
-
-        if (user == null || user.role != UserRole.CLIENT.name) {
-
-            showMessage(
-                "Solo los clientes pueden enviar pedidos.",
-                true
-            )
-
-            return
-        }
-
-        if (_isProcessing.value) return
-
-        viewModelScope.launch {
-
-            _isProcessing.value = true
-            _message.value = null
-
-            try {
-
-                handleResult(
-                    repository.createPendingOrder(user)
-                )
-
-            } finally {
-
-                _isProcessing.value = false
-            }
-        }
+    private val feedback = MutableStateFlow<OrderFeedback?>(null)
+    private val accountFeedback = combine(sessionManager.currentUser, feedback) { user, result ->
+        result?.takeIf { it.userId == user?.id }
     }
+    val message = accountFeedback.map { it?.message }.distinctUntilChanged()
+    val isError = accountFeedback.map { it?.isError == true }.distinctUntilChanged()
 
-    // ==========================================
-    // CONFIRMAR VENTA
-    // EXCLUSIVO DEL TALLER
-    // ==========================================
+    fun submitOrder() = perform(
+        role = UserRole.CLIENT,
+        permissionMessage = "Solo los clientes pueden guardar pedidos.",
+        action = repository::createPendingOrder
+    )
 
-    fun confirmOrder(orderId: Int) {
+    fun confirmOrder(reference: OrderReference) = perform(
+        role = UserRole.WORKSHOP,
+        permissionMessage = "Solo el taller puede confirmar pedidos."
+    ) { workshop -> repository.confirmOrder(workshop, reference) }
 
-        val user = sessionManager.currentUser.value
-
-        if (user == null || user.role != UserRole.WORKSHOP.name) {
-
-            showMessage(
-                "No tienes permisos para confirmar ventas.",
-                true
-            )
-
-            return
-        }
-
-        if (_isProcessing.value) return
-
-        viewModelScope.launch {
-
-            _isProcessing.value = true
-            _message.value = null
-
-            try {
-
-                handleResult(
-                    repository.confirmOrder(user, orderId)
-                )
-
-            } finally {
-
-                _isProcessing.value = false
-            }
-        }
-    }
-
-    // ==========================================
-    // RECHAZAR PEDIDO
-    // EXCLUSIVO DEL TALLER
-    // ==========================================
-
-    fun rejectOrder(orderId: Int) {
-
-        val user = sessionManager.currentUser.value
-
-        if (user == null || user.role != UserRole.WORKSHOP.name) {
-
-            showMessage(
-                "No tienes permisos para rechazar pedidos.",
-                true
-            )
-
-            return
-        }
-
-        if (_isProcessing.value) return
-
-        viewModelScope.launch {
-
-            _isProcessing.value = true
-            _message.value = null
-
-            try {
-
-                handleResult(
-                    repository.rejectOrder(user, orderId)
-                )
-
-            } finally {
-
-                _isProcessing.value = false
-            }
-        }
-    }
-
-    // ==========================================
-    // PROCESAR RESULTADOS
-    // ==========================================
-
-    private fun handleResult(
-        result: OrderOperationResult
-    ) {
-
-        when (result) {
-
-            is OrderOperationResult.Success -> {
-
-                showMessage(result.message)
-            }
-
-            is OrderOperationResult.Error -> {
-
-                showMessage(result.message, true)
-            }
-        }
-    }
-
-    private fun showMessage(
-        text: String,
-        error: Boolean = false
-    ) {
-
-        _message.value = text
-        _isError.value = error
-    }
+    fun rejectOrder(reference: OrderReference) = perform(
+        role = UserRole.WORKSHOP,
+        permissionMessage = "Solo el taller puede rechazar pedidos."
+    ) { workshop -> repository.rejectOrder(workshop, reference) }
 
     fun clearMessage() {
-        _message.value = null
-        _isError.value = false
+        feedback.value = null
     }
+
+    private fun perform(
+        role: UserRole,
+        permissionMessage: String,
+        action: suspend (UserEntity) -> OrderOperationResult
+    ) {
+        if (_isProcessing.value) return
+        val user = sessionManager.currentUser.value
+        if (user == null || user.role != role.name) {
+            feedback.value = OrderFeedback(user?.id, permissionMessage, isError = true)
+            return
+        }
+
+        _isProcessing.value = true
+        clearMessage()
+        viewModelScope.launch {
+            try {
+                val result = action(user)
+                if (sessionManager.currentUser.value?.id == user.id) {
+                    feedback.value = when (result) {
+                        is OrderOperationResult.Success -> OrderFeedback(user.id, result.message, isError = false)
+                        is OrderOperationResult.Error -> OrderFeedback(user.id, result.message, isError = true)
+                    }
+                }
+            } finally {
+                _isProcessing.value = false
+            }
+        }
+    }
+
+    private data class OrderHistory(val userId: Int?, val orders: List<OrderWithItems>)
+
+    private data class OrderFeedback(val userId: Int?, val message: String, val isError: Boolean)
 }

@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 fun AddVehicleBottomSheet(
     onDismiss: () -> Unit,
     onVehicleAdded: (
-        String, String, Int, String, String, String, String
+        String, String, Int, String, String, String, String, (Result<Long>) -> Unit
     ) -> Unit
 ) {
     var brand by remember { mutableStateOf("") }
@@ -34,11 +34,13 @@ fun AddVehicleBottomSheet(
     var plate by remember { mutableStateOf("") }
     var mileage by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     val notesBringIntoViewRequester = remember { BringIntoViewRequester() }
     val coroutineScope = rememberCoroutineScope()
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isSaving) onDismiss() },
         shape = RoundedCornerShape(
             topStart = 28.dp,
             topEnd = 28.dp
@@ -100,6 +102,7 @@ fun AddVehicleBottomSheet(
                 value = brand,
                 onValueChange = { brand = it },
                 label = { Text("Marca (ej. Chevrolet)") },
+                enabled = !isSaving,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -109,6 +112,7 @@ fun AddVehicleBottomSheet(
                 value = model,
                 onValueChange = { model = it },
                 label = { Text("Modelo (ej. Aveo)") },
+                enabled = !isSaving,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -124,6 +128,7 @@ fun AddVehicleBottomSheet(
                             .take(4)
                     },
                     label = { Text("Año") },
+                    enabled = !isSaving,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Number
@@ -135,7 +140,8 @@ fun AddVehicleBottomSheet(
                 OutlinedTextField(
                     value = engine,
                     onValueChange = { engine = it },
-                    label = { Text("Motor (1.4L)") },
+                    label = { Text("Motor (opcional)") },
+                    enabled = !isSaving,
                     singleLine = true,
                     modifier = Modifier.weight(1.35f),
                     shape = RoundedCornerShape(12.dp)
@@ -149,6 +155,7 @@ fun AddVehicleBottomSheet(
                     value = plate,
                     onValueChange = { plate = it.uppercase() },
                     label = { Text("Placa") },
+                    enabled = !isSaving,
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp)
@@ -157,7 +164,8 @@ fun AddVehicleBottomSheet(
                 OutlinedTextField(
                     value = mileage,
                     onValueChange = { mileage = it },
-                    label = { Text("Kilometraje") },
+                    label = { Text("Kilometraje (opcional)") },
+                    enabled = !isSaving,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Number
@@ -177,6 +185,7 @@ fun AddVehicleBottomSheet(
                 value = notes,
                 onValueChange = { notes = it },
                 label = { Text("Notas personales (opcional)") },
+                enabled = !isSaving,
                 placeholder = {
                     Text("Mantenimiento, recordatorios, etc.")
                 },
@@ -196,40 +205,50 @@ fun AddVehicleBottomSheet(
                 shape = RoundedCornerShape(12.dp)
             )
 
+            errorMessage?.let { message ->
+                Text(message, color = MaterialTheme.colorScheme.error)
+            }
+
             Button(
                 onClick = {
-                    if (brand.isNotBlank() && model.isNotBlank()) {
+                    val yearValue = year.toIntOrNull()
+                    if (year.length != 4 || yearValue == null) {
+                        errorMessage = "Ingresa el año del vehículo con cuatro dígitos."
+                    } else if (!isSaving) {
+                        errorMessage = null
+                        isSaving = true
                         onVehicleAdded(
                             brand.trim(),
                             model.trim(),
-                            year.toIntOrNull() ?: 2024,
-                            engine.trim().ifBlank { "1.6L" },
+                            yearValue,
+                            engine.trim(),
                             plate.trim().uppercase(),
-                            if (mileage.isNotBlank()) {
-                                "${mileage.trim()} km"
-                            } else {
-                                "No registrado"
-                            },
+                            mileage.trim(),
                             notes.trim()
-                        )
-
-                        onDismiss()
+                        ) { result ->
+                            isSaving = false
+                            result.onSuccess { onDismiss() }
+                                .onFailure { error ->
+                                    errorMessage = error.message ?: "No se pudo registrar el vehículo."
+                                }
+                        }
                     }
                 },
-                enabled = brand.isNotBlank() && model.isNotBlank(),
+                enabled = !isSaving && brand.isNotBlank() && model.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Text(
-                    "Guardar vehículo",
+                    if (isSaving) "Guardando vehículo…" else "Guardar vehículo",
                     fontWeight = FontWeight.SemiBold
                 )
             }
 
             OutlinedButton(
                 onClick = onDismiss,
+                enabled = !isSaving,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),

@@ -34,6 +34,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -59,6 +60,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentStatus
+import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.Vehicle
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -71,6 +73,7 @@ import java.util.TimeZone
 fun AppointmentsScreen(
     isWorkshop: Boolean,
     appointments: List<Appointment>,
+    syncState: AppointmentSyncState,
     vehicles: List<Vehicle>,
     isProcessing: Boolean,
     message: String?,
@@ -78,7 +81,8 @@ fun AppointmentsScreen(
     onCreateAppointment: (Vehicle, Long, String) -> Unit,
     onAccept: (Long) -> Unit,
     onReject: (Long) -> Unit,
-    onClearMessage: () -> Unit
+    onClearMessage: () -> Unit,
+    onRefresh: () -> Unit
 ) {
     val dateFormatter = remember {
         SimpleDateFormat("EEEE, dd 'de' MMMM yyyy", Locale("es", "CO")).apply {
@@ -196,14 +200,30 @@ fun AppointmentsScreen(
             }
         }
 
+        if (syncState == AppointmentSyncState.LOADING) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else if (syncState == AppointmentSyncState.UNAVAILABLE) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (appointments.isEmpty()) "No se pudo consultar la agenda." else "Los datos de la agenda pueden estar desactualizados.",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onRefresh) { Text("Reintentar") }
+            }
+        }
+
         if (isWorkshop) {
-            WorkshopDailyAgenda(
-                appointments = visibleAppointments,
-                isProcessing = isProcessing,
-                onAccept = onAccept,
-                onReject = onReject,
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (syncState == AppointmentSyncState.UP_TO_DATE || appointments.isNotEmpty()) {
+                WorkshopDailyAgenda(
+                    appointments = visibleAppointments,
+                    isProcessing = isProcessing,
+                    onAccept = onAccept,
+                    onReject = onReject,
+                    showEmptyDay = syncState == AppointmentSyncState.UP_TO_DATE,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f),
@@ -361,7 +381,7 @@ fun AppointmentsScreen(
                     )
                 }
 
-                if (appointments.isEmpty()) {
+                if (appointments.isEmpty() && syncState == AppointmentSyncState.UP_TO_DATE) {
                     item {
                         EmptyAppointmentsMessage(
                             "Aquí aparecerán tus solicitudes y el estado de cada cita."
@@ -428,6 +448,7 @@ private fun WorkshopDailyAgenda(
     isProcessing: Boolean,
     onAccept: (Long) -> Unit,
     onReject: (Long) -> Unit,
+    showEmptyDay: Boolean,
     modifier: Modifier = Modifier
 ) {
     val locale = remember { Locale("es", "CO") }
@@ -643,7 +664,7 @@ private fun WorkshopDailyAgenda(
             }
         }
 
-        if (dayAppointments.isEmpty()) {
+        if (dayAppointments.isEmpty() && showEmptyDay) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

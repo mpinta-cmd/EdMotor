@@ -83,9 +83,13 @@ class MaintenanceRepository(
             }
 
             val product = productDao.findById(productId) ?: return@forEach
+            val restoredStock = product.stock.toLong() + quantity
+            if (restoredStock > Int.MAX_VALUE) {
+                throw EdMotorException.Validation("Restituir ${part.name} supera el límite de existencias.")
+            }
             val rows = productDao.updateStock(
                 productId = productId,
-                newStock = product.stock + quantity
+                newStock = restoredStock.toInt()
             )
             if (rows != 1) {
                 throw EdMotorException.Validation(

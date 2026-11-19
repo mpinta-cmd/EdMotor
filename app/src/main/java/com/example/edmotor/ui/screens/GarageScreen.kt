@@ -47,7 +47,8 @@ fun GarageScreen(
         engine: String,
         plate: String,
         mileage: String,
-        notes: String
+        notes: String,
+        onResult: (Result<Long>) -> Unit
     ) -> Unit,
     onDeleteVehicle: (Int) -> Unit,
     onUpdateNotes: (vehicleId: Int, newNotes: String) -> Unit,
@@ -206,17 +207,7 @@ fun GarageScreen(
     if (showAddVehicleSheet) {
         AddVehicleBottomSheet(
             onDismiss = { showAddVehicleSheet = false },
-            onVehicleAdded = { brand, model, year, engine, plate, mileage, notes ->
-                onAddVehicle(
-                    brand,
-                    model,
-                    year,
-                    engine,
-                    plate,
-                    mileage,
-                    notes
-                )
-            }
+            onVehicleAdded = onAddVehicle
         )
     }
 }

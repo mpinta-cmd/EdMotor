@@ -85,7 +85,7 @@ class ProductRepository(
                         imageRes = product.imageRes,
                         contentDescription = product.contentDescription,
                         rating = product.rating,
-                        stock = 10,
+                        stock = if (product.badge.equals("Agotado", ignoreCase = true)) 0 else 10,
                         isNew = product.badge.equals("Nuevo", ignoreCase = true),
                         isOnPromotion = false,
                         isActive = true
@@ -280,6 +280,7 @@ class ProductRepository(
                         null
                     },
                     rating = existing.rating,
+                    stock = existing.stock,
                     isActive = existing.isActive,
                     createdAtMillis = existing.createdAtMillis,
                     updatedAtMillis = System.currentTimeMillis()

@@ -55,21 +55,6 @@ class FavoriteRepository(
         userId: Int,
         productId: Int
     ) {
-
-        if (userId <= 0 || productId <= 0) return
-
-        val current = dao.findByProductId(
-            userId,
-            productId
-        )
-
-        if (current != null) {
-
-            removeFavorite(userId, productId)
-
-        } else {
-
-            addFavorite(userId, productId)
-        }
+        dao.toggleFavoriteAtomic(userId, productId)
     }
 }

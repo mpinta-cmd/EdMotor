@@ -24,8 +24,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.edmotor.data.local.OrderStatus
-import com.example.edmotor.data.local.OrderWithItems
+import com.example.edmotor.model.OrderReference
+import com.example.edmotor.model.OrderSource
+import com.example.edmotor.model.OrderStatus
+import com.example.edmotor.model.OrderWithItems
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -37,8 +39,8 @@ fun OrdersManagementScreen(
     isProcessing: Boolean,
     message: String?,
     isError: Boolean,
-    onConfirm: (Int) -> Unit,
-    onReject: (Int) -> Unit,
+    onConfirm: (OrderReference) -> Unit,
+    onReject: (OrderReference) -> Unit,
     onBack: () -> Unit
 ) {
 
@@ -95,7 +97,7 @@ fun OrdersManagementScreen(
         Spacer(Modifier.height(12.dp))
 
         Text(
-            "Revisa los pedidos de los clientes y confirma las ventas para actualizar el inventario.",
+            "Confirma los pedidos de este dispositivo para actualizar el inventario. El histórico en línea se puede consultar aquí.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -141,7 +143,7 @@ fun OrdersManagementScreen(
                 )
 
                 Text(
-                    "Cuando un cliente envíe un pedido, aparecerá aquí.",
+                    "Aquí aparecen los pedidos guardados en este dispositivo y el histórico en línea.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -155,7 +157,7 @@ fun OrdersManagementScreen(
 
                 items(
                     items = orders,
-                    key = { it.order.id }
+                    key = { "${it.order.reference.source}:${it.order.id}" }
                 ) { orderWithItems ->
 
                     val order = orderWithItems.order
@@ -302,13 +304,19 @@ fun OrdersManagementScreen(
 
                             // ACCIONES DEL DUEÑO
 
-                            if (isPending) {
+                            if (order.reference.source == OrderSource.REMOTE) {
+                                Text(
+                                    "Histórico en línea · Solo consulta",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else if (isPending) {
 
                                 Spacer(Modifier.height(6.dp))
 
                                 Button(
                                     onClick = {
-                                        onConfirm(order.id)
+                                        onConfirm(order.reference)
                                     },
                                     enabled = !isProcessing,
                                     modifier = Modifier.fillMaxWidth(),
@@ -327,7 +335,7 @@ fun OrdersManagementScreen(
 
                                 OutlinedButton(
                                     onClick = {
-                                        onReject(order.id)
+                                        onReject(order.reference)
                                     },
                                     enabled = !isProcessing,
                                     modifier = Modifier.fillMaxWidth(),
@@ -346,7 +354,7 @@ fun OrdersManagementScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
 
-                            } else {
+                            } else if (order.status == OrderStatus.REJECTED) {
 
                                 Text(
                                     "Pedido rechazado. El inventario no fue modificado.",

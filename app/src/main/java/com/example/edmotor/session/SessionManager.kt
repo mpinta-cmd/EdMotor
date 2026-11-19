@@ -8,10 +8,15 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.edmotor.data.local.UserEntity
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -29,6 +34,11 @@ data class PersistedSession(
     val remoteSession: RemoteSession
 )
 
+internal data class ActiveRemoteSession(
+    val credentials: RemoteSession,
+    val generation: Any = Any()
+)
+
 /**
  * Mantiene la sesión activa de EdMotor y la conserva entre aperturas.
  *
@@ -43,37 +53,45 @@ class SessionManager(context: Context) {
     private val _currentUser = MutableStateFlow<UserEntity?>(null)
     val currentUser: StateFlow<UserEntity?> = _currentUser.asStateFlow()
 
+    private val sessionMutex = Mutex()
+
     @Volatile
-    var remoteSession: RemoteSession? = null
+    internal var activeRemoteSession: ActiveRemoteSession? = null
         private set
+
+    val remoteSession: RemoteSession?
+        get() = activeRemoteSession?.credentials
 
     /**
      * Guarda la sesión cifrada y publica el usuario activo.
      */
-    suspend fun startSession(user: UserEntity, remote: RemoteSession) {
+    suspend fun startSession(user: UserEntity, remote: RemoteSession) = sessionMutex.withLock {
+        require(user.id > 0 && user.remoteAuthId == remote.userId)
         persistSession(user.id, remote)
-        remoteSession = remote
-        _currentUser.value = user
-    }
-
-    /**
-     * Restaura en memoria una sesión que ya fue recuperada de DataStore.
-     */
-    fun restoreInMemory(user: UserEntity, remote: RemoteSession) {
-        remoteSession = remote
+        activeRemoteSession = ActiveRemoteSession(remote)
         _currentUser.value = user
     }
 
     /**
      * Actualiza y vuelve a guardar los tokens cuando Supabase los renueva.
      */
-    suspend fun updateRemoteSession(remote: RemoteSession) {
-        val localUserId = _currentUser.value?.id
-            ?: restoreSavedSession()?.localUserId
-            ?: return
+    internal suspend fun updateRemoteSession(
+        expected: ActiveRemoteSession,
+        remote: RemoteSession
+    ): Boolean = sessionMutex.withLock {
+        val user = _currentUser.value
+        if (activeRemoteSession !== expected || user == null || user.remoteAuthId != remote.userId) {
+            return@withLock false
+        }
+        persistSession(user.id, remote)
+        activeRemoteSession = expected.copy(credentials = remote)
+        true
+    }
 
-        persistSession(localUserId, remote)
-        remoteSession = remote
+    internal suspend fun withCurrentCredentials(remote: RemoteSession, action: () -> Unit) {
+        sessionMutex.withLock {
+            if (activeRemoteSession?.credentials === remote) action()
+        }
     }
 
     /**
@@ -107,6 +125,8 @@ class SessionManager(context: Context) {
                 localUserId = localUserId,
                 remoteSession = remote
             )
+        } catch (error: CancellationException) {
+            throw error
         } catch (_: Exception) {
             clearSession()
             null
@@ -117,11 +137,14 @@ class SessionManager(context: Context) {
      * Cierra la sesión y elimina los tokens cifrados del dispositivo.
      */
     suspend fun clearSession() {
-        _currentUser.value = null
-        remoteSession = null
-
-        dataStore.edit { preferences ->
-            preferences.remove(SESSION_KEY)
+        withContext(NonCancellable) {
+            sessionMutex.withLock {
+                activeRemoteSession = null
+                _currentUser.value = null
+                dataStore.edit { preferences ->
+                    preferences.remove(SESSION_KEY)
+                }
+            }
         }
     }
 

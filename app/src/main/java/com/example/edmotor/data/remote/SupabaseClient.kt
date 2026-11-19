@@ -1,16 +1,20 @@
 package com.example.edmotor.data.remote
 
+import com.example.edmotor.session.ActiveRemoteSession
 import com.example.edmotor.session.RemoteSession
 import com.example.edmotor.session.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -33,7 +37,11 @@ data class SupabaseProfile(
     val role: String
 )
 
-class SupabaseException(message: String) : Exception(message)
+class SupabaseException(
+    message: String,
+    val statusCode: Int? = null,
+    val errorCode: String? = null
+) : Exception(message)
 
 /**
  * Cliente REST/Auth/Realtime de Supabase.
@@ -56,6 +64,7 @@ class SupabaseClient(
         .build()
 
     private val realtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val refreshMutex = Mutex()
     private val _realtimeChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 32)
     val realtimeChanges = _realtimeChanges.asSharedFlow()
 
@@ -82,10 +91,7 @@ class SupabaseClient(
             .put("password", password)
             .put("data", metadata)
 
-        val response = authRequest("/auth/v1/signup", body)
-        val session = parseAuthSession(response)
-        startRealtime(session.accessToken)
-        return session
+        return parseAuthSession(authRequest("/auth/v1/signup", body))
     }
 
     suspend fun signIn(username: String, password: String): RemoteSession {
@@ -97,38 +103,20 @@ class SupabaseClient(
             "/auth/v1/token?grant_type=password",
             body
         )
-        val session = parseAuthSession(response)
-        startRealtime(session.accessToken)
-        return session
+        return parseAuthSession(response)
     }
 
-    /**
-     * Reactiva una sesión recuperada del almacenamiento seguro.
-     *
-     * Si el token está próximo a vencer, intenta renovarlo con el refresh token.
-     * Si no hay conexión, conserva el token guardado y permite que las peticiones
-     * posteriores vuelvan a intentar la renovación al recibir un 401.
-     */
-    suspend fun prepareRestoredSession(remote: RemoteSession): RemoteSession {
-        var activeSession = remote
-
+    suspend fun prepareRestoredSession(
+        remote: RemoteSession,
+        forceRefresh: Boolean = false
+    ): RemoteSession {
         val expiresSoon =
             remote.expiresAtMillis <= System.currentTimeMillis() + 60_000L
-
-        if (expiresSoon && remote.refreshToken.isNotBlank()) {
-            activeSession = try {
-                refreshSession(remote.refreshToken)
-            } catch (_: Exception) {
-                remote
-            }
+        if (!expiresSoon && !forceRefresh) return remote
+        if (remote.refreshToken.isBlank()) {
+            throw SupabaseException("La sesión remota expiró.", statusCode = 401)
         }
-
-        if (activeSession != remote) {
-            sessionManager.updateRemoteSession(activeSession)
-        }
-
-        startRealtime(activeSession.accessToken)
-        return activeSession
+        return refreshSession(remote)
     }
 
     suspend fun fetchMyProfile(session: RemoteSession): SupabaseProfile {
@@ -141,13 +129,14 @@ class SupabaseClient(
             prefer = null
         )
         if (result.code !in 200..299) {
-            throw SupabaseException(parseError(result.body))
+            throw responseError(result)
         }
 
         val rows = JSONArray(result.body)
         if (rows.length() == 0) {
             throw SupabaseException(
-                "No encontramos tu perfil en Supabase. Ejecuta el SQL de configuración de EdMotor."
+                "No encontramos tu perfil en Supabase. Ejecuta el SQL de configuración de EdMotor.",
+                statusCode = 404
             )
         }
 
@@ -161,22 +150,32 @@ class SupabaseClient(
         )
     }
 
-    suspend fun get(path: String): String =
-        authenticatedRequest(path, "GET", null)
+    suspend fun get(path: String, expectedUserId: String? = null): String =
+        authenticatedRequest(path, "GET", null, expectedUserId = expectedUserId)
 
-    suspend fun post(path: String, body: JSONObject, prefer: String? = null): String =
-        authenticatedRequest(path, "POST", body, prefer)
+    suspend fun post(
+        path: String,
+        body: JSONObject,
+        prefer: String? = null,
+        expectedUserId: String? = null
+    ): String = authenticatedRequest(path, "POST", body, prefer, expectedUserId)
 
     suspend fun patch(path: String, body: JSONObject, prefer: String? = null): String =
         authenticatedRequest(path, "PATCH", body, prefer)
 
-    suspend fun rpc(functionName: String, body: JSONObject): String =
+    suspend fun rpc(
+        functionName: String,
+        body: JSONObject,
+        expectedUserId: String? = null
+    ): String =
         authenticatedRequest(
             "/rest/v1/rpc/${encode(functionName)}",
             "POST",
-            body
+            body,
+            expectedUserId = expectedUserId
         )
 
+    @Synchronized
     fun stopRealtime() {
         realtimeToken = null
         reconnectJob?.cancel()
@@ -185,7 +184,12 @@ class SupabaseClient(
         socket = null
     }
 
-    fun startRealtime(accessToken: String) {
+    suspend fun startRealtimeFor(remote: RemoteSession) {
+        sessionManager.withCurrentCredentials(remote) { startRealtime(remote.accessToken) }
+    }
+
+    @Synchronized
+    private fun startRealtime(accessToken: String) {
         if (accessToken.isBlank()) return
         if (realtimeToken == accessToken && socket != null) return
 
@@ -278,12 +282,15 @@ class SupabaseClient(
         })
     }
 
+    @Synchronized
     private fun scheduleReconnect(token: String) {
         if (realtimeToken != token) return
         reconnectJob?.cancel()
         reconnectJob = realtimeScope.launch {
             delay(4_000)
-            if (realtimeToken == token) openRealtimeSocket(token)
+            synchronized(this@SupabaseClient) {
+                if (realtimeToken == token) openRealtimeSocket(token)
+            }
         }
     }
 
@@ -296,7 +303,7 @@ class SupabaseClient(
             prefer = null
         )
         if (result.code !in 200..299) {
-            throw SupabaseException(parseError(result.body))
+            throw responseError(result)
         }
         return JSONObject(result.body)
     }
@@ -305,34 +312,63 @@ class SupabaseClient(
         path: String,
         method: String,
         body: JSONObject?,
-        prefer: String? = null
+        prefer: String? = null,
+        expectedUserId: String? = null
     ): String {
-        var remote = sessionManager.remoteSession
-            ?: throw SupabaseException("La sesión remota expiró. Inicia sesión nuevamente.")
+        val captured = sessionManager.activeRemoteSession ?: throw inactiveSession()
+        val initial = captured.credentials
+        if (expectedUserId != null && initial.userId != expectedUserId) throw inactiveSession()
 
-        var result = execute(path, method, body, remote.accessToken, prefer)
-
-        if (result.code == 401 && remote.refreshToken.isNotBlank()) {
-            remote = refreshSession(remote.refreshToken)
-            sessionManager.updateRemoteSession(remote)
-            startRealtime(remote.accessToken)
-            result = execute(path, method, body, remote.accessToken, prefer)
+        var result = execute(path, method, body, initial.accessToken, prefer)
+        if (result.code == 401 && initial.refreshToken.isNotBlank()) {
+            val refreshed = renewCurrentSession(captured)
+            requireCurrentSession(captured)
+            result = execute(path, method, body, refreshed.accessToken, prefer)
         }
 
+        requireCurrentSession(captured)
         if (result.code !in 200..299) {
-            throw SupabaseException(parseError(result.body))
+            throw responseError(result)
         }
 
         return result.body
     }
 
-    private suspend fun refreshSession(refreshToken: String): RemoteSession {
-        val body = JSONObject().put("refresh_token", refreshToken)
+    private suspend fun renewCurrentSession(captured: ActiveRemoteSession): RemoteSession =
+        refreshMutex.withLock {
+            val current = requireCurrentSession(captured)
+            if (current !== captured) return@withLock current.credentials
+
+            // Supabase puede rotar el refresh token. Guarda la renovación
+            // aunque se cancele la consulta que la inició.
+            withContext(NonCancellable) {
+                val refreshed = refreshSession(current.credentials)
+                if (!sessionManager.updateRemoteSession(current, refreshed)) throw inactiveSession()
+                startRealtimeFor(refreshed)
+                refreshed
+            }
+        }
+
+    private fun requireCurrentSession(captured: ActiveRemoteSession): ActiveRemoteSession {
+        val current = sessionManager.activeRemoteSession
+        if (current == null || current.generation !== captured.generation) throw inactiveSession()
+        return current
+    }
+
+    private fun inactiveSession() = SupabaseException(
+        "La sesión remota cambió o expiró. Inicia sesión nuevamente.",
+        statusCode = 401
+    )
+
+    private suspend fun refreshSession(current: RemoteSession): RemoteSession {
+        val body = JSONObject().put("refresh_token", current.refreshToken)
         val response = authRequest(
             "/auth/v1/token?grant_type=refresh_token",
             body
         )
-        return parseAuthSession(response)
+        val refreshed = parseAuthSession(response)
+        if (refreshed.userId != current.userId) throw inactiveSession()
+        return refreshed
     }
 
     private suspend fun execute(
@@ -379,7 +415,7 @@ class SupabaseClient(
             ?: throw SupabaseException("Supabase no devolvió el usuario autenticado.")
         val userId = user.optString("id")
 
-        if (accessToken.isBlank() || userId.isBlank()) {
+        if (accessToken.isBlank() || refreshToken.isBlank() || userId.isBlank()) {
             throw SupabaseException(
                 "Supabase no entregó una sesión activa. Desactiva la confirmación de correo en Authentication."
             )
@@ -396,6 +432,17 @@ class SupabaseClient(
             refreshToken = refreshToken,
             expiresAtMillis = expiresAt
         )
+    }
+
+    private fun responseError(result: HttpResult): SupabaseException {
+        val message = parseError(result.body)
+        val code = runCatching { JSONObject(result.body).optString("error_code") }
+            .getOrNull()
+            ?.ifBlank { null }
+            ?: "invalid_credentials".takeIf {
+                result.code == 400 && message.equals("Invalid login credentials", ignoreCase = true)
+            }
+        return SupabaseException(message, result.code, code)
     }
 
     private fun parseError(body: String): String {

@@ -1,146 +1,46 @@
-# EdMotor · Sincronización remota de pedidos y citas
+# Persistencia de EdMotor
 
-Este paquete parte del proyecto `EdMotor(7).zip` y agrega:
+EdMotor aplica el patrón de TaskFlow a sus propios datos. Los DAO de Room consultan y escriben SQLite. Los repositorios transforman los resultados y los ViewModels los exponen a Compose con `Flow`. La base se llama `edmotor_database`. La versión 10 conserva los datos existentes con migraciones y agrega una caché de citas. [Código de Room](app/src/main/java/com/example/edmotor/data/local/EdMotorDatabase.kt)
 
-- Autenticación remota con Supabase Auth, conservando el inicio de sesión por nombre de usuario y contraseña.
-- Migración de cuentas locales de clientes a Supabase en su primer inicio de sesión posterior a esta actualización.
-- Pedidos compartidos entre dispositivos.
-- Notificaciones numéricas en la barra inferior del taller: pedidos pendientes en **Mi Garaje** y solicitudes pendientes en **Citas**.
-- Pestaña **Citas** para que el cliente solicite día, hora, vehículo y describa el problema.
-- Agenda del taller para aceptar o rechazar solicitudes.
-- Supabase Realtime para refresco inmediato, con consulta periódica de respaldo cada cinco segundos.
-- Migración Room 7 → 8 para guardar el identificador de autenticación remoto.
+| Datos | Fuente y alcance |
+| --- | --- |
+| Vehículos, mantenimiento, favoritos y carrito | Room en la instalación. El cliente accede a sus datos locales. |
+| Catálogo, precios y existencias | Room en la instalación. El taller gestiona su propio inventario. |
+| Pedidos nuevos | Room. Cliente y taller deben usar la misma instalación para enviar y resolver ese pedido. |
+| Pedidos históricos de Supabase | Lectura remota por perfil y rol. Las acciones de taller en esta versión se aplican a pedidos de Room. |
+| Cuentas y citas | Supabase. Room guarda una copia de lectura de las citas por UUID y rol. Las decisiones sobre una cita se guardan en Supabase. |
+| Sesión y tema | DataStore. La sesión utiliza Android Keystore para cifrar los tokens guardados. |
 
-## 1. Configuración obligatoria en Supabase
+## Compilación y actualización
 
-El código ya contiene el Project URL y la publishable key que compartiste anteriormente. La publishable key es pública; **no agregues una `service_role` ni una secret key a la aplicación Android**.
+El proyecto usa Gradle 9.6.0, JDK 25 para el daemon, SDK 37 y Build Tools 36.0.0 en la compilación verificada. El mínimo de la app es Android API 24. Abre el proyecto en Android Studio y sincroniza Gradle. También puedes compilar desde la raíz.
 
-### Paso 1. Ejecutar el SQL
-
-1. Abre tu proyecto Supabase.
-2. Entra a **SQL Editor**.
-3. Crea una consulta nueva.
-4. Copia todo el contenido de `supabase/edmotor_supabase_setup.sql`.
-5. Ejecuta la consulta.
-6. Comprueba que se creen las tablas `profiles`, `orders`, `order_items` y `appointments`.
-
-El script también configura RLS, funciones seguras para crear/confirmar/rechazar pedidos y citas, y agrega `orders` y `appointments` a la publicación Realtime.
-
-### Paso 2. Desactivar confirmación de correo
-
-EdMotor conserva el acceso por nombre de usuario, no por correo. Para ello genera internamente un correo técnico con este formato:
-
-`nombredeusuario@users.edmotor.app`
-
-En Supabase:
-
-1. Abre **Authentication → Providers → Email**.
-2. Desactiva **Confirm email**.
-3. Guarda los cambios.
-
-Esto es necesario para que el registro de clientes reciba una sesión inmediatamente. No se envían correos a esa dirección técnica.
-
-### Paso 3. Crear la cuenta remota del taller
-
-La cuenta local predeterminada del proyecto es:
-
-- Usuario: `edmotor`
-- Contraseña inicial: `tecnologica`
-- Correo técnico remoto: `edmotor@users.edmotor.app`
-
-Créala una sola vez desde **Authentication → Users → Add user** en Supabase:
-
-- Email: `edmotor@users.edmotor.app`
-- Password: `tecnologica`
-- Marca el correo como confirmado si el panel ofrece esa opción.
-
-El trigger SQL crea inicialmente todo usuario público con rol `CLIENT`. Por seguridad, el rol de taller se asigna manualmente:
-
-```sql
-update public.profiles
-set role = 'WORKSHOP',
-    display_name = 'EdMotor'
-where username = 'edmotor';
+```powershell
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
-Ejecuta esa consulta en **SQL Editor** después de crear la cuenta.
+En Linux o macOS, ejecuta `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`. El APK de depuración se genera en `app/build/outputs/apk/debug/`. El APK histórico de `app/release/` corresponde a una versión anterior.
 
-Si ya cambiaste la contraseña local predeterminada, usa esa misma contraseña al crear el usuario remoto.
+Para conservar los datos del teléfono, instala una actualización con el mismo identificador `com.example.edmotor` y la misma firma que ya tiene la app instalada. Conserva la instalación y sus datos al probar la migración. Los registros de versiones anteriores se mantienen en Room.
 
-### Paso 4. Clientes existentes
+## Configuración de Supabase
 
-- Los clientes nuevos se registran desde la aplicación; su cuenta se crea en Supabase.
-- Un cliente que ya tenía cuenta local debe iniciar sesión una vez en un dispositivo donde exista su cuenta anterior. Si su contraseña local es válida, EdMotor la vincula automáticamente con Supabase.
-- Después podrá iniciar sesión desde otros teléfonos con el mismo nombre de usuario y contraseña.
-- Si el usuario ya existe en Supabase con otra contraseña, deberá resolverse esa cuenta antes de vincularla.
+1. Configura `SupabaseConfig.kt` con la URL y la clave publicable del proyecto. La aplicación Android solo necesita la clave publicable y el token de cada sesión.
+2. Para un proyecto Supabase nuevo, ejecuta `supabase/edmotor_supabase_setup.sql` en su editor SQL. El script instala `profiles`, `orders`, `order_items`, `appointments`, las políticas RLS y las funciones de citas. Una instalación que ya estaba configurada con el SQL del repositorio puede seguir usando esas tablas y funciones.
+3. El registro actual deriva un correo técnico del nombre de usuario y requiere una sesión en la respuesta del alta. En un entorno de prueba dedicado, comprueba que Supabase Auth esté configurado para entregar esa sesión. Para una instalación de uso real, define el flujo de verificación y recuperación de cuentas antes de abrir el registro.
+4. Crea la cuenta del taller en Supabase Auth con una contraseña propia y única. Verifica el UUID de esa cuenta. Asigna `WORKSHOP` desde una cuenta administrativa usando el UUID verificado.
 
-## 2. Instalar los archivos
+```sql
+UPDATE public.profiles
+SET role = 'WORKSHOP'
+WHERE id = '<UUID_VERIFICADO>'::uuid;
+```
 
-1. Haz una copia de seguridad de tu proyecto.
-2. Extrae el ZIP.
-3. Copia la carpeta `app` y el archivo `gradle/libs.versions.toml` sobre tu proyecto actual, aceptando combinar y reemplazar.
-4. Conserva tu `local.properties` actual: contiene la ruta de tu Android SDK y no debe reemplazarse.
-5. En Android Studio ejecuta **File → Sync Project with Gradle Files**.
-6. Ejecuta **Build → Make Project**.
-7. Ejecuta la aplicación.
+Si el proyecto usó la credencial fija de una versión anterior, rota esa contraseña y revoca las sesiones asociadas en Supabase. Las cuentas de cliente nuevas se registran en la app y nacen con rol `CLIENT`.
 
-No desinstales EdMotor ni borres los datos de Room. La migración 7 → 8 se ejecuta automáticamente y conserva las tablas anteriores.
+## Comprobación de los recorridos
 
-## 3. Cómo funcionan los avisos
-
-- Cuando un cliente envía un pedido, se crea en Supabase con estado `PENDING`.
-- La pestaña **Mi Garaje** del taller muestra el número de pedidos pendientes.
-- Cuando un cliente solicita una cita, la pestaña **Citas** del taller muestra el número de solicitudes pendientes.
-- Al aceptar o rechazar, el contador se actualiza al recibir el cambio remoto.
-- Los clientes consultan el estado de sus pedidos y citas desde sus propios dispositivos.
-- La confirmación de una venta sigue descontando el inventario Room del dispositivo del taller.
-
-## 4. Alcance actual y limitaciones importantes
-
-Esta integración sincroniza **cuentas, pedidos, estados de pedidos, citas y sus notificaciones**.
-
-Todavía permanecen locales en Room:
-
-- El catálogo de productos y las existencias.
-- Los vehículos registrados y su historial de mantenimiento.
-- Las imágenes locales de productos.
-- Los pedidos históricos que ya estaban guardados en Room antes de activar Supabase; los nuevos pedidos sí se crean en la nube.
-
-Por tanto, esta entrega no convierte todavía todo el inventario ni todos los vehículos en datos compartidos en la nube. El descuento de stock al confirmar un pedido se ejecuta en el dispositivo del taller, usando el catálogo que ya existe allí.
-
-El acceso remoto requiere conexión a Internet. Si se pierde la conexión, las pantallas de pedidos y citas mostrarán el último resultado obtenido o una lista vacía al iniciar una sincronización fallida; el refresco se reintentará automáticamente.
-
-Los indicadores y la sincronización Realtime funcionan mientras EdMotor está abierto. Esta entrega no incorpora notificaciones push del sistema cuando la aplicación está cerrada; para eso se necesitará una fase adicional con Firebase Cloud Messaging.
-
-## 5. Archivos principales agregados o modificados
-
-- `data/remote/SupabaseConfig.kt`
-- `data/remote/SupabaseClient.kt`
-- `session/RemoteSession.kt`
-- `session/SessionManager.kt`
-- `data/repository/UserRepository.kt`
-- `data/repository/OrderRepository.kt`
-- `data/repository/AppointmentRepository.kt`
-- `model/Appointment.kt`
-- `viewmodel/AppointmentViewModel.kt`
-- `viewmodel/AppointmentViewModelFactory.kt`
-- `ui/screens/AppointmentsScreen.kt`
-- `navigation/Routes.kt`
-- `navigation/EdMotorNavHost.kt`
-- `ui/EdMotorApp.kt`
-- `ui/components/EdMotorScaffold.kt`
-- `ui/components/EdMotorBottomBar.kt`
-- `data/local/UserEntity.kt`
-- `data/local/UserDao.kt`
-- `data/local/EdMotorDatabase.kt`
-- `supabase/edmotor_supabase_setup.sql`
-
-## 6. Seguridad
-
-- La aplicación usa únicamente la publishable key pública.
-- Las operaciones remotas se realizan con el JWT del usuario autenticado.
-- RLS restringe los pedidos a su cliente y al taller.
-- Las funciones SQL verifican el rol `WORKSHOP` antes de confirmar o rechazar.
-- Las solicitudes de cita solo las puede crear un cliente autenticado.
-- La aceptación de una cita comprueba que no se solape con otra cita confirmada.
-- Nunca publiques ni compartas una service-role key en el código Android.
+- En el perfil cliente, registra un vehículo con el kilometraje vacío, cierra la app y vuelve a abrirla. El vehículo debe seguir en el garaje.
+- Agrega repuestos al carrito y envía un pedido local. En la misma instalación, entra con la cuenta del taller, confirma el pedido y revisa el stock. Cambiar el estado y descontar el inventario forma parte de una transacción de Room.
+- Solicita una cita con conexión y consulta la agenda. Después de una sincronización exitosa, interrumpe la red y vuelve a la pestaña. La caché de Room puede mostrar la última lista de esa misma cuenta, con su estado de sincronización. Las solicitudes y decisiones nuevas requieren conexión.
+- Prueba los recorridos de taller con cuentas y datos de prueba. Para operar stock y pedidos nuevos entre varios dispositivos hace falta un inventario central y una transacción de servidor compartida.

@@ -214,15 +214,17 @@ fun ProductFormScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = stock,
-                onValueChange = { stock = it.filter(Char::isDigit); error = null },
-                label = { Text("Cantidad disponible") },
-                supportingText = { Text("Ingresa 0 si el producto está agotado.") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (product == null) {
+                OutlinedTextField(
+                    value = stock,
+                    onValueChange = { stock = it.filter(Char::isDigit); error = null },
+                    label = { Text("Cantidad inicial") },
+                    supportingText = { Text("Ingresa 0 si el producto está agotado.") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
             Row(
                 Modifier.fillMaxWidth(),
@@ -298,7 +300,7 @@ fun ProductFormScreen(
                         description.isBlank() -> "Escribe una descripción."
                         category.isBlank() -> "Selecciona una categoría o crea una nueva."
                         priceValue == null || priceValue <= 0 -> "El precio debe ser mayor que cero."
-                        stockValue == null -> "La cantidad ingresada no es válida."
+                        product == null && stockValue == null -> "La cantidad ingresada no es válida."
                         imageRes <= 0 && imageUri.isNullOrBlank() ->
                             "Selecciona una fotografía del dispositivo o una imagen del catálogo."
                         isOnPromotion && (
@@ -350,7 +352,6 @@ fun ProductFormScreen(
                                     imageRes = imageRes,
                                     imageUri = imageUri,
                                     contentDescription = name.trim(),
-                                    stock = stockValue!!,
                                     isNew = isNew,
                                     isOnPromotion = isOnPromotion
                                 )

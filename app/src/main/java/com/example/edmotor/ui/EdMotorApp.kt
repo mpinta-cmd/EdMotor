@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -136,22 +137,23 @@ fun EdMotorApp(
                 )
             }
 
-            EdMotorAppContent(
-                currentUserRole = state.user.role,
-                appViewModel = appViewModel,
-                maintenanceViewModel = maintenanceViewModel,
-                productViewModel = productViewModel,
-                orderViewModel = orderViewModel,
-                appointmentViewModel = appointmentViewModel,
-                themeMode = themeMode,
-                onThemeModeChange = onThemeModeChange,
-                onLogout = {
-
-                    appViewModel.clearActiveUser()
-
-                    authViewModel.logout()
-                }
-            )
+            key(state.user.id, state.user.remoteAuthId, state.user.role) {
+                EdMotorAppContent(
+                    currentUserId = state.user.id,
+                    currentUserRole = state.user.role,
+                    appViewModel = appViewModel,
+                    maintenanceViewModel = maintenanceViewModel,
+                    productViewModel = productViewModel,
+                    orderViewModel = orderViewModel,
+                    appointmentViewModel = appointmentViewModel,
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
+                    onLogout = {
+                        appViewModel.clearActiveUser()
+                        authViewModel.logout()
+                    }
+                )
+            }
         }
     }
 }
@@ -162,6 +164,7 @@ fun EdMotorApp(
 
 @Composable
 private fun EdMotorAppContent(
+    currentUserId: Int,
     currentUserRole: String,
     appViewModel: EdMotorViewModel,
     maintenanceViewModel: MaintenanceViewModel,
@@ -187,10 +190,10 @@ private fun EdMotorAppContent(
     }
 
     val pendingOrderCount by orderViewModel.pendingOrdersCount
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = 0)
 
     val pendingAppointmentCount by appointmentViewModel.pendingCount
-        .collectAsStateWithLifecycle()
+        .collectAsStateWithLifecycle(initialValue = 0)
 
     val isWorkshop = currentUserRole == UserRole.WORKSHOP.name
 
@@ -255,6 +258,8 @@ private fun EdMotorAppContent(
         EdMotorNavHost(
 
             navController = navController,
+
+            currentUserId = currentUserId,
 
             currentUserRole = currentUserRole,
 

@@ -30,8 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.edmotor.data.local.OrderStatus
-import com.example.edmotor.data.local.OrderWithItems
+import com.example.edmotor.model.OrderSource
+import com.example.edmotor.model.OrderStatus
+import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.Vehicle
 import java.text.NumberFormat
@@ -65,7 +66,7 @@ fun WorkshopGarageScreen(
                 )
                 Text("Mi garaje", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    "Consulta clientes, vehículos y el historial completo de compras.",
+                    "Consulta clientes, vehículos y el historial de compras.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -102,7 +103,11 @@ fun WorkshopGarageScreen(
                     ) {
                         items(clients, key = { "client_${it.id}" }) { client ->
                             val clientVehicles = vehicles.filter { it.ownerUserId == client.id }
-                            val clientOrders = orders.filter { it.order.clientUserId == client.id }
+                            val clientOrders = orders.filter { entry ->
+                                val order = entry.order
+                                order.clientUserId == client.id ||
+                                    (client.remoteAuthId != null && order.clientAuthId == client.remoteAuthId)
+                            }
                             val expanded = expandedClientId == client.id
 
                             Card(
@@ -158,7 +163,7 @@ fun WorkshopGarageScreen(
                                         }
 
                                         Text(
-                                            "HISTORIAL COMPLETO DE COMPRAS",
+                                            "HISTORIAL DE COMPRAS",
                                             style = MaterialTheme.typography.labelLarge,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.primary
@@ -199,7 +204,7 @@ fun WorkshopGarageScreen(
                             ) {
                                 Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                                     Text("${vehicle.brand} ${vehicle.model}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                    Text("${vehicle.year} · ${vehicle.engine}")
+                                    Text("${vehicle.year} · ${vehicle.engine.ifBlank { "Motor sin registrar" }}")
                                     Text("Placa: ${vehicle.plate.ifBlank { "No registrada" }}")
                                     Text("Kilometraje: ${vehicle.mileage.ifBlank { "No registrado" }}")
                                     Text(
@@ -222,7 +227,7 @@ fun WorkshopGarageScreen(
                 if (orders.isEmpty()) {
                     EmptyWorkshopMessage(
                         "Todavía no hay compras registradas",
-                        "Los pedidos de todos los clientes aparecerán aquí, incluidos los pendientes, confirmados y rechazados."
+                    "Aquí aparecen los pedidos de este dispositivo y el histórico disponible en línea."
                     )
                 } else {
                     LazyColumn(
@@ -230,7 +235,7 @@ fun WorkshopGarageScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(orders, key = { "order_${it.order.id}" }) { order ->
+                        items(orders, key = { "${it.order.reference.source}:${it.order.id}" }) { order ->
                             WorkshopOrderCard(order = order, showClient = true)
                         }
                     }
@@ -286,6 +291,9 @@ private fun WorkshopOrderCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (order.order.reference.source == OrderSource.REMOTE) {
+                Text("Histórico en línea", style = MaterialTheme.typography.labelMedium)
+            }
             order.items.forEach { item ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column(Modifier.weight(1f)) {

@@ -1,7 +1,6 @@
 package com.example.edmotor.data.repository
 
 import android.database.sqlite.SQLiteConstraintException
-import android.os.Build
 import android.util.Base64
 import androidx.room.withTransaction
 import com.example.edmotor.data.local.CartDao
@@ -10,14 +9,19 @@ import com.example.edmotor.data.local.FavoriteProductDao
 import com.example.edmotor.data.local.UserDao
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.remote.SupabaseClient
+import com.example.edmotor.data.remote.SupabaseException
+import com.example.edmotor.data.remote.SupabaseProfile
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.session.RemoteSession
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.Locale
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
-import kotlinx.coroutines.flow.Flow
 
 sealed class UserAuthResult {
     data class Success(
@@ -35,64 +39,9 @@ class UserRepository(
     private val favoriteDao: FavoriteProductDao,
     private val supabase: SupabaseClient
 ) {
-    companion object {
-        private const val DEFAULT_WORKSHOP_USERNAME = "edmotor"
-        private const val DEFAULT_WORKSHOP_PASSWORD = "tecnologica"
-        private const val DEFAULT_WORKSHOP_NAME = "EdMotor"
-    }
-
     fun observeClients(): Flow<List<UserEntity>> = userDao.observeClients()
 
-    /**
-     * Recupera el usuario local asociado a una sesión persistida.
-     */
-    suspend fun findUserById(userId: Int): UserEntity? =
-        userDao.findById(userId)
-
-    /**
-     * Prepara la sesión guardada y reactiva las suscripciones Realtime.
-     */
-    suspend fun prepareRestoredSession(remote: RemoteSession): RemoteSession =
-        supabase.prepareRestoredSession(remote)
-
-    /**
-     * Crea la cuenta local inicial. La cuenta remota del taller se crea una sola
-     * vez desde Supabase Dashboard y se marca como WORKSHOP con el SQL incluido.
-     */
-    suspend fun ensureDefaultWorkshopAccount(): String? {
-        return try {
-            val existing = userDao.findByUsername(DEFAULT_WORKSHOP_USERNAME)
-            if (existing != null) {
-                return if (existing.role == UserRole.WORKSHOP.name) null
-                else "El usuario EdMotor ya existe con un rol diferente al del taller."
-            }
-
-            val (hash, salt) = PasswordHasher.create(DEFAULT_WORKSHOP_PASSWORD)
-            val workshop = UserEntity(
-                username = DEFAULT_WORKSHOP_USERNAME,
-                displayName = DEFAULT_WORKSHOP_NAME,
-                phone = null,
-                passwordHash = hash,
-                salt = salt,
-                role = UserRole.WORKSHOP.name
-            )
-
-            database.withTransaction {
-                if (userDao.findByUsername(DEFAULT_WORKSHOP_USERNAME) == null) {
-                    val id = userDao.insert(workshop).toInt()
-                    cartDao.assignLegacyItems(legacyUserId = 0, newUserId = id)
-                    favoriteDao.assignLegacyFavorites(legacyUserId = 0, newUserId = id)
-                }
-            }
-            null
-        } catch (_: SQLiteConstraintException) {
-            val existing = userDao.findByUsername(DEFAULT_WORKSHOP_USERNAME)
-            if (existing?.role == UserRole.WORKSHOP.name) null
-            else "No fue posible inicializar la cuenta EdMotor."
-        } catch (e: Exception) {
-            e.message ?: "Error al inicializar la cuenta EdMotor."
-        }
-    }
+    suspend fun findUserById(userId: Int): UserEntity? = userDao.findById(userId)
 
     suspend fun registerClient(
         username: String,
@@ -102,48 +51,25 @@ class UserRepository(
     ): UserAuthResult {
         val normalized = username.trim().lowercase(Locale.ROOT)
         val cleanName = displayName.trim()
-
         validateCredentials(normalized, password, cleanName)?.let {
             return UserAuthResult.Error(it)
         }
 
-        if (userDao.usernameExists(normalized) > 0) {
-            return UserAuthResult.Error("Ese nombre de usuario ya está registrado.")
-        }
-
-        return try {
-            val remoteSession = supabase.signUpClient(
+        return authenticate("No fue posible crear la cuenta remota.") {
+            require(userDao.findByUsername(normalized) == null) {
+                "Ese nombre de usuario ya está registrado en este dispositivo."
+            }
+            val remote = supabase.signUpClient(
                 username = normalized,
                 password = password,
                 displayName = cleanName,
                 phone = phone?.trim()?.takeIf { it.isNotBlank() }
             )
-            val profile = supabase.fetchMyProfile(remoteSession)
-
-            if (profile.role != UserRole.CLIENT.name) {
-                return UserAuthResult.Error("La cuenta remota no tiene permisos de cliente.")
+            val profile = supabase.fetchMyProfile(remote)
+            require(profile.role == UserRole.CLIENT.name && profile.username == normalized) {
+                "La cuenta remota no corresponde al registro solicitado."
             }
-
-            val (hash, salt) = PasswordHasher.create(password)
-            val user = UserEntity(
-                username = profile.username,
-                displayName = profile.displayName,
-                phone = profile.phone,
-                passwordHash = hash,
-                salt = salt,
-                role = profile.role,
-                remoteAuthId = profile.id
-            )
-            val id = userDao.insert(user).toInt()
-            supabase.startRealtime(remoteSession.accessToken)
-
-            UserAuthResult.Success(user.copy(id = id), remoteSession)
-        } catch (e: SQLiteConstraintException) {
-            UserAuthResult.Error("Ese nombre de usuario ya está registrado en este dispositivo.")
-        } catch (e: Exception) {
-            UserAuthResult.Error(
-                e.message ?: "No fue posible crear la cuenta remota. Revisa la configuración de Supabase."
-            )
+            UserAuthResult.Success(saveRemoteProfile(remote, profile), remote)
         }
     }
 
@@ -153,90 +79,157 @@ class UserRepository(
             return UserAuthResult.Error("Ingresa tu usuario y contraseña.")
         }
 
-        val localUser = userDao.findByUsername(normalized)
-
-        val remoteSession = try {
-            supabase.signIn(normalized, password)
-        } catch (signInError: Exception) {
-            // Migración transparente de clientes que ya existían en Room antes
-            // de activar Supabase. El dueño se crea manualmente en Dashboard.
-            val canMigrateLocalClient =
-                localUser != null &&
-                        localUser.role == UserRole.CLIENT.name &&
-                        PasswordHasher.verify(password, localUser.passwordHash, localUser.salt)
-
-            if (!canMigrateLocalClient) {
-                return UserAuthResult.Error(
-                    signInError.message ?: "Usuario o contraseña incorrectos."
-                )
+        return authenticate("No fue posible iniciar sesión.") {
+            val localAccount = userDao.findByUsername(normalized)
+            val legacyClient = localAccount?.takeIf {
+                it.remoteAuthId == null && it.role == UserRole.CLIENT.name
             }
-
-            try {
-                supabase.signUpClient(
-                    username = normalized,
-                    password = password,
-                    displayName = localUser!!.displayName,
-                    phone = localUser.phone
-                )
-            } catch (migrationError: Exception) {
-                return UserAuthResult.Error(
-                    "No se pudo vincular tu cuenta anterior con Supabase: " +
-                            (migrationError.message ?: "verifica tu conexión.")
-                )
-            }
-        }
-
-        return try {
-            val profile = supabase.fetchMyProfile(remoteSession)
-
-            if (profile.username != normalized) {
-                return UserAuthResult.Error("El usuario remoto no coincide con la cuenta solicitada.")
-            }
-
-            if (
-                localUser != null &&
-                localUser.role != profile.role
-            ) {
-                return UserAuthResult.Error(
-                    "El rol de esta cuenta no coincide con el perfil autorizado en Supabase."
-                )
-            }
-
-            val user = if (localUser != null) {
-                val updated = localUser.copy(
-                    displayName = profile.displayName,
-                    phone = profile.phone,
-                    role = profile.role,
-                    remoteAuthId = profile.id
-                )
-                userDao.update(updated)
-                updated
+            val legacyClientId = if (legacyClient != null && withContext(Dispatchers.Default) {
+                    verifyLegacyPassword(password, legacyClient.passwordHash, legacyClient.salt)
+                }) {
+                legacyClient.id
             } else {
-                val (hash, salt) = PasswordHasher.create(password)
-                val remoteUser = UserEntity(
-                    username = profile.username,
-                    displayName = profile.displayName,
-                    phone = profile.phone,
-                    passwordHash = hash,
-                    salt = salt,
-                    role = profile.role,
-                    remoteAuthId = profile.id
-                )
-                val id = userDao.insert(remoteUser).toInt()
-                remoteUser.copy(id = id)
+                null
             }
 
-            supabase.startRealtime(remoteSession.accessToken)
-            UserAuthResult.Success(user, remoteSession)
-        } catch (e: Exception) {
-            UserAuthResult.Error(
-                e.message ?: "No fue posible recuperar tu perfil remoto."
-            )
+            var registeringLegacyClient = false
+            val remote = try {
+                supabase.signIn(normalized, password)
+            } catch (error: SupabaseException) {
+                // La migración solo procede cuando la credencial local se comprobó y
+                // Supabase respondió que las credenciales remotas no son válidas.
+                if (legacyClient == null || legacyClientId == null ||
+                    error.errorCode != "invalid_credentials"
+                ) {
+                    throw error
+                }
+                registeringLegacyClient = true
+                supabase.signUpClient(normalized, password, legacyClient.displayName, legacyClient.phone)
+            }
+            val profile = supabase.fetchMyProfile(remote)
+            require(profile.username == normalized) {
+                "El usuario remoto no coincide con la cuenta solicitada."
+            }
+            if (registeringLegacyClient) {
+                require(profile.role == UserRole.CLIENT.name) {
+                    "La cuenta migrada debe tener permisos de cliente."
+                }
+            }
+            val user = saveRemoteProfile(remote, profile, legacyClientId, allowLegacyWorkshop = true)
+            UserAuthResult.Success(user, remote)
         }
+    }
+
+    suspend fun restoreSession(user: UserEntity, saved: RemoteSession): UserAuthResult {
+        if (user.remoteAuthId != saved.userId) {
+            return UserAuthResult.Error("La sesión guardada no corresponde al perfil local.")
+        }
+
+        var remote = saved
+        var credentialsRejected = false
+        val profile = try {
+            remote = supabase.prepareRestoredSession(saved)
+            try {
+                supabase.fetchMyProfile(remote)
+            } catch (error: SupabaseException) {
+                if (error.statusCode != 401 || remote !== saved) throw error
+                credentialsRejected = true
+                remote = supabase.prepareRestoredSession(saved, forceRefresh = true)
+                supabase.fetchMyProfile(remote)
+            }
+        } catch (_: IOException) {
+            if (!credentialsRejected) return UserAuthResult.Success(user, remote)
+            return UserAuthResult.Error("La sesión ya no es válida. Inicia sesión nuevamente.")
+        } catch (error: SupabaseException) {
+            val temporaryError = error.statusCode in temporaryHttpErrors || (error.statusCode ?: 0) >= 500
+            if (!credentialsRejected && temporaryError) {
+                return UserAuthResult.Success(user, remote)
+            }
+            return UserAuthResult.Error("La sesión ya no es válida. Inicia sesión nuevamente.")
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            return UserAuthResult.Error("No se pudo comprobar la sesión guardada. Inicia sesión nuevamente.")
+        }
+
+        return authenticate("No fue posible actualizar el perfil guardado.") {
+            val updatedUser = saveRemoteProfile(remote, profile)
+            UserAuthResult.Success(updatedUser, remote)
+        }
+    }
+
+    suspend fun startRealtime(remote: RemoteSession) {
+        supabase.startRealtimeFor(remote)
     }
 
     fun logout() {
         supabase.stopRealtime()
+    }
+
+    private suspend fun saveRemoteProfile(
+        remote: RemoteSession,
+        profile: SupabaseProfile,
+        legacyClientId: Int? = null,
+        allowLegacyWorkshop: Boolean = false
+    ): UserEntity {
+        require(profile.id.isNotBlank() && profile.id == remote.userId) {
+            "La identidad del perfil remoto no coincide con la sesión."
+        }
+        require(profile.role == UserRole.CLIENT.name || profile.role == UserRole.WORKSHOP.name) {
+            "La cuenta remota tiene un rol desconocido."
+        }
+
+        return database.withTransaction {
+            val matchingIdentity = userDao.findByRemoteAuthId(profile.id)
+            val matchingName = userDao.findByUsername(profile.username)
+            val existing = when {
+                matchingName == null || matchingIdentity?.id == matchingName.id -> matchingIdentity
+                matchingIdentity != null || matchingName.remoteAuthId != null -> {
+                    error("El nombre de usuario pertenece a otro perfil local. Sus datos se conservaron.")
+                }
+                matchingName.id == legacyClientId && profile.role == UserRole.CLIENT.name -> matchingName
+                allowLegacyWorkshop && matchingName.role == UserRole.WORKSHOP.name &&
+                    profile.role == UserRole.WORKSHOP.name -> matchingName
+                else -> error("La cuenta local anterior requiere su propia contraseña para vincularse.")
+            }
+
+            val user = UserEntity(
+                id = existing?.id ?: 0,
+                username = profile.username,
+                displayName = profile.displayName,
+                phone = profile.phone,
+                passwordHash = "",
+                salt = "",
+                role = profile.role,
+                createdAtMillis = existing?.createdAtMillis ?: System.currentTimeMillis(),
+                remoteAuthId = profile.id
+            )
+            val saved = if (existing == null) {
+                user.copy(id = userDao.insert(user).toInt())
+            } else {
+                if (user != existing) userDao.update(user)
+                user
+            }
+
+            if (saved.role == UserRole.WORKSHOP.name) {
+                cartDao.assignLegacyItems(legacyUserId = 0, newUserId = saved.id)
+                favoriteDao.assignLegacyFavorites(legacyUserId = 0, newUserId = saved.id)
+            }
+            saved
+        }
+    }
+
+    private suspend fun authenticate(
+        fallbackMessage: String,
+        operation: suspend () -> UserAuthResult.Success
+    ): UserAuthResult = try {
+        operation()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: SQLiteConstraintException) {
+        UserAuthResult.Error("El perfil entra en conflicto con una cuenta guardada en este dispositivo.")
+    } catch (error: Exception) {
+        UserAuthResult.Error(error.message ?: fallbackMessage)
     }
 
     private fun validateCredentials(
@@ -251,56 +244,35 @@ class UserRepository(
         if (password.length < 6) return "La contraseña debe tener al menos 6 caracteres."
         return null
     }
+
+    private companion object {
+        val temporaryHttpErrors = setOf(408, 429)
+    }
 }
 
-private object PasswordHasher {
-    private const val SHA256_ITERATIONS = 210_000
-    private const val SHA1_ITERATIONS = 600_000
-    private const val KEY_LENGTH_BITS = 256
-
-    fun create(password: String): Pair<String, String> {
-        val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
-        val useSha256 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-        val algorithm = if (useSha256) "PBKDF2WithHmacSHA256" else "PBKDF2WithHmacSHA1"
-        val label = if (useSha256) "pbkdf2-sha256" else "pbkdf2-sha1"
-        val iterations = if (useSha256) SHA256_ITERATIONS else SHA1_ITERATIONS
-        val hashBytes = derive(password, saltBytes, algorithm, iterations)
-        val salt = Base64.encodeToString(saltBytes, Base64.NO_WRAP)
-        val hash = Base64.encodeToString(hashBytes, Base64.NO_WRAP)
-        return "$label:$iterations:$hash" to salt
+/** Verifica las credenciales de cuentas que todavía no fueron vinculadas a Supabase. */
+private fun verifyLegacyPassword(password: String, storedHash: String, storedSalt: String): Boolean {
+    val parts = storedHash.split(":")
+    if (parts.size != 3) return false
+    val algorithm = when (parts[0]) {
+        "pbkdf2-sha256" -> "PBKDF2WithHmacSHA256"
+        "pbkdf2-sha1" -> "PBKDF2WithHmacSHA1"
+        else -> return false
     }
+    val iterations = parts[1].toIntOrNull() ?: return false
+    if (iterations !in 1..1_000_000) return false
 
-    fun verify(password: String, storedHash: String, storedSalt: String): Boolean {
-        return try {
-            val parts = storedHash.split(":")
-            if (parts.size != 3) return false
-            val algorithm = when (parts[0]) {
-                "pbkdf2-sha256" -> "PBKDF2WithHmacSHA256"
-                "pbkdf2-sha1" -> "PBKDF2WithHmacSHA1"
-                else -> return false
-            }
-            val iterations = parts[1].toIntOrNull() ?: return false
-            if (iterations !in 1..1_000_000) return false
-            val expected = Base64.decode(parts[2], Base64.NO_WRAP)
-            val salt = Base64.decode(storedSalt, Base64.NO_WRAP)
-            val actual = derive(password, salt, algorithm, iterations)
+    return try {
+        val expected = Base64.decode(parts[2], Base64.NO_WRAP)
+        val salt = Base64.decode(storedSalt, Base64.NO_WRAP)
+        val spec = PBEKeySpec(password.toCharArray(), salt, iterations, 256)
+        try {
+            val actual = SecretKeyFactory.getInstance(algorithm).generateSecret(spec).encoded
             MessageDigest.isEqual(expected, actual)
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun derive(
-        password: String,
-        salt: ByteArray,
-        algorithm: String,
-        iterations: Int
-    ): ByteArray {
-        val spec = PBEKeySpec(password.toCharArray(), salt, iterations, KEY_LENGTH_BITS)
-        return try {
-            SecretKeyFactory.getInstance(algorithm).generateSecret(spec).encoded
         } finally {
             spec.clearPassword()
         }
+    } catch (_: Exception) {
+        false
     }
 }

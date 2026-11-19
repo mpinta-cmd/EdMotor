@@ -7,6 +7,7 @@ import com.example.edmotor.data.repository.UserAuthResult
 import com.example.edmotor.data.repository.UserRepository
 import com.example.edmotor.session.RemoteSession
 import com.example.edmotor.session.SessionManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,69 +23,46 @@ class AuthViewModel(
     private val repository: UserRepository,
     private val sessionManager: SessionManager
 ) : ViewModel() {
-
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    private var authenticating = false
+
     init {
         viewModelScope.launch {
-            val initializationError = repository.ensureDefaultWorkshopAccount()
-            _message.value = initializationError
-
             restorePreviousSession()
         }
     }
 
-    /**
-     * Recupera el usuario y los tokens que quedaron guardados al cerrar EdMotor.
-     */
     private suspend fun restorePreviousSession() {
-        val savedSession = try {
-            sessionManager.restoreSavedSession()
-        } catch (_: Exception) {
-            null
-        }
-
-        if (savedSession == null) {
-            _authState.value = AuthState.SignedOut
-            return
-        }
-
-        val user = try {
-            repository.findUserById(savedSession.localUserId)
-        } catch (_: Exception) {
-            null
-        }
-
-        // La sesión solo se restaura si el usuario local corresponde al usuario
-        // autenticado en Supabase. Así no se mezclan perfiles ni roles.
-        if (
-            user == null ||
-            user.remoteAuthId.isNullOrBlank() ||
-            user.remoteAuthId != savedSession.remoteSession.userId
-        ) {
-            sessionManager.clearSession()
-            _authState.value = AuthState.SignedOut
-            return
-        }
-
-        sessionManager.restoreInMemory(
-            user = user,
-            remote = savedSession.remoteSession
-        )
-
-        // Si el token está próximo a vencer, intenta renovarlo. Si el dispositivo
-        // está sin conexión, conserva la sesión local para no expulsar al usuario.
         try {
-            repository.prepareRestoredSession(savedSession.remoteSession)
-        } catch (_: Exception) {
-            // La renovación se volverá a intentar cuando se realice una petición.
-        }
+            val saved = sessionManager.restoreSavedSession()
+            if (saved == null) {
+                _authState.value = AuthState.SignedOut
+                return
+            }
+            val user = repository.findUserById(saved.localUserId)
+            if (user == null || user.remoteAuthId != saved.remoteSession.userId) {
+                clearSession()
+                return
+            }
 
-        _authState.value = AuthState.SignedIn(user)
+            when (val result = repository.restoreSession(user, saved.remoteSession)) {
+                is UserAuthResult.Success -> signIn(result.user, result.remoteSession)
+                is UserAuthResult.Error -> {
+                    clearSession()
+                    _message.value = result.message
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            _authState.value = AuthState.SignedOut
+            _message.value = "No fue posible recuperar la sesión. Inicia sesión nuevamente."
+        }
     }
 
     fun registerClient(
@@ -92,65 +70,58 @@ class AuthViewModel(
         password: String,
         displayName: String,
         phone: String?
-    ) {
+    ) = authenticate { repository.registerClient(username, password, displayName, phone) }
+
+    fun login(username: String, password: String) = authenticate { repository.login(username, password) }
+
+    private fun authenticate(operation: suspend () -> UserAuthResult) {
+        if (authenticating || _authState.value != AuthState.SignedOut) return
+        authenticating = true
         viewModelScope.launch {
             _message.value = null
-
-            when (
-                val result = repository.registerClient(
-                    username,
-                    password,
-                    displayName,
-                    phone
-                )
-            ) {
-                is UserAuthResult.Success -> {
-                    signIn(result.user, result.remoteSession)
+            try {
+                when (val result = operation()) {
+                    is UserAuthResult.Success -> signIn(result.user, result.remoteSession)
+                    is UserAuthResult.Error -> _message.value = result.message
                 }
-
-                is UserAuthResult.Error -> {
-                    _message.value = result.message
-                }
+            } finally {
+                authenticating = false
             }
         }
     }
 
-    fun login(username: String, password: String) {
-        viewModelScope.launch {
-            _message.value = null
-
-            when (val result = repository.login(username, password)) {
-                is UserAuthResult.Success -> {
-                    signIn(result.user, result.remoteSession)
-                }
-
-                is UserAuthResult.Error -> {
-                    _message.value = result.message
-                }
-            }
-        }
-    }
-
-    private suspend fun signIn(
-        user: UserEntity,
-        remoteSession: RemoteSession
-    ) {
+    private suspend fun signIn(user: UserEntity, remote: RemoteSession) {
         try {
-            sessionManager.startSession(user, remoteSession)
+            sessionManager.startSession(user, remote)
+            repository.startRealtime(remote)
             _authState.value = AuthState.SignedIn(user)
             _message.value = null
-        } catch (e: Exception) {
-            _message.value = e.message
-                ?: "No fue posible guardar la sesión en este dispositivo."
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            clearSession()
+            _message.value = "No fue posible guardar la sesión en este dispositivo."
         }
     }
 
     fun logout() {
+        if (_authState.value !is AuthState.SignedIn) return
+        _authState.value = AuthState.Loading
         viewModelScope.launch {
-            repository.logout()
-            sessionManager.clearSession()
-
             _message.value = null
+            clearSession()
+        }
+    }
+
+    private suspend fun clearSession() {
+        try {
+            sessionManager.clearSession()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            _message.value = "No fue posible borrar la sesión guardada."
+        } finally {
+            repository.logout()
             _authState.value = AuthState.SignedOut
         }
     }

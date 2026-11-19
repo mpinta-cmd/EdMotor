@@ -66,25 +66,25 @@ class VehicleRepository(
         plate: String = "",
         mileage: String = "",
         notes: String = ""
-    ): Long? {
+    ): Long {
+        require(ownerUserId > 0) { "Inicia sesión para registrar un vehículo." }
 
-        if (ownerUserId <= 0) return null
-
-        val error = EdMotorValidation.validateVehicle(
+        EdMotorValidation.validateVehicle(
             brand = brand,
             model = model,
             year = year
-        )
+        )?.let { throw IllegalArgumentException(it) }
 
-        if (error != null) return null
-
-        val cleanMileage = mileage.trim()
-
-        if (
-            cleanMileage.isNotEmpty() &&
-            cleanMileage.filter { it.isDigit() }.toIntOrNull() == null
-        ) {
-            return null
+        val mileageInput = mileage.trim()
+        val cleanMileage = if (mileageInput.isBlank()) {
+            ""
+        } else {
+            val mileageValue = mileageInput.replace(Regex("\\s*km$", RegexOption.IGNORE_CASE), "")
+                .toIntOrNull()
+            require(mileageValue != null && mileageValue >= 0) {
+                "Escribe un kilometraje válido en kilómetros o deja el campo vacío."
+            }
+            "$mileageValue km"
         }
 
         return dao.insert(
@@ -121,21 +121,15 @@ class VehicleRepository(
 
         if (error != null) return
 
-        val current = dao.findById(vehicle.id) ?: return
-
-        // Comprobar propietario real.
-
-        if (current.ownerUserId != ownerUserId) return
-
-        dao.update(
-            current.copy(
-                brand = vehicle.brand.trim(),
-                model = vehicle.model.trim(),
-                year = vehicle.year,
-                engine = vehicle.engine.trim(),
-                plate = vehicle.plate.trim().uppercase(),
-                notes = vehicle.notes.trim()
-            )
+        dao.updateForOwner(
+            vehicleId = vehicle.id,
+            ownerUserId = ownerUserId,
+            brand = vehicle.brand.trim(),
+            model = vehicle.model.trim(),
+            year = vehicle.year,
+            engine = vehicle.engine.trim(),
+            plate = vehicle.plate.trim().uppercase(),
+            notes = vehicle.notes.trim()
         )
     }
 

@@ -14,6 +14,7 @@ import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -39,6 +41,7 @@ class EdMotorViewModel(
 
     private val activeAccount =
         MutableStateFlow<ActiveAccount?>(null)
+    private var isSavingVehicle = false
 
     // ==========================================
     // SESIÓN ACTIVA
@@ -122,12 +125,12 @@ class EdMotorViewModel(
         if (account == null) {
             flowOf(emptySet<Int>())
         } else {
-            favoriteRepository.observeFavorites(account.userId)
+            favoriteRepository.observeFavorites(account.userId).onStart { emit(emptySet()) }
         }
 
     }.stateIn(
         viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
+        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
         emptySet()
     )
 
@@ -176,12 +179,12 @@ class EdMotorViewModel(
         if (account == null) {
             flowOf(emptyMap<Int, Int>())
         } else {
-            cartRepository.observeCart(account.userId)
+            cartRepository.observeCart(account.userId).onStart { emit(emptyMap()) }
         }
 
     }.stateIn(
         viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
+        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
         emptyMap()
     )
 
@@ -286,15 +289,15 @@ class EdMotorViewModel(
                 flowOf(emptyList<Vehicle>())
 
             account.role == UserRole.WORKSHOP ->
-                vehicleRepository.observeForWorkshop()
+                vehicleRepository.observeForWorkshop().onStart { emit(emptyList()) }
 
             else ->
-                vehicleRepository.observeByOwner(account.userId)
+                vehicleRepository.observeByOwner(account.userId).onStart { emit(emptyList()) }
         }
 
     }.stateIn(
         viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
+        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
         emptyList()
     )
 
@@ -304,13 +307,13 @@ class EdMotorViewModel(
 
     val clients = activeAccount.flatMapLatest { account ->
         if (account?.role == UserRole.WORKSHOP) {
-            userRepository.observeClients()
+            userRepository.observeClients().onStart { emit(emptyList()) }
         } else {
             flowOf(emptyList<UserEntity>())
         }
     }.stateIn(
         viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
+        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
         emptyList()
     )
 
@@ -325,25 +328,47 @@ class EdMotorViewModel(
         engine: String,
         plate: String,
         mileage: String,
-        notes: String
+        notes: String,
+        onResult: (Result<Long>) -> Unit = {}
     ) {
+        val account = activeAccount.value
+        if (account?.role != UserRole.CLIENT) {
+            onResult(Result.failure(IllegalStateException(
+                "Inicia sesión como cliente para registrar el vehículo."
+            )))
+            return
+        }
+        if (isSavingVehicle) {
+            onResult(Result.failure(IllegalStateException("Ya hay un vehículo guardándose.")))
+            return
+        }
 
-        val account = activeAccount.value ?: return
-
-        if (account.role != UserRole.CLIENT) return
-
+        isSavingVehicle = true
         viewModelScope.launch {
-
-            vehicleRepository.addVehicle(
-                ownerUserId = account.userId,
-                brand = brand,
-                model = model,
-                year = year,
-                engine = engine,
-                plate = plate,
-                mileage = mileage,
-                notes = notes
-            )
+            val result = try {
+                val vehicleId = vehicleRepository.addVehicle(
+                    ownerUserId = account.userId,
+                    brand = brand,
+                    model = model,
+                    year = year,
+                    engine = engine,
+                    plate = plate,
+                    mileage = mileage,
+                    notes = notes
+                )
+                Result.success(vehicleId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IllegalArgumentException) {
+                Result.failure(e)
+            } catch (e: Exception) {
+                Result.failure(IllegalStateException(
+                    "No fue posible guardar el vehículo. Intenta de nuevo.", e
+                ))
+            } finally {
+                isSavingVehicle = false
+            }
+            if (activeAccount.value == account) onResult(result)
         }
     }
 

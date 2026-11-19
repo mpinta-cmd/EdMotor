@@ -9,6 +9,7 @@ import com.example.edmotor.data.repository.FavoriteRepository
 import com.example.edmotor.data.repository.MaintenanceRepository
 import com.example.edmotor.data.repository.OrderRepository
 import com.example.edmotor.data.repository.ProductRepository
+import com.example.edmotor.data.repository.RemoteOrderRepository
 import com.example.edmotor.data.repository.UserRepository
 import com.example.edmotor.data.repository.VehicleRepository
 import com.example.edmotor.session.SessionManager
@@ -74,11 +75,15 @@ class AppContainer(context: Context) {
     private val orderRepository = OrderRepository(
         database = database,
         orderDao = database.orderDao(),
-        productDao = database.productDao()
+        productDao = database.productDao(),
+        cartDao = database.cartDao(),
+        sessionManager = sessionManager,
+        remoteOrders = RemoteOrderRepository(supabaseClient)
     )
 
 
     private val appointmentRepository = AppointmentRepository(
+        appointmentDao = database.appointmentDao(),
         supabase = supabaseClient,
         sessionManager = sessionManager
     )

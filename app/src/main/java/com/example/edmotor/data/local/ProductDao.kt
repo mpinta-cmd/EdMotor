@@ -177,6 +177,17 @@ interface ProductDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
+    @Query("""
+        UPDATE products
+        SET stock = :newStock, updatedAtMillis = :updatedAt
+        WHERE id = :productId AND :newStock >= 0
+    """)
+    suspend fun updateStock(
+        productId: Int,
+        newStock: Int,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
+
 
     // ==========================================
     // CONTROL DE INVENTARIO PARA PEDIDOS
@@ -196,6 +207,7 @@ interface ProductDao {
         SET stock = stock - :quantity,
             updatedAtMillis = :updatedAtMillis
         WHERE id = :productId
+          AND isActive = 1
           AND :quantity > 0
           AND stock >= :quantity
         """

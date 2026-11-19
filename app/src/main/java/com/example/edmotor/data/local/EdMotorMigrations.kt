@@ -20,6 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * 6 -> 7: categorías dinámicas
  * 7 -> 8: identidad remota histórica
  * 8 -> 9: citas
+ * 9 -> 10: caché de citas por cuenta y rol
  */
 object EdMotorMigrations {
 
@@ -549,10 +550,6 @@ object EdMotorMigrations {
     // REGISTRO CENTRAL DE MIGRACIONES
     // =====================================================
 
-    /**
-     * MIGRATION_8_9 se encuentra en AppointmentMigration.kt.
-     * Se registra aquí para mantener una única cadena.
-     */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
@@ -561,6 +558,7 @@ object EdMotorMigrations {
         MIGRATION_5_6,
         MIGRATION_6_7,
         MIGRATION_7_8,
-        AppointmentMigration.MIGRATION_8_9
+        AppointmentMigration.MIGRATION_8_9,
+        AppointmentMigration.MIGRATION_9_10
     )
 }

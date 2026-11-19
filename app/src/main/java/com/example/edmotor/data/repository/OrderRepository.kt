@@ -1,426 +1,207 @@
-
 package com.example.edmotor.data.repository
 
 import androidx.room.withTransaction
+import com.example.edmotor.data.local.CartDao
 import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.OrderDao
 import com.example.edmotor.data.local.OrderEntity
 import com.example.edmotor.data.local.OrderItemEntity
+import com.example.edmotor.data.local.OrderWithItems as StoredOrderWithItems
 import com.example.edmotor.data.local.ProductDao
+import com.example.edmotor.data.local.UserEntity
+import com.example.edmotor.model.Order
+import com.example.edmotor.model.OrderItem
+import com.example.edmotor.model.OrderReference
+import com.example.edmotor.model.OrderSource
+import com.example.edmotor.model.OrderStatus
+import com.example.edmotor.model.OrderWithItems
+import com.example.edmotor.model.UserRole
+import com.example.edmotor.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
-
-// =====================================================
-// RESULTADOS DE OPERACIONES
-// =====================================================
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 sealed interface OrderOperationResult {
-
-    data object Success : OrderOperationResult
-
-    data class Error(
-        val message: String
-    ) : OrderOperationResult
+    data class Success(val message: String) : OrderOperationResult
+    data class Error(val message: String) : OrderOperationResult
 }
-
-
-// =====================================================
-// MODELO TEMPORAL PARA LOS PRODUCTOS DEL PEDIDO
-// =====================================================
-
-data class OrderItemDraft(
-
-    val productId: Int,
-
-    val productName: String,
-
-    val category: String,
-
-    val unitPriceCop: Int,
-
-    val quantity: Int
-
-) {
-
-    val subtotalCop: Int
-        get() = Math.multiplyExact(
-            unitPriceCop,
-            quantity
-        )
-}
-
-
-// =====================================================
-// REPOSITORIO PRINCIPAL DE PEDIDOS
-// =====================================================
 
 class OrderRepository(
-
     private val database: EdMotorDatabase,
-
     private val orderDao: OrderDao,
-
-    private val productDao: ProductDao
-
+    private val productDao: ProductDao,
+    private val cartDao: CartDao,
+    private val sessionManager: SessionManager,
+    private val remoteOrders: RemoteOrderRepository
 ) {
 
-    companion object {
+    fun observeOrders(user: UserEntity): Flow<List<OrderWithItems>> {
+        val localOrders = when (user.role) {
+            UserRole.WORKSHOP.name -> orderDao.observeAllWithItems()
+            UserRole.CLIENT.name -> orderDao.observeByClientWithItems(user.id)
+            else -> return flowOf(emptyList())
+        }.map { orders -> orders.map { it.toModel() } }
 
-        const val STATUS_PENDING = "PENDING"
-
-        const val STATUS_CONFIRMED = "CONFIRMED"
-
-        const val STATUS_REJECTED = "REJECTED"
-    }
-
-
-    // =================================================
-    // 1. OBSERVAR TODOS LOS PEDIDOS
-    // =================================================
-
-    fun observeAllOrders(): Flow<List<OrderEntity>> {
-
-        return orderDao.observeAllOrders()
-    }
-
-
-    // =================================================
-    // 2. OBSERVAR PEDIDOS DE UN CLIENTE
-    // =================================================
-
-    fun observeOrdersByClient(
-        clientUserId: Int
-    ): Flow<List<OrderEntity>> {
-
-        return orderDao.observeOrdersByClient(
-            clientUserId.toLong()
-        )
-    }
-
-
-    // =================================================
-    // 3. OBSERVAR PEDIDOS POR ESTADO
-    // =================================================
-
-    fun observeOrdersByStatus(
-        status: String
-    ): Flow<List<OrderEntity>> {
-
-        return orderDao.observeOrdersByStatus(status)
-    }
-
-
-    // =================================================
-    // 4. OBSERVAR DETALLES DE UN PEDIDO
-    // =================================================
-
-    fun observeOrderItems(
-        orderId: Int
-    ): Flow<List<OrderItemEntity>> {
-
-        return orderDao.observeOrderItems(
-            orderId.toLong()
-        )
-    }
-
-
-    // =================================================
-    // 5. OBTENER PEDIDO POR ID
-    // =================================================
-
-    suspend fun getOrderById(
-        orderId: Int
-    ): OrderEntity? {
-
-        return orderDao.getOrderById(
-            orderId.toLong()
-        )
-    }
-
-
-    // =================================================
-    // 6. OBTENER PRODUCTOS DE UN PEDIDO
-    // =================================================
-
-    suspend fun getOrderItems(
-        orderId: Int
-    ): List<OrderItemEntity> {
-
-        return orderDao.getOrderItems(
-            orderId.toLong()
-        )
-    }
-
-
-    // =================================================
-    // 7. CREAR PEDIDO
-    // =================================================
-
-    suspend fun createOrder(
-        order: OrderEntity,
-        items: List<OrderItemDraft>
-    ): Long {
-
-        require(items.isNotEmpty()) {
-            "No puedes crear un pedido sin productos."
-        }
-
-        require(items.all {
-            it.productId > 0 &&
-                    it.quantity > 0 &&
-                    it.unitPriceCop >= 0
-        }) {
-            "Los productos contienen datos inválidos."
-        }
-
-        // Calcular total del pedido.
-
-        val calculatedTotal = items.sumOf { item ->
-            item.subtotalCop.toLong()
-        }
-
-        require(
-            calculatedTotal == order.totalCop.toLong()
-        ) {
-            "El total del pedido no coincide con sus productos."
-        }
-
-        return database.withTransaction {
-
-            // Crear encabezado.
-
-            val orderId = orderDao.insertOrder(order)
-
-            // Crear detalles del pedido.
-
-            val orderItems = items.map { item ->
-
-                val itemSubtotal = Math.multiplyExact(
-                    item.unitPriceCop,
-                    item.quantity
-                )
-
-                OrderItemEntity(
-
-                    id = 0,
-
-                    orderId = orderId.toInt(),
-
-                    productId = item.productId,
-
-                    productName = item.productName,
-
-                    category = item.category,
-
-                    unitPriceCop = item.unitPriceCop,
-
-                    quantity = item.quantity,
-
-                    subtotalCop = itemSubtotal
-                )
+        val authId = user.remoteAuthId?.takeIf { it.isNotBlank() } ?: return localOrders
+        val remoteHistory = remoteOrders.observeOrders(
+            authId = authId,
+            isWorkshop = user.role == UserRole.WORKSHOP.name,
+            isSessionActive = {
+                sessionManager.currentUser.value?.id == user.id &&
+                    sessionManager.remoteSession?.userId == authId
             }
-
-            // Guardar detalles.
-
-            orderDao.insertOrderItems(orderItems)
-
-            orderId
+        )
+        return combine(localOrders, remoteHistory) { local, remote ->
+            (local + remote).sortedByDescending { it.order.createdAtMillis }
         }
     }
 
+    suspend fun createPendingOrder(client: UserEntity): OrderOperationResult =
+        orderOperation("No fue posible guardar el pedido.") {
+            database.withTransaction {
+                val activeClient = requireActiveUser(client, UserRole.CLIENT)
+                val cartItems = cartDao.getItemsForUser(activeClient.id)
+                require(cartItems.isNotEmpty()) { "Tu carrito está vacío." }
 
-    // =================================================
-    // 8. CONFIRMAR PEDIDO Y DESCONTAR INVENTARIO
-    // =================================================
+                var totalCop = 0L
+                val orderItems = cartItems.map { item ->
+                    require(item.quantity > 0) { "El carrito contiene una cantidad inválida." }
+                    val product = productDao.findById(item.productId)
+                        ?: error("Un repuesto del carrito ya no existe.")
+                    check(product.isActive) { "${product.name} ya no está disponible." }
+                    check(product.stock >= item.quantity) {
+                        "Solo hay ${product.stock} unidades de ${product.name}."
+                    }
+
+                    val unitPrice = product.effectivePriceCop
+                    check(unitPrice > 0L) { "El precio de ${product.name} no es válido." }
+                    val subtotal = Math.multiplyExact(unitPrice, item.quantity.toLong())
+                    totalCop = Math.addExact(totalCop, subtotal)
+
+                    OrderItemEntity(
+                        orderId = 0,
+                        productId = product.id,
+                        productName = product.name,
+                        category = product.category,
+                        unitPriceCop = unitPrice,
+                        quantity = item.quantity,
+                        subtotalCop = subtotal
+                    )
+                }
+
+                val orderId = Math.toIntExact(
+                    orderDao.insertOrder(
+                        OrderEntity(
+                            clientUserId = activeClient.id,
+                            clientName = activeClient.displayName,
+                            clientUsername = activeClient.username,
+                            clientPhone = activeClient.phone,
+                            totalCop = totalCop
+                        )
+                    )
+                )
+                orderDao.insertOrderItems(orderItems.map { it.copy(orderId = orderId) })
+                cartDao.clearForUser(activeClient.id)
+
+                OrderOperationResult.Success("Pedido #$orderId guardado en este dispositivo.")
+            }
+        }
 
     suspend fun confirmOrder(
-        orderId: Int,
-        ownerUserId: Int
-    ): OrderOperationResult {
+        workshop: UserEntity,
+        reference: OrderReference
+    ): OrderOperationResult = orderOperation("No fue posible confirmar el pedido.") {
+        database.withTransaction {
+            val activeWorkshop = requireActiveUser(workshop, UserRole.WORKSHOP)
+            val orderId = reference.requireLocalId()
+            val order = orderDao.getOrderById(orderId)
+                ?: error("No encontramos el pedido solicitado.")
+            check(order.status == OrderStatus.PENDING) { "Este pedido ya fue procesado." }
 
-        return try {
+            val items = orderDao.getOrderItems(orderId)
+            check(items.isNotEmpty()) { "El pedido no contiene productos." }
 
-            database.withTransaction {
-
-                // Buscar pedido.
-
-                val order = orderDao.getOrderById(
-                    orderId.toLong()
-                ) ?: return@withTransaction OrderOperationResult.Error(
-                    "No encontramos el pedido solicitado."
+            val now = System.currentTimeMillis()
+            for (item in items) {
+                val updated = productDao.decreaseStockIfAvailable(
+                    productId = item.productId,
+                    quantity = item.quantity,
+                    updatedAtMillis = now
                 )
-
-                // Verificar estado.
-
-                if (order.status != STATUS_PENDING) {
-
-                    return@withTransaction OrderOperationResult.Error(
-                        "Este pedido ya fue procesado."
-                    )
-                }
-
-                // Obtener productos.
-
-                val items = orderDao.getOrderItems(
-                    orderId.toLong()
-                )
-
-                if (items.isEmpty()) {
-
-                    return@withTransaction OrderOperationResult.Error(
-                        "El pedido no contiene productos."
-                    )
-                }
-
-                val currentTime = System.currentTimeMillis()
-
-                // Descontar inventario.
-
-                for (item in items) {
-
-                    val affectedRows =
-                        productDao.decreaseStockIfAvailable(
-
-                            productId = item.productId,
-
-                            quantity = item.quantity,
-
-                            updatedAtMillis = currentTime
-                        )
-
-                    if (affectedRows != 1) {
-
-                        throw InsufficientStockException(
-                            "Existencias insuficientes para ${item.productName}."
-                        )
-                    }
-                }
-
-                // Confirmar pedido.
-
-                val updatedRows = orderDao.confirmOrder(
-
-                    orderId = orderId.toLong(),
-
-                    status = STATUS_CONFIRMED,
-
-                    ownerUserId = ownerUserId.toLong(),
-
-                    confirmedAtMillis = currentTime,
-
-                    updatedAtMillis = currentTime
-                )
-
-                if (updatedRows != 1) {
-
-                    throw IllegalStateException(
-                        "No fue posible confirmar el pedido."
-                    )
-                }
-
-                OrderOperationResult.Success
+                check(updated == 1) { "Existencias insuficientes para ${item.productName}." }
             }
 
-        } catch (e: CancellationException) {
-
-            throw e
-
-        } catch (e: Exception) {
-
-            OrderOperationResult.Error(
-                e.message ?: "Error al confirmar el pedido."
+            val updated = orderDao.confirmOrder(
+                orderId = orderId,
+                status = OrderStatus.CONFIRMED,
+                ownerUserId = activeWorkshop.id.toLong(),
+                confirmedAtMillis = now,
+                updatedAtMillis = now
             )
+            check(updated == 1) { "Este pedido ya fue procesado." }
+            OrderOperationResult.Success("Pedido #${reference.id} confirmado. Inventario actualizado.")
         }
     }
-
-
-    // =================================================
-    // 9. RECHAZAR PEDIDO
-    // =================================================
 
     suspend fun rejectOrder(
-        orderId: Int
-    ): OrderOperationResult {
-
-        return try {
-
-            database.withTransaction {
-
-                val order = orderDao.getOrderById(
-                    orderId.toLong()
-                ) ?: return@withTransaction OrderOperationResult.Error(
-                    "No encontramos el pedido."
-                )
-
-                if (order.status != STATUS_PENDING) {
-
-                    return@withTransaction OrderOperationResult.Error(
-                        "Este pedido ya fue procesado."
-                    )
-                }
-
-                val updatedRows = orderDao.updateOrderStatus(
-
-                    orderId = orderId.toLong(),
-
-                    status = STATUS_REJECTED,
-
-                    updatedAtMillis = System.currentTimeMillis()
-                )
-
-                if (updatedRows != 1) {
-
-                    return@withTransaction OrderOperationResult.Error(
-                        "No fue posible rechazar el pedido."
-                    )
-                }
-
-                OrderOperationResult.Success
-            }
-
-        } catch (e: CancellationException) {
-
-            throw e
-
-        } catch (e: Exception) {
-
-            OrderOperationResult.Error(
-                e.message ?: "Error al rechazar el pedido."
-            )
-        }
-    }
-
-
-    // =================================================
-    // 10. CONTAR PEDIDOS
-    // =================================================
-
-    suspend fun getOrdersCount(): Int {
-
-        return orderDao.getOrdersCount()
-    }
-
-
-    // =================================================
-    // 11. CONTAR PEDIDOS POR CLIENTE
-    // =================================================
-
-    suspend fun getOrdersCountByClient(
-        clientUserId: Int
-    ): Int {
-
-        return orderDao.getOrdersCountByClient(
-            clientUserId.toLong()
+        workshop: UserEntity,
+        reference: OrderReference
+    ): OrderOperationResult = orderOperation("No fue posible rechazar el pedido.") {
+        requireActiveUser(workshop, UserRole.WORKSHOP)
+        val orderId = reference.requireLocalId()
+        val updated = orderDao.updateOrderStatus(
+            orderId = orderId,
+            status = OrderStatus.REJECTED,
+            updatedAtMillis = System.currentTimeMillis()
         )
+        check(updated == 1) { "El pedido no existe o ya fue procesado." }
+        OrderOperationResult.Success("Pedido #${reference.id} rechazado.")
     }
 
+    private fun requireActiveUser(user: UserEntity, requiredRole: UserRole): UserEntity {
+        val active = sessionManager.currentUser.value
+        check(active != null && active.id > 0 && active.id == user.id && active.role == requiredRole.name) {
+            "La sesión activa no tiene permiso para realizar esta operación."
+        }
+        return active
+    }
 
-    // =================================================
-    // EXCEPCIÓN DE INVENTARIO
-    // =================================================
+    private fun OrderReference.requireLocalId(): Long {
+        check(source == OrderSource.LOCAL) { "Los pedidos del historial en línea son de consulta." }
+        require(id > 0) { "El pedido no es válido." }
+        return id.toLong()
+    }
 
-    private class InsufficientStockException(
-        message: String
-    ) : Exception(message)
-
+    private suspend inline fun orderOperation(
+        fallbackMessage: String,
+        action: () -> OrderOperationResult.Success
+    ): OrderOperationResult = try {
+        action()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: ArithmeticException) {
+        OrderOperationResult.Error("El pedido supera los límites de almacenamiento.")
+    } catch (e: Exception) {
+        OrderOperationResult.Error(e.message ?: fallbackMessage)
+    }
 }
+
+private fun StoredOrderWithItems.toModel() = OrderWithItems(
+    order = Order(
+        reference = OrderReference(OrderSource.LOCAL, order.id),
+        clientUserId = order.clientUserId,
+        clientAuthId = null,
+        clientName = order.clientName,
+        clientUsername = order.clientUsername,
+        clientPhone = order.clientPhone,
+        status = order.status,
+        totalCop = order.totalCop,
+        createdAtMillis = order.createdAtMillis,
+        confirmedAtMillis = order.confirmedAtMillis
+    ),
+    items = items.map {
+        OrderItem(it.productName, it.category, it.unitPriceCop, it.quantity, it.subtotalCop)
+    }
+)

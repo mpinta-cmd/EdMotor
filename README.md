@@ -634,49 +634,18 @@ La aplicación integra tres módulos principales: uno que expande la base trabaj
 ---
 
 ### 🏠 1. Pantalla de Inicio
-![Pantalla de Inicio](C:\Users\user\AndroidStudioProjects\EdMotor\screenshots\img.png)
+![Pantalla de Inicio](screenshots/img.png)
 
 ### 🛒 2. Carrito de Compras
-![Carrito de Compras](C:\Users\user\AndroidStudioProjects\EdMotor\screenshots\img_1.png)
+![Carrito de Compras](screenshots/img_1.png)
 
 ### 🚗 3. Mi Garaje
-![Mi Garaje](C:\Users\user\AndroidStudioProjects\EdMotor\screenshots\img_2.png)
+![Mi Garaje](screenshots/img_2.png)
 
 ### 🩺 4. Guía de Diagnóstico
-![Guía de Diagnóstico](C:\Users\user\AndroidStudioProjects\EdMotor\screenshots\img_3.png) 
+![Guía de Diagnóstico](screenshots/img_3.png)
 
 
-## 🚀 Instrucciones Básicas para Ejecutar el Proyecto
+## Compilación, Room y Supabase
 
-Sigue esta guía paso a paso para compilar y ejecutar **EdMotor Automotriz** en tu entorno local mediante Android Studio.
-
----
-
-### 📋 Prerrequisitos
-
-Antes de iniciar, asegúrate de contar con los siguientes elementos configurados en tu equipo:
-
-* **Android Studio:** Versión Iguana, Jellyfish, Ladybug o superior.
-* **Java Development Kit (JDK):** JDK 17 o superior (configurado por defecto en Android Studio).
-* **Configuración del SDK de Android:**
-  * **Compile SDK / Target SDK:** API 34 o 35 (Android 14 / 15).
-  * **Minimum SDK:** API 24 (Android 7.0 Nougat).
-* **Dispositivo de ejecución:**
-  * Emulador de Android (AVD) creado con API 24 o superior, **o**
-  * Dispositivo físico Android conectado por USB con la **Depuración por USB** activada.
-
----
-
-### 💻 Pasos para la Configuración y Compilación
-
-#### Paso 1: Clonar o Descargar el Proyecto
-Obtén el código fuente clonando el repositorio desde GitHub o descargando el archivo ZIP descomprimido en tu equipo:
-
-```bash
-git clone https://github.com/mpinta-cmd/EdMotor
-
----
-
-## Actualización: Supabase, pedidos y citas
-
-Para instalar la sincronización remota de pedidos y la nueva agenda de citas, sigue obligatoriamente las instrucciones de `README_Supabase_Citas.md` y ejecuta `supabase/edmotor_supabase_setup.sql` en tu proyecto Supabase.
+La [guía de persistencia](README_Supabase_Citas.md) describe la versión vigente e incluye requisitos de compilación, migraciones, alcance de Room y Supabase, y cómo comprobar los recorridos de pedidos y citas. Las secciones anteriores muestran la interfaz original del proyecto.

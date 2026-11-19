@@ -1,7 +1,6 @@
 
 package com.example.edmotor.ui.components
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,13 +18,15 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 
 import androidx.compose.runtime.Composable
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -36,7 +37,9 @@ fun CartItemCard(
     product: Product,
     cantidad: Int,
     onIncrease: () -> Unit,
-    onDecrease: () -> Unit
+    onDecrease: () -> Unit,
+    onRemove: () -> Unit,
+    enabled: Boolean
 ) {
 
     val canIncrease =
@@ -146,9 +149,11 @@ fun CartItemCard(
 
                 OutlinedButton(
                     onClick = onDecrease,
-                    enabled = cantidad > 0,
+                    enabled = enabled && cantidad > 0,
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(48.dp).semantics {
+                        contentDescription = "Disminuir cantidad de ${product.name}"
+                    }
                 ) {
 
                     Text("-")
@@ -162,14 +167,23 @@ fun CartItemCard(
 
                 OutlinedButton(
                     onClick = onIncrease,
-                    enabled = canIncrease,
+                    enabled = enabled && canIncrease,
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(48.dp).semantics {
+                        contentDescription = "Aumentar cantidad de ${product.name}"
+                    }
                 ) {
 
                     Text("+")
                 }
             }
+        }
+        TextButton(
+            onClick = onRemove,
+            enabled = enabled,
+            modifier = Modifier.align(Alignment.End).padding(end = 12.dp)
+        ) {
+            Text("Quitar del carrito")
         }
     }
 }

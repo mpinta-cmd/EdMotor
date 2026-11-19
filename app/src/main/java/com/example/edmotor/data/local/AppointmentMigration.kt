@@ -57,4 +57,42 @@ object AppointmentMigration {
             )
         }
     }
+
+    val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            // Las citas locales de v9 no identifican la cuenta que descargó el dato.
+            // La caché se llena con respuestas de Supabase de una sesión autenticada.
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `appointment_cache` (
+                    `accountAuthId` TEXT NOT NULL,
+                    `accountRole` TEXT NOT NULL,
+                    `id` INTEGER NOT NULL,
+                    `clientAuthId` TEXT NOT NULL,
+                    `clientName` TEXT NOT NULL,
+                    `clientUsername` TEXT NOT NULL,
+                    `clientPhone` TEXT,
+                    `vehicleBrand` TEXT NOT NULL,
+                    `vehicleModel` TEXT NOT NULL,
+                    `vehicleYear` INTEGER NOT NULL,
+                    `vehiclePlate` TEXT NOT NULL,
+                    `scheduledAtMillis` INTEGER NOT NULL,
+                    `description` TEXT NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `createdAtMillis` INTEGER NOT NULL,
+                    `updatedAtMillis` INTEGER NOT NULL,
+                    PRIMARY KEY(`accountAuthId`, `accountRole`, `id`)
+                )
+                """.trimIndent()
+            )
+
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS
+                `index_appointment_cache_accountAuthId_accountRole_scheduledAtMillis`
+                ON `appointment_cache` (`accountAuthId`, `accountRole`, `scheduledAtMillis`)
+                """.trimIndent()
+            )
+        }
+    }
 }

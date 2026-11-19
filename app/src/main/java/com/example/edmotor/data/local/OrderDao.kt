@@ -6,6 +6,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -53,6 +54,14 @@ interface OrderDao {
     fun observeOrdersByClient(
         clientUserId: Long
     ): Flow<List<OrderEntity>>
+
+    @Transaction
+    @Query("SELECT * FROM orders ORDER BY createdAtMillis DESC, id DESC")
+    fun observeAllWithItems(): Flow<List<OrderWithItems>>
+
+    @Transaction
+    @Query("SELECT * FROM orders WHERE clientUserId = :clientUserId ORDER BY createdAtMillis DESC, id DESC")
+    fun observeByClientWithItems(clientUserId: Int): Flow<List<OrderWithItems>>
 
     // ==========================================
     // CONSULTAR PEDIDOS POR ESTADO
@@ -120,6 +129,7 @@ interface OrderDao {
         SET status = :status,
             updatedAtMillis = :updatedAtMillis
         WHERE id = :orderId
+          AND status = 'PENDING'
     """)
     suspend fun updateOrderStatus(
         orderId: Long,
@@ -138,6 +148,7 @@ interface OrderDao {
             confirmedByUserId = :ownerUserId,
             confirmedAtMillis = :confirmedAtMillis
         WHERE id = :orderId
+          AND status = 'PENDING'
     """)
     suspend fun confirmOrder(
         orderId: Long,

@@ -6,6 +6,8 @@ object AppointmentStatus {
     const val REJECTED = "REJECTED"
 }
 
+enum class AppointmentSyncState { LOADING, UP_TO_DATE, UNAVAILABLE }
+
 data class Appointment(
     val id: Long,
     val clientAuthId: String,

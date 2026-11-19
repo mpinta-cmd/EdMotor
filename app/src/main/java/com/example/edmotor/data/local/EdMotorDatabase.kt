@@ -29,9 +29,10 @@ import androidx.room.RoomDatabase
         OrderItemEntity::class,
 
         // Citas
-        AppointmentEntity::class
+        AppointmentEntity::class,
+        AppointmentCacheEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class EdMotorDatabase : RoomDatabase() {
