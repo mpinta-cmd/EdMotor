@@ -26,11 +26,13 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 
-import com.example.edmotor.app.AppContainer
+import com.example.edmotor.BuildConfig
+import com.example.edmotor.app.EdMotorApplication
 import com.example.edmotor.navigation.EdMotorNavHost
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.ui.components.EdMotorScaffold
 import com.example.edmotor.ui.screens.AuthFlowScreen
+import com.example.edmotor.ui.screens.CredentialAccessScreen
 import com.example.edmotor.ui.theme.AppThemeMode
 
 import com.example.edmotor.viewmodel.AuthState
@@ -55,11 +57,7 @@ fun EdMotorApp(
     // CONTENEDOR DE DEPENDENCIAS
     // ==========================================
 
-    val context = LocalContext.current.applicationContext
-
-    val appContainer = remember(context) {
-        AppContainer(context)
-    }
+    val appContainer = (LocalContext.current.applicationContext as EdMotorApplication).appContainer
 
     // ==========================================
     // VIEWMODELS
@@ -96,9 +94,6 @@ fun EdMotorApp(
     val authState by authViewModel.authState
         .collectAsStateWithLifecycle()
 
-    val profileSelection by authViewModel.profileSelection
-        .collectAsStateWithLifecycle()
-
     val logoutError by authViewModel.logoutError.collectAsStateWithLifecycle()
 
     // ==========================================
@@ -120,19 +115,37 @@ fun EdMotorApp(
         AuthState.SignedOut -> {
             LaunchedEffect(Unit) { appViewModel.clearActiveUser() }
 
-            AuthFlowScreen(
-                profiles = profileSelection.profiles,
-                mockApiConfigured = profileSelection.mockApiConfigured,
-                isLoading = profileSelection.isLoading,
-                selectingKey = profileSelection.selectingKey,
-                isCreating = profileSelection.isCreating,
-                message = profileSelection.message,
-                onSelectOwner = authViewModel::selectOwner,
-                onSelectProfile = authViewModel::selectProfile,
-                onCreateClientProfile = authViewModel::createClientProfile,
-                onClearMessage = authViewModel::clearProfileMessage,
-                onRetry = authViewModel::reloadProfiles
-            )
+            if (BuildConfig.EDMOTOR_PRIVATE_MODE) {
+                val privateAccess by authViewModel.privateAccess.collectAsStateWithLifecycle()
+                CredentialAccessScreen(
+                    isSubmitting = privateAccess.isSubmitting,
+                    message = privateAccess.message,
+                    isError = privateAccess.isError,
+                    canRetry = privateAccess.canRetry,
+                    isConfigured = privateAccess.isConfigured,
+                    verificationEmail = privateAccess.verificationEmail,
+                    onSignIn = authViewModel::signInPrivate,
+                    onRegisterClient = authViewModel::registerPrivateClient,
+                    onVerifyEmail = authViewModel::verifyPrivateEmail,
+                    onClearMessage = authViewModel::clearPrivateMessage,
+                    onRetry = authViewModel::retryPrivateRestore
+                )
+            } else {
+                val profileSelection by authViewModel.profileSelection.collectAsStateWithLifecycle()
+                AuthFlowScreen(
+                    profiles = profileSelection.profiles,
+                    mockApiConfigured = profileSelection.mockApiConfigured,
+                    isLoading = profileSelection.isLoading,
+                    selectingKey = profileSelection.selectingKey,
+                    isCreating = profileSelection.isCreating,
+                    message = profileSelection.message,
+                    onSelectOwner = authViewModel::selectOwner,
+                    onSelectProfile = authViewModel::selectProfile,
+                    onCreateClientProfile = authViewModel::createClientProfile,
+                    onClearMessage = authViewModel::clearProfileMessage,
+                    onRetry = authViewModel::reloadProfiles
+                )
+            }
         }
 
         is AuthState.SignedIn -> {

@@ -204,7 +204,7 @@ fun AppointmentsScreen(
 
         if (syncState == AppointmentSyncState.NOT_CONFIGURED) {
             Text(
-                "Para gestionar citas, configura MockAPI y selecciona un perfil en línea. El garaje, el catálogo y los pedidos están disponibles en este dispositivo.",
+                "Para gestionar citas, entra con un perfil conectado a la agenda. El garaje, el catálogo y los pedidos están disponibles en este dispositivo.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

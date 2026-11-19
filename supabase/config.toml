@@ -1,0 +1,4 @@
+project_id = "edmotor-private-access"
+
+[functions.edmotor-sign-in]
+verify_jwt = false

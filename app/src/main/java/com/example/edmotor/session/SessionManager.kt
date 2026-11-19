@@ -66,6 +66,11 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
         }
     }
 
+    internal suspend fun publishPrivateProfile(user: UserEntity?) {
+        require(user == null || (user.id > 0 && user.hasKnownRole() && user.remoteAuthId?.startsWith("supabase:") == true))
+        sessionMutex.withLock { _currentUser.value = user }
+    }
+
     private suspend fun removeRememberedProfile() {
         dataStore.edit { preferences ->
             preferences.remove(PROFILE_KEY)

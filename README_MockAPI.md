@@ -6,13 +6,13 @@ La app se instala como **EdMotor Automotriz** con el identificador `com.example.
 
 ## Compilar y probar Room
 
-Abre el proyecto en Android Studio y sincroniza Gradle. Para compilar y ejecutar los tests JVM en Windows, usa la terminal del proyecto.
+Abre el proyecto en Android Studio, sincroniza Gradle y selecciona `demoDebug` en **Build Variants**. Para compilar y ejecutar las pruebas JVM en Windows, usa la terminal del proyecto.
 
 ```powershell
-.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest
+.\gradlew.bat :app:assembleDemoDebug :app:testDemoDebugUnitTest
 ```
 
-El APK de depuración se genera en `app/build/outputs/apk/debug/`. Puedes probar el garaje, carrito, inventario y pedidos con el perfil local **EdMotor** y los perfiles de cliente creados en el dispositivo aunque todavía no tengas un proyecto MockAPI. Las citas remotas requieren un perfil de MockAPI.
+El APK de depuración se genera en `app/build/outputs/apk/demo/debug/`. Puedes probar el garaje, carrito, inventario y pedidos con el perfil local **EdMotor** y los perfiles de cliente creados en el dispositivo aunque todavía no tengas un proyecto MockAPI. Las citas remotas requieren un perfil de MockAPI.
 
 ## Crear los recursos en MockAPI
 
@@ -51,7 +51,7 @@ EDMOTOR_MOCKAPI_URL=https://tu-proyecto.mockapi.io/api/v1/
 Sincroniza Gradle y ejecuta **EdMotor Automotriz**. Como alternativa, puedes compilar un APK con la URL para una sola ejecución de Gradle.
 
 ```powershell
-.\gradlew.bat '-PEDMOTOR_MOCKAPI_URL=https://tu-proyecto.mockapi.io/api/v1/' :app:assembleDebug
+.\gradlew.bat '-PEDMOTOR_MOCKAPI_URL=https://tu-proyecto.mockapi.io/api/v1/' :app:assembleDemoDebug
 ```
 
 ## Ver cómo cambia el JSON

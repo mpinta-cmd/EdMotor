@@ -7,6 +7,7 @@ import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.remote.MockApiConnection
 import com.example.edmotor.data.remote.MockProfileCreateDto
 import com.example.edmotor.data.remote.MockProfileDto
+import com.example.edmotor.data.remote.SupabaseConnection
 import com.example.edmotor.model.DemoProfile
 import com.example.edmotor.model.UserRole
 import java.util.UUID
@@ -20,13 +21,15 @@ class ClientProfileCreationUnverifiedException(cause: Exception) : Exception(cau
 class UserRepository(
     private val database: EdMotorDatabase,
     private val userDao: UserDao,
-    private val mockApi: MockApiConnection?
+    private val mockApi: MockApiConnection?,
+    private val supabase: SupabaseConnection? = null
 ) {
     val mockApiConfigured: Boolean = mockApi != null
 
     fun observeClients(): Flow<List<UserEntity>> = userDao.observeClients().map { users ->
         users.filter { user ->
-            isLocalClientKey(user.remoteAuthId) || mockApi?.profileId(user.remoteAuthId) != null
+            if (supabase != null) supabase.profileId(user.remoteAuthId) != null
+            else isLocalClientKey(user.remoteAuthId) || mockApi?.profileId(user.remoteAuthId) != null
         }
     }
 
