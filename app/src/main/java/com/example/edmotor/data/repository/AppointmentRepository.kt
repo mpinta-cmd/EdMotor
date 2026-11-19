@@ -10,6 +10,11 @@ import com.example.edmotor.data.remote.MockApiConnection
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
+import com.example.edmotor.data.remote.listAppointments
+import com.example.edmotor.data.remote.mockAppointmentFailureMessage
+import com.example.edmotor.data.remote.mockAppointmentId
+import com.example.edmotor.model.APPOINTMENT_DURATION_MILLIS
+import com.example.edmotor.model.APPOINTMENT_MINIMUM_NOTICE_MILLIS
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentOperationResult
 import com.example.edmotor.model.AppointmentServiceType
@@ -17,6 +22,7 @@ import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.model.isValidAppointmentStart
 import com.example.edmotor.session.DemoOwnerProfile
 import com.example.edmotor.session.LocalAccountIdentity
 import com.example.edmotor.session.SessionManager
@@ -38,6 +44,7 @@ import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import retrofit2.HttpException
 
 internal data class AppointmentAccount(
     val profileKey: String,
@@ -127,8 +134,7 @@ class AppointmentRepository(
         return try {
             requireActiveAccount(account)
             val profileFilter = account.profileId.takeIf { account.role == UserRole.CLIENT }
-            val snapshot = connection.service.getAppointments(profileFilter)
-                .filter { profileFilter == null || it.profileId == profileFilter }
+            val snapshot = connection.service.listAppointments(profileFilter)
                 .map { it.toCacheEntity(connection, account) }
                 .sortedWith(compareBy(AppointmentCacheEntity::scheduledAtMillis, AppointmentCacheEntity::id))
 
@@ -156,7 +162,7 @@ class AppointmentRepository(
             return AppointmentOperationResult.Error(message)
         }
         val now = System.currentTimeMillis()
-        if (scheduledAtMillis < now + MINIMUM_NOTICE_MS || !isValidStart(scheduledAtMillis)) {
+        if (scheduledAtMillis < now + APPOINTMENT_MINIMUM_NOTICE_MILLIS || !isValidAppointmentStart(scheduledAtMillis)) {
             return AppointmentOperationResult.Error("Selecciona una fecha y hora con al menos 15 minutos de anticipación.")
         }
         if (serviceType !in AppointmentServiceType.options) {
@@ -211,7 +217,7 @@ class AppointmentRepository(
                 updatedAtMillis = now
             )
             val created = connection.service.createAppointment(body)
-            check(appointmentId(created.id) != null && created.profileId == account.profileId)
+            check(mockAppointmentId(created.id) != null && created.profileId == account.profileId)
             check(created.status == AppointmentStatus.PENDING && created.scheduledAtMillis == scheduledAtMillis)
             AppointmentOperationResult.Success("Solicitud de cita enviada.")
         }
@@ -245,10 +251,10 @@ class AppointmentRepository(
                 val now = System.currentTimeMillis()
                 if (newStatus == AppointmentStatus.CONFIRMED) {
                     val start = target.scheduledAtMillis
-                    if (!isValidStart(start) || start <= now) {
+                    if (!isValidAppointmentStart(start) || start <= now) {
                         return@performLocalOperation AppointmentOperationResult.Error("La hora de esta solicitud ya pasó o es inválida.")
                     }
-                    if (appointmentDao.hasConfirmedOverlap(start - APPOINTMENT_DURATION_MS, start + APPOINTMENT_DURATION_MS)) {
+                    if (appointmentDao.hasConfirmedOverlap(start - APPOINTMENT_DURATION_MILLIS, start + APPOINTMENT_DURATION_MILLIS)) {
                         return@performLocalOperation AppointmentOperationResult.Error("Ese horario ya está ocupado en la agenda.")
                     }
                 }
@@ -263,7 +269,7 @@ class AppointmentRepository(
             fallback = "No fue posible comprobar el cambio. Actualiza la agenda antes de volver a intentarlo."
         ) { connection ->
             val id = appointmentId.toString()
-            val agenda = if (newStatus == AppointmentStatus.CONFIRMED) connection.service.getAppointments() else null
+            val agenda = if (newStatus == AppointmentStatus.CONFIRMED) connection.service.getAppointmentsForReview() else null
             val target = if (agenda == null) connection.service.getAppointment(id) else agenda.singleOrNull { it.id == id }
             if (target == null || target.id != id || target.status != AppointmentStatus.PENDING) {
                 return@performRemoteOperation AppointmentOperationResult.Error("La solicitud ya no está pendiente.")
@@ -271,14 +277,14 @@ class AppointmentRepository(
 
             if (agenda != null) {
                 val start = target.scheduledAtMillis
-                if (!isValidStart(start) || start <= System.currentTimeMillis()) {
+                if (!isValidAppointmentStart(start) || start <= System.currentTimeMillis()) {
                     return@performRemoteOperation AppointmentOperationResult.Error("La hora de esta solicitud ya pasó o es inválida.")
                 }
                 val overlaps = agenda.any { appointment ->
                     appointment.status == AppointmentStatus.CONFIRMED &&
-                        isValidStart(appointment.scheduledAtMillis) &&
-                        appointment.scheduledAtMillis < start + APPOINTMENT_DURATION_MS &&
-                        appointment.scheduledAtMillis + APPOINTMENT_DURATION_MS > start
+                        isValidAppointmentStart(appointment.scheduledAtMillis) &&
+                        appointment.scheduledAtMillis < start + APPOINTMENT_DURATION_MILLIS &&
+                        appointment.scheduledAtMillis + APPOINTMENT_DURATION_MILLIS > start
                 }
                 if (overlaps) {
                     return@performRemoteOperation AppointmentOperationResult.Error("Ese horario ya está ocupado en la agenda.")
@@ -337,6 +343,9 @@ class AppointmentRepository(
             result
         } catch (e: CancellationException) {
             throw e
+        } catch (e: HttpException) {
+            e.response()?.errorBody()?.close()
+            AppointmentOperationResult.Error(mockAppointmentFailureMessage(e.code(), fallback))
         } catch (_: Exception) {
             AppointmentOperationResult.Error(fallback)
         } finally {
@@ -353,9 +362,7 @@ class AppointmentRepository(
         account: AppointmentAccount
     ): AppointmentCacheEntity {
         val ownerKey = connection.profileKey(profileId)
-        val remoteId = requireNotNull(appointmentId(id))
-        check(isValidStart(scheduledAtMillis))
-        check(status == AppointmentStatus.PENDING || status == AppointmentStatus.CONFIRMED || status == AppointmentStatus.REJECTED)
+        val remoteId = requireNotNull(mockAppointmentId(id))
 
         return AppointmentCacheEntity(
             accountAuthId = account.cacheKey,
@@ -411,15 +418,8 @@ class AppointmentRepository(
         updatedAtMillis = updatedAtMillis
     )
 
-    private fun appointmentId(value: String): Long? =
-        value.toLongOrNull()?.takeIf { it > 0L && it.toString() == value }
-
-    private fun isValidStart(start: Long): Boolean = start in 1..(Long.MAX_VALUE - APPOINTMENT_DURATION_MS)
-
     private companion object {
         const val POLL_INTERVAL_MS = 30_000L
-        const val MINIMUM_NOTICE_MS = 15 * 60_000L
-        const val APPOINTMENT_DURATION_MS = 60 * 60_000L
         const val SHARED_VEHICLE_BRAND = "Vehículo"
         const val SHARED_VEHICLE_MODEL = "registrado"
         const val SHARED_VEHICLE_YEAR = 0

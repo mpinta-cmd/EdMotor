@@ -44,6 +44,7 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -63,6 +64,11 @@ import com.example.edmotor.model.AppointmentServiceType
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.model.appointmentDateUtcMillis
+import com.example.edmotor.model.appointmentTimeSlots
+import com.example.edmotor.model.firstAppointmentDateUtcMillis
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -96,22 +102,27 @@ fun AppointmentsScreen(
     }
 
     var selectedVehicleId by rememberSaveable { mutableStateOf(-1) }
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var selectedDateMillis by rememberSaveable {
-        mutableStateOf(
-            Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-        )
+        mutableStateOf(firstAppointmentDateUtcMillis(nowMillis))
     }
-    var selectedTime by rememberSaveable { mutableStateOf("09:00") }
+    var selectedTime by rememberSaveable {
+        mutableStateOf(appointmentTimeSlots(selectedDateMillis, nowMillis).firstOrNull()?.time)
+    }
     var selectedService by rememberSaveable { mutableStateOf<String?>(null) }
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
     var showTimeMenu by remember { mutableStateOf(false) }
     var showVehicleMenu by remember { mutableStateOf(false) }
     var showServiceMenu by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isWorkshop) {
+        if (!isWorkshop) {
+            while (isActive) {
+                nowMillis = System.currentTimeMillis()
+                delay(30_000L)
+            }
+        }
+    }
 
     LaunchedEffect(vehicles) {
         if (selectedVehicleId <= 0 && vehicles.isNotEmpty()) {
@@ -120,7 +131,14 @@ fun AppointmentsScreen(
     }
 
     val selectedVehicle = vehicles.firstOrNull { it.id == selectedVehicleId }
-    val canChangeAppointments = syncState == AppointmentSyncState.UP_TO_DATE && !isProcessing
+    val serviceForBooking = selectedService?.takeIf(AppointmentServiceType.options::contains)
+    val canReviewAppointments = syncState == AppointmentSyncState.UP_TO_DATE && !isProcessing
+    val firstAvailableDate = remember(nowMillis) { firstAppointmentDateUtcMillis(nowMillis) }
+    val localToday = remember(nowMillis) { appointmentDateUtcMillis(nowMillis) }
+    val timeSlots = remember(selectedDateMillis, nowMillis) { appointmentTimeSlots(selectedDateMillis, nowMillis) }
+    val selectedSlot = timeSlots.firstOrNull { it.time == selectedTime }
+    val canRequestAppointment = syncState != AppointmentSyncState.NOT_CONFIGURED && !isProcessing &&
+        selectedVehicle != null && serviceForBooking != null && selectedSlot != null
     val visibleAppointments = remember(appointments, isWorkshop) {
         if (isWorkshop) {
             appointments.sortedWith(
@@ -133,15 +151,6 @@ fun AppointmentsScreen(
             appointments.sortedByDescending { it.createdAtMillis }
         }
     }
-    val timeSlots = remember {
-        buildList {
-            for (hour in 8..17) {
-                add("%02d:00".format(hour))
-                if (hour != 17) add("%02d:30".format(hour))
-            }
-        }
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -219,6 +228,7 @@ fun AppointmentsScreen(
                 Text(
                     when {
                         isDeviceAgenda -> "No se pudieron consultar las citas de este dispositivo."
+                        !isWorkshop -> "No se pudo consultar el historial. Puedes intentar solicitar una cita."
                         appointments.isEmpty() -> "No se pudo consultar la agenda."
                         else -> "Los datos de la agenda pueden estar desactualizados."
                     },
@@ -235,7 +245,7 @@ fun AppointmentsScreen(
             if (syncState == AppointmentSyncState.UP_TO_DATE || appointments.isNotEmpty()) {
                 WorkshopDailyAgenda(
                     appointments = visibleAppointments,
-                    canReview = canChangeAppointments,
+                    canReview = canReviewAppointments,
                     onAccept = onAccept,
                     onReject = onReject,
                     showEmptyDay = syncState == AppointmentSyncState.UP_TO_DATE,
@@ -310,32 +320,46 @@ fun AppointmentsScreen(
                             }
 
                             OutlinedButton(
-                                onClick = { showDatePicker = true },
+                                onClick = {
+                                    nowMillis = System.currentTimeMillis()
+                                    showDatePicker = true
+                                },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(Icons.Outlined.CalendarMonth, contentDescription = null)
                                 Spacer(Modifier.size(8.dp))
                                 Text(dateFormatter.format(Date(selectedDateMillis)))
                             }
+                            if (firstAvailableDate > localToday && selectedDateMillis == firstAvailableDate) {
+                                Text(
+                                    "Hoy ya no quedan horarios. Puedes elegir desde mañana.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
 
                             Box {
                                 OutlinedButton(
-                                    onClick = { showTimeMenu = true },
-                                    modifier = Modifier.fillMaxWidth()
+                                    onClick = {
+                                        nowMillis = System.currentTimeMillis()
+                                        showTimeMenu = true
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = timeSlots.isNotEmpty()
                                 ) {
                                     Icon(Icons.Outlined.AccessTime, contentDescription = null)
                                     Spacer(Modifier.size(8.dp))
-                                    Text("Hora: $selectedTime")
+                                    Text(selectedTime?.let { "Hora: $it" } ?: "Seleccionar hora")
                                 }
                                 DropdownMenu(
-                                    expanded = showTimeMenu,
+                                    expanded = showTimeMenu && timeSlots.isNotEmpty(),
                                     onDismissRequest = { showTimeMenu = false }
                                 ) {
                                     timeSlots.forEach { slot ->
                                         DropdownMenuItem(
-                                            text = { Text(slot) },
+                                            text = { Text(slot.time) },
                                             onClick = {
-                                                selectedTime = slot
+                                                selectedTime = slot.time
                                                 showTimeMenu = false
                                             }
                                         )
@@ -343,12 +367,25 @@ fun AppointmentsScreen(
                                 }
                             }
 
+                            val timeMessage = when {
+                                timeSlots.isEmpty() -> "Ya no quedan horarios para esta fecha. Elige otra fecha."
+                                selectedSlot == null -> "Elige una hora con al menos 15 minutos de anticipación."
+                                else -> null
+                            }
+                            if (timeMessage != null) {
+                                Text(
+                                    timeMessage,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+
                             Box {
                                 OutlinedButton(
                                     onClick = { showServiceMenu = true },
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(selectedService ?: "Seleccionar tipo de servicio")
+                                    Text(serviceForBooking ?: "Seleccionar tipo de servicio")
                                 }
                                 DropdownMenu(
                                     expanded = showServiceMenu,
@@ -369,19 +406,18 @@ fun AppointmentsScreen(
                             Button(
                                 onClick = {
                                     val vehicle = selectedVehicle
-                                    val service = selectedService
-                                    if (vehicle != null && service != null) {
-                                        val scheduledAt = buildLocalDateTime(
-                                            selectedDateMillis,
-                                            selectedTime
-                                        )
-                                        onCreateAppointment(vehicle, scheduledAt, service)
+                                    val service = serviceForBooking
+                                    val checkedAt = System.currentTimeMillis()
+                                    val updatedSlot = appointmentTimeSlots(selectedDateMillis, checkedAt)
+                                        .firstOrNull { it.time == selectedTime }
+                                    if (vehicle != null && service != null && updatedSlot != null) {
+                                        onCreateAppointment(vehicle, updatedSlot.startsAtMillis, service)
+                                    } else {
+                                        nowMillis = checkedAt
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                enabled = canChangeAppointments &&
-                                        selectedVehicle != null &&
-                                        selectedService != null
+                                enabled = canRequestAppointment
                             ) {
                                 if (isProcessing) {
                                     CircularProgressIndicator(
@@ -425,17 +461,9 @@ fun AppointmentsScreen(
 
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = selectedDateMillis,
+            initialSelectedDateMillis = maxOf(selectedDateMillis, firstAvailableDate),
             selectableDates = object : androidx.compose.material3.SelectableDates {
-                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
-                    val today = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
-                        set(Calendar.HOUR_OF_DAY, 0)
-                        set(Calendar.MINUTE, 0)
-                        set(Calendar.SECOND, 0)
-                        set(Calendar.MILLISECOND, 0)
-                    }.timeInMillis
-                    return utcTimeMillis >= today
-                }
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis >= firstAvailableDate
             }
         )
         DatePickerDialog(
@@ -443,10 +471,17 @@ fun AppointmentsScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        selectedDateMillis =
-                            datePickerState.selectedDateMillis ?: selectedDateMillis
+                        val newDate = datePickerState.selectedDateMillis
+                        if (newDate != null && newDate != selectedDateMillis) {
+                            nowMillis = System.currentTimeMillis()
+                            selectedDateMillis = newDate
+                            val newSlots = appointmentTimeSlots(newDate, nowMillis)
+                            selectedTime = newSlots.firstOrNull { it.time == selectedTime }?.time
+                                ?: newSlots.firstOrNull()?.time
+                        }
                         showDatePicker = false
-                    }
+                    },
+                    enabled = datePickerState.selectedDateMillis != null
                 ) { Text("Aceptar") }
             },
             dismissButton = {
@@ -1024,23 +1059,4 @@ private fun EmptyAppointmentsMessage(message: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
-}
-
-private fun buildLocalDateTime(dateUtcMillis: Long, time: String): Long {
-    val utcCalendar = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
-        timeInMillis = dateUtcMillis
-    }
-    val pieces = time.split(":")
-    val hour = pieces.getOrNull(0)?.toIntOrNull() ?: 9
-    val minute = pieces.getOrNull(1)?.toIntOrNull() ?: 0
-
-    return Calendar.getInstance().apply {
-        set(Calendar.YEAR, utcCalendar.get(Calendar.YEAR))
-        set(Calendar.MONTH, utcCalendar.get(Calendar.MONTH))
-        set(Calendar.DAY_OF_MONTH, utcCalendar.get(Calendar.DAY_OF_MONTH))
-        set(Calendar.HOUR_OF_DAY, hour)
-        set(Calendar.MINUTE, minute)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
 }

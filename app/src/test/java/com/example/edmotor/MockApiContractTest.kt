@@ -5,16 +5,21 @@ import com.example.edmotor.data.remote.MockApiService
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
 import com.example.edmotor.data.remote.MockProfileCreateDto
+import com.example.edmotor.data.remote.listAppointments
+import com.example.edmotor.data.remote.mockAppointmentFailureMessage
 import com.google.gson.JsonParser
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -41,7 +46,6 @@ class MockApiContractTest {
         data class Request(val route: String, val body: String)
         val requests = ConcurrentLinkedQueue<Request>()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        val appointment = """{"id":"7","profileId":"1","serviceType":"Revisión general","vehicleBrand":"Demo","vehicleModel":"Modelo","vehicleYear":2023,"scheduledAtMillis":1800000000000,"status":"PENDING","createdAtMillis":1790000000000,"updatedAtMillis":1790000000000}"""
         server.createContext("/api/v1/") { exchange ->
             val route = "${exchange.requestMethod} ${exchange.requestURI}"
             val body = exchange.requestBody.bufferedReader().use { it.readText() }
@@ -49,9 +53,9 @@ class MockApiContractTest {
             val response = when (route) {
                 "GET /api/v1/profiles" -> """[{"id":"1","displayName":"Cliente","role":"CLIENT"}]"""
                 "POST /api/v1/profiles" -> """{"id":"3","displayName":"Cliente nuevo","role":"CLIENT"}"""
-                "GET /api/v1/appointments?profileId=1" -> "[$appointment]"
-                "GET /api/v1/appointments/7", "POST /api/v1/appointments" -> appointment
-                "PUT /api/v1/appointments/7" -> appointment.replace("PENDING", "CONFIRMED")
+                "GET /api/v1/appointments?profileId=1" -> "[$EXISTING_APPOINTMENT]"
+                "GET /api/v1/appointments/7", "POST /api/v1/appointments" -> EXISTING_APPOINTMENT
+                "PUT /api/v1/appointments/7" -> EXISTING_APPOINTMENT.replace("PENDING", "CONFIRMED")
                 else -> null
             }
             val payload = response.orEmpty().toByteArray(Charsets.UTF_8)
@@ -74,7 +78,7 @@ class MockApiContractTest {
                 assertEquals("3", profile.id)
                 assertEquals("Cliente nuevo", profile.displayName)
                 assertEquals("CLIENT", profile.role)
-                assertEquals("7", api.getAppointments("1").single().id)
+                assertEquals("7", api.listAppointments("1").single().id)
                 val created = api.createAppointment(MockAppointmentCreateDto(
                     profileId = "1",
                     serviceType = "Revisión general",
@@ -112,5 +116,155 @@ class MockApiContractTest {
         } finally {
             server.stop(0)
         }
+    }
+
+    @Test
+    fun firstAppointmentCanBeCreatedAfterFilteredNotFoundAndReloadedWithoutAnotherPost() {
+        val routes = ConcurrentLinkedQueue<String>()
+        val savedAppointment = AtomicReference<String>()
+        withAppointmentEndpoint(
+            respond = { route, body ->
+                routes.add(route)
+                when (route) {
+                    "GET /api/v1/appointments?profileId=3" -> savedAppointment.get()?.let { 200 to "[$it]" }
+                        ?: (404 to "\"Not found\"")
+                    "GET /api/v1/appointments?limit=1&page=1" -> 200 to "[$EXISTING_APPOINTMENT]"
+                    "POST /api/v1/appointments" -> {
+                        val appointment = JsonParser.parseString(body).asJsonObject
+                        appointment.addProperty("id", "8")
+                        val record = appointment.toString()
+                        savedAppointment.set(record)
+                        201 to record
+                    }
+                    else -> 500 to "\"Unexpected route\""
+                }
+            }
+        ) { newApi ->
+            val api = newApi()
+            assertTrue(api.listAppointments("3").isEmpty())
+            val created = api.createAppointment(MockAppointmentCreateDto(
+                profileId = "3",
+                serviceType = "Revisión general",
+                vehicleBrand = "Vehículo",
+                vehicleModel = "registrado",
+                vehicleYear = 0,
+                scheduledAtMillis = 1_800_000_000_000,
+                status = "PENDING",
+                createdAtMillis = 1_790_000_000_000,
+                updatedAtMillis = 1_790_000_000_000
+            ))
+            assertEquals("8", created.id)
+            assertEquals("3", created.profileId)
+            assertEquals("PENDING", created.status)
+
+            val reopened = newApi().listAppointments("3").single()
+            assertEquals(created, reopened)
+        }
+        assertEquals(listOf(
+            "GET /api/v1/appointments?profileId=3",
+            "GET /api/v1/appointments?limit=1&page=1",
+            "POST /api/v1/appointments",
+            "GET /api/v1/appointments?profileId=3"
+        ), routes.toList())
+    }
+
+    @Test
+    fun missingAppointmentCollectionRemainsAnError() {
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(
+            respond = { route, _ ->
+                routes.add(route)
+                404 to "\"Not found\""
+            }
+        ) { newApi ->
+            val error = runCatching { newApi().listAppointments("3") }.exceptionOrNull()
+            assertEquals(404, (error as? HttpException)?.code())
+        }
+        assertEquals(listOf(
+            "GET /api/v1/appointments?profileId=3",
+            "GET /api/v1/appointments?limit=1&page=1"
+        ), routes.toList())
+    }
+
+    @Test
+    fun aSuccessfulProbeWithNonArrayJsonDoesNotHideMisconfiguration() {
+        withAppointmentEndpoint(
+            respond = { route, _ ->
+                if (route == "GET /api/v1/appointments?limit=1&page=1") {
+                    200 to """{"message":"Not an appointment collection"}"""
+                } else {
+                    404 to "\"Not found\""
+                }
+            }
+        ) { newApi ->
+            assertTrue(runCatching { newApi().listAppointments("3") }.isFailure)
+        }
+    }
+
+    @Test
+    fun malformedAndConflictingAppointmentsDoNotHideValidRows() {
+        val routes = ConcurrentLinkedQueue<String>()
+        val conflicting = EXISTING_APPOINTMENT.replace("\"id\":\"7\"", "\"id\":\"6\"")
+        val otherVersion = conflicting.replace("PENDING", "CONFIRMED")
+        withAppointmentEndpoint(
+            respond = { route, _ ->
+                routes.add(route)
+                200 to """[
+                    null,
+                    {"id":"2","profileId":"1","scheduledAtMillis":"incorrecta"},
+                    $conflicting,
+                    $otherVersion,
+                    $EXISTING_APPOINTMENT,
+                    $EXISTING_APPOINTMENT
+                ]""".trimIndent()
+            }
+        ) { newApi ->
+            assertEquals("7", newApi().listAppointments("1").single().id)
+        }
+        assertEquals(listOf("GET /api/v1/appointments?profileId=1"), routes.toList())
+    }
+
+    @Test
+    fun onlyKnownHttpRejectionsReplaceTheAmbiguousCreationMessage() {
+        val fallback = "No se pudo confirmar el envío."
+        for (status in listOf(400, 404, 422, 429)) {
+            assertNotEquals(fallback, mockAppointmentFailureMessage(status, fallback))
+        }
+        for (status in listOf(408, 500, 502, 503)) {
+            assertEquals(fallback, mockAppointmentFailureMessage(status, fallback))
+        }
+    }
+
+    private fun withAppointmentEndpoint(
+        respond: (route: String, body: String) -> Pair<Int, String>,
+        assertions: suspend (() -> MockApiService) -> Unit
+    ) {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/api/v1/appointments") { exchange ->
+            val route = "${exchange.requestMethod} ${exchange.requestURI}"
+            val body = exchange.requestBody.bufferedReader().use { it.readText() }
+            val (status, response) = respond(route, body)
+            val payload = response.toByteArray(Charsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json")
+            exchange.sendResponseHeaders(status, payload.size.toLong())
+            exchange.responseBody.use { it.write(payload) }
+        }
+        server.start()
+        try {
+            val newApi = {
+                Retrofit.Builder()
+                    .baseUrl("http://127.0.0.1:${server.address.port}/api/v1/")
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(MockApiService::class.java)
+            }
+            runBlocking { assertions(newApi) }
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    private companion object {
+        const val EXISTING_APPOINTMENT = """{"id":"7","profileId":"1","serviceType":"Revisión general","vehicleBrand":"Demo","vehicleModel":"Modelo","vehicleYear":2023,"scheduledAtMillis":1800000000000,"status":"PENDING","createdAtMillis":1790000000000,"updatedAtMillis":1790000000000}"""
     }
 }
