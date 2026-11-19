@@ -97,19 +97,34 @@ class AppointmentViewModel(
         execute(account) { repository.createAppointment(user, vehicle, scheduledAtMillis, serviceType) }
     }
 
-    fun acceptAppointment(appointmentId: Long) = executeAsWorkshop { user ->
+    fun acceptAppointment(appointmentId: Long) = executeAppointmentChange(workshopOnly = true) { user ->
         repository.acceptAppointment(user, appointmentId)
     }
 
-    fun rejectAppointment(appointmentId: Long) = executeAsWorkshop { user ->
+    fun rejectAppointment(appointmentId: Long) = executeAppointmentChange(workshopOnly = true) { user ->
         repository.rejectAppointment(user, appointmentId)
     }
 
-    private fun executeAsWorkshop(request: suspend (UserEntity) -> AppointmentOperationResult) {
+    fun cancelAppointment(appointmentId: Long) = executeAppointmentChange { user ->
+        repository.cancelAppointment(user, appointmentId)
+    }
+
+    fun rescheduleAppointment(appointmentId: Long, scheduledAtMillis: Long) = executeAppointmentChange { user ->
+        repository.rescheduleAppointment(user, appointmentId, scheduledAtMillis)
+    }
+
+    private fun executeAppointmentChange(
+        workshopOnly: Boolean = false,
+        request: suspend (UserEntity) -> AppointmentOperationResult
+    ) {
         val user = sessionManager.currentUser.value
         val account = repository.accountFor(user)
-        if (user == null || account == null || account.role != UserRole.WORKSHOP) {
-            showMessage(account, "Selecciona un perfil de dueño en línea para administrar las citas.", isError = true)
+        if (user == null || account == null) {
+            showMessage(account, "Entra con tu perfil para gestionar las citas.", isError = true)
+            return
+        }
+        if (workshopOnly && account.role != UserRole.WORKSHOP) {
+            showMessage(account, "Entra como dueño para revisar las solicitudes de cita.", isError = true)
             return
         }
         execute(account) { request(user) }

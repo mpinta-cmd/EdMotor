@@ -1,7 +1,6 @@
 package com.example.edmotor.data.remote
 
 import com.example.edmotor.model.AppointmentStatus
-import com.example.edmotor.model.APPOINTMENT_DURATION_MILLIS
 import com.example.edmotor.model.isValidAppointmentStart
 import com.google.gson.Gson
 import com.google.gson.JsonArray
@@ -77,7 +76,11 @@ data class MockAppointmentCreateDto(
     val updatedAtMillis: Long
 )
 
-data class MockAppointmentStatusDto(val status: String, val updatedAtMillis: Long)
+data class MockAppointmentStatusDto(
+    val status: String?,
+    val updatedAtMillis: Long,
+    val scheduledAtMillis: Long? = null
+)
 
 internal suspend fun MockApiService.listAppointments(profileId: String? = null): List<MockAppointmentDto> {
     val rows = try {
@@ -119,43 +122,15 @@ internal suspend fun MockApiService.submitAppointment(request: MockAppointmentCr
         readBack = { findSubmittedAppointment(request) }
     )
 
-internal suspend fun MockApiService.hasConfirmedOverlap(target: MockAppointmentDto): Boolean {
-    var targetFound = false
-    var overlaps = false
-    val start = target.scheduledAtMillis
-    check(isValidAppointmentStart(start))
-
-    for (element in getAppointments()) {
-        if (!element.isJsonObject) continue
-        val row = element.asJsonObject
-        val id = row.get("id").stringValue()
-        val status = row.get("status").stringValue()
-        val scheduledAt = row.get("scheduledAtMillis").stringValue()?.toLongOrNull()
-
-        if (id == target.id) {
-            check(!targetFound && status == AppointmentStatus.PENDING && scheduledAt == start &&
-                row.get("profileId").stringValue() == target.profileId)
-            targetFound = true
-        }
-        if (status == AppointmentStatus.CONFIRMED) {
-            check(scheduledAt != null && isValidAppointmentStart(scheduledAt))
-            overlaps = overlaps ||
-                (scheduledAt < start + APPOINTMENT_DURATION_MILLIS && scheduledAt > start - APPOINTMENT_DURATION_MILLIS)
-        }
-    }
-    check(targetFound)
-    return overlaps
-}
-
 internal suspend fun MockApiService.submitAppointmentStatus(
     target: MockAppointmentDto,
     request: MockAppointmentStatusDto
 ) {
     reconcileMockAppointmentWrite(
         write = {
-            updateAppointment(target.id, request).also { check(it.matchesReview(target, request.status)) }
+            updateAppointment(target.id, request).also { check(it.matchesUpdate(target, request)) }
         },
-        readBack = { getAppointment(target.id).takeIf { it.matchesReview(target, request.status) } }
+        readBack = { getAppointment(target.id).takeIf { it.matchesUpdate(target, request) } }
     )
 }
 
@@ -187,16 +162,16 @@ private fun MockAppointmentDto.matchesSubmission(request: MockAppointmentCreateD
         scheduledAtMillis == request.scheduledAtMillis && createdAtMillis == request.createdAtMillis &&
         serviceType == request.serviceType && status in appointmentStatuses
 
-private fun MockAppointmentDto.matchesReview(target: MockAppointmentDto, requestedStatus: String): Boolean =
-    id == target.id && profileId == target.profileId && scheduledAtMillis == target.scheduledAtMillis &&
-        createdAtMillis == target.createdAtMillis && status == requestedStatus
-
-private fun JsonElement?.stringValue(): String? =
-    this?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { if (it.isString || it.isNumber) it.asString else null }
+private fun MockAppointmentDto.matchesUpdate(target: MockAppointmentDto, request: MockAppointmentStatusDto): Boolean =
+    id == target.id && profileId == target.profileId && createdAtMillis == target.createdAtMillis &&
+        scheduledAtMillis == (request.scheduledAtMillis ?: target.scheduledAtMillis) &&
+        status == (request.status ?: target.status)
 
 private val appointmentJson = Gson()
 private val appointmentProfileId = Regex("[A-Za-z0-9_-]{1,64}")
-private val appointmentStatuses = setOf(AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.REJECTED)
+private val appointmentStatuses = setOf(
+    AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.REJECTED, AppointmentStatus.CANCELLED
+)
 
 private fun JsonElement.toMockAppointment(): MockAppointmentDto? {
     if (!isJsonObject) return null

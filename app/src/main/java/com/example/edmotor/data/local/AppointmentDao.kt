@@ -29,22 +29,20 @@ abstract class AppointmentDao {
 
     @Query(
         """
-        SELECT EXISTS (
-            SELECT 1 FROM appointments
-            WHERE status = 'CONFIRMED' AND scheduledAtMillis > :earliestStart AND scheduledAtMillis < :latestStart
-        )
-        """
-    )
-    abstract suspend fun hasConfirmedOverlap(earliestStart: Long, latestStart: Long): Boolean
-
-    @Query(
-        """
         UPDATE appointments
-        SET status = :status, updatedAtMillis = :updatedAtMillis
-        WHERE id = :appointmentId AND status = 'PENDING'
+        SET status = :status,
+            scheduledAtMillis = COALESCE(:scheduledAtMillis, scheduledAtMillis),
+            updatedAtMillis = :updatedAtMillis
+        WHERE id = :appointmentId AND status = :previousStatus
         """
     )
-    abstract suspend fun updatePendingLocalAppointment(appointmentId: Long, status: String, updatedAtMillis: Long): Int
+    abstract suspend fun updateLocalAppointment(
+        appointmentId: Long,
+        previousStatus: String,
+        status: String,
+        scheduledAtMillis: Long?,
+        updatedAtMillis: Long
+    ): Int
 
     @Query(
         """

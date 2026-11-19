@@ -5,10 +5,10 @@ EdMotor Automotriz es una aplicación Android para consultar repuestos, administ
 ## Funciones
 
 - **Acceso.** El dueño y los clientes entran con usuario y contraseña desde la misma pantalla. Los clientes crean su cuenta con su nombre para mostrar y sus credenciales.
-- **Inicio.** Catálogo de repuestos con búsqueda, categorías, favoritos y detalle de producto.
-- **Carrito.** Guarda pedidos en el dispositivo. El dueño puede confirmarlos y descontar existencias desde la misma instalación.
-- **Mi Garaje.** Permite registrar vehículos y consultar su historial de mantenimiento. El dueño puede consultar clientes y vehículos, registrar mantenimientos y gestionar pedidos.
-- **Servicios y Citas.** Permiten explorar servicios y solicitar una cita. El dueño puede confirmar o rechazar solicitudes.
+- **Inicio.** Catálogo de repuestos con búsqueda, categorías, favoritos y detalle de producto. Las promociones aparecen primero y cada grupo se ordena alfabéticamente.
+- **Inventario.** Al registrar un repuesto, el dueño puede elegir una foto del dispositivo o escoger una imagen de la biblioteca.
+- **Mi Garaje.** El cliente registra sus vehículos y consulta su historial. En el perfil del dueño, **Clientes** abre el historial desde cada vehículo y **Compras** permite aceptar o rechazar pedidos guardados en la misma instalación. Aceptar un pedido descuenta las existencias.
+- **Citas.** El cliente solicita citas y ambos perfiles pueden consultar la agenda, cancelar o reagendar. El dueño puede ajustar la hora de una solicitud y aceptar citas con horarios que se cruzan. Si el cliente cambia una cita confirmada, vuelve a pendientes para revisión.
 
 ## Datos
 

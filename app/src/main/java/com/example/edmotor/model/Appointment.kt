@@ -4,6 +4,9 @@ object AppointmentStatus {
     const val PENDING = "PENDING"
     const val CONFIRMED = "CONFIRMED"
     const val REJECTED = "REJECTED"
+    const val CANCELLED = "CANCELLED"
+
+    fun isActive(status: String): Boolean = status == PENDING || status == CONFIRMED
 }
 
 enum class AppointmentSyncState { NOT_CONFIGURED, LOADING, UP_TO_DATE, UNAVAILABLE }

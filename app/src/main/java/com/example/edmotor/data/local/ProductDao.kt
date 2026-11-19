@@ -8,6 +8,11 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
+private const val VALID_PROMOTION =
+    "isOnPromotion = 1 AND promotionPriceCop > 0 AND promotionPriceCop < priceCop"
+private const val CATALOG_ORDER =
+    "CASE WHEN $VALID_PROMOTION THEN 0 ELSE 1 END, name COLLATE NOCASE ASC, id ASC"
+
 @Dao
 interface ProductDao {
 
@@ -18,14 +23,14 @@ interface ProductDao {
     @Query("""
         SELECT * FROM products
         WHERE isActive = 1
-        ORDER BY name COLLATE NOCASE ASC
+        ORDER BY $CATALOG_ORDER
     """)
     fun observeActiveProducts(): Flow<List<ProductEntity>>
 
     @Query("""
         SELECT * FROM products
         WHERE isActive = 1
-        ORDER BY name COLLATE NOCASE ASC
+        ORDER BY $CATALOG_ORDER
     """)
     fun observeAllProducts(): Flow<List<ProductEntity>>
 
@@ -75,7 +80,7 @@ interface ProductDao {
             OR description LIKE '%' || :query || '%'
             OR category LIKE '%' || :query || '%'
         )
-        ORDER BY name COLLATE NOCASE ASC
+        ORDER BY $CATALOG_ORDER
     """)
     fun searchProducts(
         query: String
@@ -89,7 +94,7 @@ interface ProductDao {
         SELECT * FROM products
         WHERE isActive = 1
         AND category = :category
-        ORDER BY name COLLATE NOCASE ASC
+        ORDER BY $CATALOG_ORDER
     """)
     fun observeByCategory(
         category: String
@@ -114,11 +119,8 @@ interface ProductDao {
     @Query("""
         SELECT * FROM products
         WHERE isActive = 1
-        AND isOnPromotion = 1
-        AND promotionPriceCop IS NOT NULL
-        AND promotionPriceCop > 0
-        AND promotionPriceCop < priceCop
-        ORDER BY name COLLATE NOCASE ASC
+        AND ($VALID_PROMOTION)
+        ORDER BY name COLLATE NOCASE ASC, id ASC
     """)
     fun observePromotionalProducts(): Flow<List<ProductEntity>>
 
@@ -130,7 +132,7 @@ interface ProductDao {
         SELECT * FROM products
         WHERE isActive = 1
         AND stock <= 0
-        ORDER BY name COLLATE NOCASE ASC
+        ORDER BY $CATALOG_ORDER
     """)
     fun observeOutOfStockProducts(): Flow<List<ProductEntity>>
 

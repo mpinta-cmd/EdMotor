@@ -56,11 +56,11 @@ Sincroniza Gradle y ejecuta **EdMotor Automotriz**. Como alternativa, puedes com
 
 ## Ver cómo cambia el JSON
 
-1. En **EdMotor Tecnológica**, toca **Crear cuenta de cliente** y completa tu nombre para mostrar, nombre de usuario y contraseña. Con MockAPI configurado, encontrarás un alias generado para la nueva cuenta en el JSON de `profiles` con rol `CLIENT`. El nombre y las credenciales de la cuenta se guardan en el teléfono.
+1. En **EdMotor Automotriz**, toca **Crear cuenta de cliente** y completa tu nombre para mostrar, nombre de usuario y contraseña. Con MockAPI configurado, encontrarás un alias generado para la nueva cuenta en el JSON de `profiles` con rol `CLIENT`. El nombre y las credenciales de la cuenta se guardan en el teléfono.
 2. Registra un vehículo ficticio en **Mi Garaje**. Abre **Citas**, selecciona ese vehículo y solicita una revisión futura. La app escribe el registro en `appointments` con estado `PENDING`.
 3. En el navegador, abre tu URL base seguida de `appointments`. Encontrarás la cita en JSON junto a su `id` y `profileId`.
-4. Cierra sesión en **Mi Garaje**, entra con el usuario **EdMotor** y la contraseña que configuraste, y confirma la cita. Recarga el endpoint. Verás que la misma cita tiene `status: "CONFIRMED"`.
-5. Cierra la app sin cerrar sesión y vuelve a abrirla. Se abrirá el inicio del mismo perfil. Puedes repetir el proceso con un cliente para comprobar ambos accesos.
+4. Cierra sesión en **Mi Garaje**, entra como **EdMotor** y abre **Citas**. Ajusta la fecha y hora de la solicitud si hace falta y confírmala. En el mismo registro del JSON verás `scheduledAtMillis` con el horario y `status` con el valor `CONFIRMED`.
+5. Abre **Ver citas agendadas** desde cualquiera de los perfiles. Reagendar modifica la fecha y hora del registro. Si lo hace el cliente, la cita vuelve a `PENDING`. Cancelar guarda el estado `CANCELLED` en el mismo registro.
 
 Los pedidos nuevos y el inventario se comprueban desde **App Inspection → Database Inspector → edmotor_database**. Las citas guardan una copia local tras una lectura correcta. La creación y los cambios de estado se envían a MockAPI con conexión.
 

@@ -1,14 +1,11 @@
 package com.example.edmotor.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -31,9 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
-import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.Vehicle
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -46,12 +44,18 @@ fun WorkshopGarageScreen(
     vehicles: List<Vehicle>,
     clients: List<UserEntity>,
     orders: List<OrderWithItems>,
+    isProcessing: Boolean,
+    message: String?,
+    isError: Boolean,
     onVehicleClick: (Int) -> Unit,
-    onOpenOrders: () -> Unit,
-    onLogout: () -> Unit
+    onConfirm: (Int) -> Unit,
+    onReject: (Int) -> Unit,
+    onLogout: () -> Unit,
+    showPurchasesInitially: Boolean = false
 ) {
-    var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var selectedTab by rememberSaveable { mutableStateOf(if (showPurchasesInitially) 1 else 0) }
     var expandedClientId by rememberSaveable { mutableStateOf<Int?>(null) }
+    val showingClients = selectedTab == 0
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -68,29 +72,15 @@ fun WorkshopGarageScreen(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text("Mi garaje", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-                Text(
-                    "Consulta clientes, vehículos y el historial de compras.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
             OutlinedButton(onClick = onLogout, shape = RoundedCornerShape(12.dp)) {
                 Text("Cerrar sesión")
             }
         }
 
-        Button(
-            onClick = onOpenOrders,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Text("Administrar pedidos y confirmar ventas", fontWeight = FontWeight.Bold)
-        }
-
-        TabRow(selectedTabIndex = selectedTab) {
-            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Clientes (${clients.size})") })
-            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Vehículos (${vehicles.size})") })
-            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text("Compras (${orders.size})") })
+        TabRow(selectedTabIndex = if (showingClients) 0 else 1) {
+            Tab(selected = showingClients, onClick = { selectedTab = 0 }, text = { Text("Clientes (${clients.size})") })
+            Tab(selected = !showingClients, onClick = { selectedTab = 1 }, text = { Text("Compras (${orders.size})") })
         }
 
         when (selectedTab) {
@@ -142,7 +132,7 @@ fun WorkshopGarageScreen(
                                         } else {
                                             clientVehicles.forEach { vehicle ->
                                                 Card(
-                                                    modifier = Modifier.fillMaxWidth().clickable { onVehicleClick(vehicle.id) },
+                                                    modifier = Modifier.fillMaxWidth(),
                                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                                                     shape = RoundedCornerShape(13.dp)
                                                 ) {
@@ -152,7 +142,9 @@ fun WorkshopGarageScreen(
                                                             "${vehicle.year} · ${vehicle.plate.ifBlank { "Sin placa" }} · ${vehicle.mileage.ifBlank { "Sin kilometraje" }}",
                                                             style = MaterialTheme.typography.bodySmall
                                                         )
-                                                        Text("Abrir historial de mantenimiento", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                                        OutlinedButton(onClick = { onVehicleClick(vehicle.id) }) {
+                                                            Text("Abrir historial de mantenimiento")
+                                                        }
                                                     }
                                                 }
                                             }
@@ -179,50 +171,22 @@ fun WorkshopGarageScreen(
                 }
             }
 
-            1 -> {
-                if (vehicles.isEmpty()) {
-                    EmptyWorkshopMessage(
-                        "Todavía no hay vehículos registrados",
-                        "Los vehículos que registren los clientes aparecerán aquí."
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(vehicles, key = { "vehicle_${it.id}" }) { vehicle ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth().clickable { onVehicleClick(vehicle.id) },
-                                shape = RoundedCornerShape(20.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(1.dp)
-                            ) {
-                                Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                    Text("${vehicle.brand} ${vehicle.model}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                    Text("${vehicle.year} · ${vehicle.engine.ifBlank { "Motor sin registrar" }}")
-                                    Text("Placa: ${vehicle.plate.ifBlank { "No registrada" }}")
-                                    Text("Kilometraje: ${vehicle.mileage.ifBlank { "No registrado" }}")
-                                    Text(
-                                        "Cliente: ${vehicle.ownerName ?: "Sin propietario asignado"}",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Button(onClick = { onVehicleClick(vehicle.id) }, modifier = Modifier.fillMaxWidth()) {
-                                        Text("Abrir historial de mantenimiento")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             else -> {
+                if (isProcessing) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                if (message != null) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 if (orders.isEmpty()) {
                     EmptyWorkshopMessage(
                         "Todavía no hay compras registradas",
-                    "Aquí aparecen los pedidos guardados en este dispositivo."
+                        "Aquí aparecen los pedidos que envíen tus clientes."
                     )
                 } else {
                     LazyColumn(
@@ -231,7 +195,24 @@ fun WorkshopGarageScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(orders, key = { it.order.id }) { order ->
-                            WorkshopOrderCard(order = order, showClient = true)
+                            WorkshopOrderCard(order = order, showClient = true) {
+                                if (order.order.status == OrderStatus.PENDING) {
+                                    Button(
+                                        onClick = { onConfirm(order.order.id) },
+                                        enabled = !isProcessing,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Aceptar pedido")
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onReject(order.order.id) },
+                                        enabled = !isProcessing,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Rechazar pedido")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -243,7 +224,8 @@ fun WorkshopGarageScreen(
 @Composable
 private fun WorkshopOrderCard(
     order: OrderWithItems,
-    showClient: Boolean
+    showClient: Boolean,
+    actions: @Composable () -> Unit = {}
 ) {
     val currency = NumberFormat.getNumberInstance(Locale("es", "CO"))
     val dateFormat = SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO"))
@@ -304,6 +286,7 @@ private fun WorkshopOrderCard(
                     fontWeight = FontWeight.ExtraBold
                 )
             }
+            actions()
         }
     }
 }

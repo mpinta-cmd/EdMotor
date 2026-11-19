@@ -31,7 +31,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class LocalAppointmentsTest {
     @Test
-    fun profilesOnlySeeTheirAppointmentsAndOverlappingConfirmationsAreSerialized() = runBlocking {
+    fun profilesManageTheirAppointmentsAndTheWorkshopCanConfirmOverlappingTimes() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, EdMotorDatabase::class.java).build()
         val sessionFile = File.createTempFile("local-appointments-", ".preferences_pb", context.cacheDir)
@@ -44,7 +44,8 @@ class LocalAppointmentsTest {
 
         try {
             val session = SessionManager(dataStore)
-            val repository = AppointmentRepository(database.appointmentDao(), null, session, database)
+            val dao = database.appointmentDao()
+            val repository = AppointmentRepository(dao, null, session, database)
             val client = insertProfile(database, "clienta", "local-account:39b2f81e-a715-48d9-a739-265dc200a0db", UserRole.CLIENT)
             val other = insertProfile(database, "clientb", "local-account:aa3d8659-7763-4f4b-8675-31e9082db250", UserRole.CLIENT)
             val workshop = insertProfile(database, "owner", "local-account:owner", UserRole.WORKSHOP)
@@ -68,20 +69,54 @@ class LocalAppointmentsTest {
             val second = withTimeout(5_000L) { repository.observeAppointments(otherAccount).first().appointments.single() }
             assertEquals("Modelo B", second.vehicleModel)
             assertTrue(withTimeout(5_000L) { repository.observeAppointments(clientAccount).first().appointments.isEmpty() })
+            assertTrue(repository.cancelAppointment(other, first.id) is AppointmentOperationResult.Error)
+            assertTrue(repository.rescheduleAppointment(other, first.id, start + 60 * 60_000L) is AppointmentOperationResult.Error)
 
             session.selectProfile(workshop)
             val workshopAccount = requireNotNull(repository.accountFor(workshop))
             val agenda = withTimeout(5_000L) { repository.observeAppointments(workshopAccount).first().appointments }
             assertEquals(listOf(first.id, second.id), agenda.map { it.id })
+            assertTrue(repository.rescheduleAppointment(workshop, first.id, second.scheduledAtMillis) is AppointmentOperationResult.Success)
+            val adjustedRequest = requireNotNull(dao.findLocalAppointment(first.id))
+            assertEquals(second.scheduledAtMillis, adjustedRequest.scheduledAtMillis)
+            assertEquals(AppointmentStatus.PENDING, adjustedRequest.status)
+
             val approvals = awaitAll(
                 async { repository.acceptAppointment(workshop, first.id) },
                 async { repository.acceptAppointment(workshop, second.id) }
             )
-            assertEquals(1, approvals.count { it is AppointmentOperationResult.Success })
+            assertTrue(approvals.all { it is AppointmentOperationResult.Success })
             val current = withTimeout(5_000L) { repository.observeAppointments(workshopAccount).first().appointments }
-            assertEquals(1, current.count { it.status == AppointmentStatus.CONFIRMED })
-            val pending = current.single { it.status == AppointmentStatus.PENDING }
+            assertEquals(2, current.count { it.status == AppointmentStatus.CONFIRMED })
+            assertTrue(current.all { it.scheduledAtMillis == second.scheduledAtMillis })
+
+            val workshopStart = start + 60 * 60_000L
+            assertTrue(repository.rescheduleAppointment(workshop, second.id, workshopStart) is AppointmentOperationResult.Success)
+            val updatedBooking = requireNotNull(dao.findLocalAppointment(second.id))
+            assertEquals(AppointmentStatus.CONFIRMED, updatedBooking.status)
+            assertEquals(workshopStart, updatedBooking.scheduledAtMillis)
+
+            session.selectProfile(client)
+            val soon = System.currentTimeMillis() + 5 * 60_000L
+            assertTrue(repository.rescheduleAppointment(client, first.id, soon) is AppointmentOperationResult.Error)
+            val clientStart = start + 90 * 60_000L
+            assertTrue(repository.rescheduleAppointment(client, first.id, clientStart) is AppointmentOperationResult.Success)
+            val rescheduled = withTimeout(5_000L) { repository.observeAppointments(clientAccount).first().appointments.single() }
+            assertEquals(AppointmentStatus.PENDING, rescheduled.status)
+            assertEquals(clientStart, rescheduled.scheduledAtMillis)
+            assertEquals(first.createdAtMillis, rescheduled.createdAtMillis)
+            assertTrue(repository.cancelAppointment(client, first.id) is AppointmentOperationResult.Success)
+            assertEquals(AppointmentStatus.CANCELLED, dao.findLocalAppointment(first.id)?.status)
+            assertTrue(repository.rescheduleAppointment(client, first.id, workshopStart) is AppointmentOperationResult.Error)
+
+            assertTrue(repository.createAppointment(client, firstVehicle, workshopStart, service) is AppointmentOperationResult.Success)
+            session.selectProfile(workshop)
+            assertTrue(repository.cancelAppointment(workshop, second.id) is AppointmentOperationResult.Success)
+            assertEquals(AppointmentStatus.CANCELLED, dao.findLocalAppointment(second.id)?.status)
+            val updatedAgenda = withTimeout(5_000L) { repository.observeAppointments(workshopAccount).first().appointments }
+            val pending = updatedAgenda.single { it.status == AppointmentStatus.PENDING }
             assertTrue(repository.rejectAppointment(workshop, pending.id) is AppointmentOperationResult.Success)
+            assertEquals(AppointmentStatus.REJECTED, dao.findLocalAppointment(pending.id)?.status)
             assertTrue(repository.acceptAppointment(workshop, pending.id) is AppointmentOperationResult.Error)
         } finally {
             storeJob.cancelAndJoin()

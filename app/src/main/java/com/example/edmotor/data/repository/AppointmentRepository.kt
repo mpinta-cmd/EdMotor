@@ -11,14 +11,12 @@ import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
 import com.example.edmotor.data.remote.findSubmittedAppointment
-import com.example.edmotor.data.remote.hasConfirmedOverlap
 import com.example.edmotor.data.remote.isDefinitiveMockAppointmentFailure
 import com.example.edmotor.data.remote.listAppointments
 import com.example.edmotor.data.remote.mockAppointmentFailureMessage
 import com.example.edmotor.data.remote.mockAppointmentId
 import com.example.edmotor.data.remote.submitAppointment
 import com.example.edmotor.data.remote.submitAppointmentStatus
-import com.example.edmotor.model.APPOINTMENT_DURATION_MILLIS
 import com.example.edmotor.model.APPOINTMENT_MINIMUM_NOTICE_MILLIS
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentOperationResult
@@ -260,80 +258,134 @@ class AppointmentRepository(
     }
 
     suspend fun acceptAppointment(workshop: UserEntity, appointmentId: Long): AppointmentOperationResult =
-        reviewAppointment(workshop, appointmentId, AppointmentStatus.CONFIRMED)
+        changeAppointment(workshop, appointmentId, AppointmentAction.CONFIRM)
 
     suspend fun rejectAppointment(workshop: UserEntity, appointmentId: Long): AppointmentOperationResult =
-        reviewAppointment(workshop, appointmentId, AppointmentStatus.REJECTED)
+        changeAppointment(workshop, appointmentId, AppointmentAction.REJECT)
 
-    private suspend fun reviewAppointment(
-        workshop: UserEntity,
+    suspend fun cancelAppointment(user: UserEntity, appointmentId: Long): AppointmentOperationResult =
+        changeAppointment(user, appointmentId, AppointmentAction.CANCEL)
+
+    suspend fun rescheduleAppointment(
+        user: UserEntity,
         appointmentId: Long,
-        newStatus: String
+        scheduledAtMillis: Long
+    ): AppointmentOperationResult =
+        changeAppointment(user, appointmentId, AppointmentAction.RESCHEDULE, scheduledAtMillis)
+
+    private suspend fun changeAppointment(
+        user: UserEntity,
+        appointmentId: Long,
+        action: AppointmentAction,
+        newStart: Long? = null
     ): AppointmentOperationResult {
-        val account = accountFor(workshop)
-        if (account == null || account.role != UserRole.WORKSHOP) {
-            val message = if (localDatabase != null) "Entra como dueño para administrar las citas."
-            else "Selecciona un perfil de dueño en línea para administrar las citas."
-            return AppointmentOperationResult.Error(message)
+        val account = accountFor(user)
+            ?: return AppointmentOperationResult.Error("Entra con tu perfil para gestionar las citas.")
+        if (action.workshopOnly && account.role != UserRole.WORKSHOP) {
+            return AppointmentOperationResult.Error("Entra como dueño para revisar las solicitudes de cita.")
         }
         if (appointmentId <= 0L) return AppointmentOperationResult.Error("La cita no es válida.")
 
+        val unavailable = AppointmentOperationResult.Error("La cita no está disponible para este perfil.")
         localDatabase?.let { database ->
-            return performLocalOperation(database, account) {
-                val target = appointmentDao.findLocalAppointment(appointmentId)
-                if (target == null || target.status != AppointmentStatus.PENDING) {
-                    return@performLocalOperation AppointmentOperationResult.Error("La solicitud ya no está pendiente.")
+            return performLocalOperation(database, account) { localUser ->
+                val target = appointmentDao.findLocalAppointment(appointmentId) ?: return@performLocalOperation unavailable
+                if (account.role == UserRole.CLIENT &&
+                    (target.clientLocalUserId != localUser.id || target.clientAuthId != account.profileKey)
+                ) {
+                    return@performLocalOperation unavailable
                 }
-                val now = System.currentTimeMillis()
-                if (newStatus == AppointmentStatus.CONFIRMED) {
-                    val start = target.scheduledAtMillis
-                    if (!isValidAppointmentStart(start) || start <= now) {
-                        return@performLocalOperation AppointmentOperationResult.Error("La hora de esta solicitud ya pasó o es inválida.")
-                    }
-                    if (appointmentDao.hasConfirmedOverlap(start - APPOINTMENT_DURATION_MILLIS, start + APPOINTMENT_DURATION_MILLIS)) {
-                        return@performLocalOperation AppointmentOperationResult.Error("Ese horario ya está ocupado en la agenda.")
-                    }
+                applyAppointmentChange(
+                    action, appointmentId, account.role, target.status, target.scheduledAtMillis, newStart
+                ) { status, scheduledAtMillis, now ->
+                    check(appointmentDao.updateLocalAppointment(
+                        appointmentId = appointmentId,
+                        previousStatus = target.status,
+                        status = status,
+                        scheduledAtMillis = scheduledAtMillis,
+                        updatedAtMillis = now
+                    ) == 1)
                 }
-                check(appointmentDao.updatePendingLocalAppointment(appointmentId, newStatus, now) == 1)
-                val action = if (newStatus == AppointmentStatus.CONFIRMED) "confirmada" else "rechazada"
-                AppointmentOperationResult.Success("Cita #$appointmentId $action.")
             }
         }
 
         return performRemoteOperation(
             account,
             fallback = "No fue posible comprobar el cambio. Actualiza la agenda antes de volver a intentarlo."
-        ) { connection, user ->
+        ) { connection, active ->
             val id = appointmentId.toString()
             val target = connection.service.getAppointment(id)
             check(target.id == id)
-            connection.profileKey(target.profileId)
-            val action = if (newStatus == AppointmentStatus.CONFIRMED) "confirmada" else "rechazada"
-            val success = AppointmentOperationResult.Success("Cita #$id $action.")
-            if (target.status == newStatus) return@performRemoteOperation success
-            if (target.status != AppointmentStatus.PENDING) {
-                return@performRemoteOperation AppointmentOperationResult.Error("La solicitud ya no está pendiente.")
+            val targetProfile = connection.profileKey(target.profileId)
+            if (account.role == UserRole.CLIENT && targetProfile != account.profileKey) {
+                return@performRemoteOperation unavailable
+            }
+            applyAppointmentChange(
+                action, appointmentId, account.role, target.status, target.scheduledAtMillis, newStart
+            ) { status, scheduledAtMillis, now ->
+                requireActiveAccount(account, active)
+                connection.service.submitAppointmentStatus(
+                    target,
+                    MockAppointmentStatusDto(status.takeIf { it != target.status }, now, scheduledAtMillis)
+                )
+            }
+        }
+    }
+
+    private suspend fun applyAppointmentChange(
+        action: AppointmentAction,
+        appointmentId: Long,
+        actorRole: UserRole,
+        currentStatus: String,
+        currentStart: Long,
+        newStart: Long?,
+        save: suspend (status: String, scheduledAtMillis: Long?, updatedAtMillis: Long) -> Unit
+    ): AppointmentOperationResult {
+        val now = System.currentTimeMillis()
+        val newStatus = when (action) {
+            AppointmentAction.CONFIRM, AppointmentAction.REJECT -> {
+                val reviewedStatus = if (action == AppointmentAction.CONFIRM) AppointmentStatus.CONFIRMED
+                else AppointmentStatus.REJECTED
+                if (currentStatus != reviewedStatus && currentStatus != AppointmentStatus.PENDING) {
+                    return AppointmentOperationResult.Error("La solicitud ya no está pendiente.")
+                }
+                if (action == AppointmentAction.CONFIRM && currentStatus == AppointmentStatus.PENDING &&
+                    (!isValidAppointmentStart(currentStart) || currentStart <= now)
+                ) {
+                    return AppointmentOperationResult.Error("Ajusta la cita a una hora futura antes de confirmarla.")
+                }
+                reviewedStatus
             }
 
-            if (newStatus == AppointmentStatus.CONFIRMED) {
-                val start = target.scheduledAtMillis
-                if (!isValidAppointmentStart(start) || start <= System.currentTimeMillis()) {
-                    return@performRemoteOperation AppointmentOperationResult.Error("La hora de esta solicitud ya pasó o es inválida.")
+            AppointmentAction.CANCEL -> {
+                if (currentStatus != AppointmentStatus.CANCELLED && !AppointmentStatus.isActive(currentStatus)) {
+                    return AppointmentOperationResult.Error("Esta cita ya no se puede cancelar.")
                 }
-                if (connection.service.hasConfirmedOverlap(target)) {
-                    return@performRemoteOperation AppointmentOperationResult.Error("Ese horario ya está ocupado en la agenda.")
-                }
-                if (start <= System.currentTimeMillis()) {
-                    return@performRemoteOperation AppointmentOperationResult.Error("La hora de esta solicitud ya pasó.")
-                }
+                AppointmentStatus.CANCELLED
             }
 
-            requireActiveAccount(account, user)
-            connection.service.submitAppointmentStatus(
-                target,
-                MockAppointmentStatusDto(status = newStatus, updatedAtMillis = System.currentTimeMillis())
-            )
-            success
+            AppointmentAction.RESCHEDULE -> {
+                if (!AppointmentStatus.isActive(currentStatus)) {
+                    return AppointmentOperationResult.Error("Esta cita ya no se puede reagendar.")
+                }
+                if (newStart == currentStart) {
+                    return AppointmentOperationResult.Success("La cita #$appointmentId ya tiene ese horario.")
+                }
+                if (newStart == null || !isValidAppointmentStart(newStart) || newStart <= now) {
+                    return AppointmentOperationResult.Error("Selecciona una fecha y hora futuras.")
+                }
+                if (actorRole == UserRole.CLIENT && newStart < now + APPOINTMENT_MINIMUM_NOTICE_MILLIS) {
+                    return AppointmentOperationResult.Error("Selecciona una hora con al menos 15 minutos de anticipación.")
+                }
+                if (actorRole == UserRole.CLIENT) AppointmentStatus.PENDING else currentStatus
+            }
+        }
+        if (newStatus != currentStatus || newStart != null) save(newStatus, newStart, now)
+        val confirmation = "Cita #$appointmentId ${action.resultDescription}."
+        return if (action == AppointmentAction.RESCHEDULE && actorRole == UserRole.CLIENT) {
+            AppointmentOperationResult.Success("$confirmation El taller revisará el nuevo horario.")
+        } else {
+            AppointmentOperationResult.Success(confirmation)
         }
     }
 
@@ -469,6 +521,13 @@ class AppointmentRepository(
         val scheduledAtMillis: Long,
         val serviceType: String
     )
+
+    private enum class AppointmentAction(val workshopOnly: Boolean, val resultDescription: String) {
+        CONFIRM(true, "confirmada"),
+        REJECT(true, "rechazada"),
+        CANCEL(false, "cancelada"),
+        RESCHEDULE(false, "reagendada")
+    }
 
     private companion object {
         const val POLL_INTERVAL_MS = 30_000L

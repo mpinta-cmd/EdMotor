@@ -47,7 +47,6 @@ import com.example.edmotor.ui.screens.ServicesScreen
 import com.example.edmotor.ui.screens.WorkshopGarageScreen
 import com.example.edmotor.ui.screens.ProductManagementScreen
 import com.example.edmotor.ui.screens.ProductFormScreen
-import com.example.edmotor.ui.screens.OrdersManagementScreen
 import com.example.edmotor.ui.screens.AppointmentsScreen
 
 import com.example.edmotor.viewmodel.EdMotorViewModel
@@ -446,101 +445,42 @@ fun EdMotorNavHost(
         // 5. GARAJE / PERFIL
         // =================================================
 
-        composable(Routes.PROFILE) {
-
-            if (isWorkshop) {
-
-                WorkshopGarageScreen(
-
-                    profileName = currentUserName,
-
-                    vehicles = vehicleList,
-
-                    clients = clients,
-
-                    orders = orders,
-
-                    onVehicleClick = { vehicleId ->
-
-                        navController.navigate(
-                            Routes.maintenanceHistory(vehicleId)
-                        )
-                    },
-
-                    // ACCESO A LOS PEDIDOS RECIBIDOS
-
-                    onOpenOrders = {
-
-                        navController.navigate(
-                            Routes.ORDER_MANAGEMENT
-                        ) {
-                            launchSingleTop = true
-                        }
-                    },
-
-                    onLogout = onLogout
-                )
-
-            } else {
-
-                ClientGarageScreen(
-
-                    profileName = currentUserName,
-
-                    vehicles = vehicleList,
-
-                    orders = orders,
-
-                    onAddVehicle = appViewModel::addVehicle,
-
-                    onVehicleClick = { vehicleId ->
-
-                        navController.navigate(
-                            Routes.maintenanceHistory(vehicleId)
-                        )
-                    },
-
-                    onLogout = onLogout
-                )
-            }
-        }
-
-
-        // =================================================
-        // 6. ADMINISTRACIÓN DE PEDIDOS Y VENTAS
-        // =================================================
-
-        composable(Routes.ORDER_MANAGEMENT) {
-
-            if (isWorkshop) {
-
-                OrdersManagementScreen(
-
-                    orders = orders,
-
-                    isProcessing = isProcessingOrder,
-
-                    message = orderMessage,
-
-                    isError = orderIsError,
-
-                    onConfirm = orderViewModel::confirmOrder,
-
-                    onReject = orderViewModel::rejectOrder,
-
-                    onBack = {
-                        navController.popBackStack()
-                    }
-                )
-
-            } else {
-
-                AccessDeniedScreen(
-                    message = "Solo el taller puede administrar pedidos.",
-                    onBack = {
-                        navController.popBackStack()
-                    }
-                )
+        // Conserva la ruta anterior para restaurar la navegación de una instalación existente.
+        listOf(Routes.PROFILE, Routes.ORDER_MANAGEMENT).forEach { route ->
+            composable(route) {
+                val openHistory: (Int) -> Unit = { vehicleId ->
+                    navController.navigate(Routes.maintenanceHistory(vehicleId))
+                }
+                if (isWorkshop) {
+                    WorkshopGarageScreen(
+                        profileName = currentUserName,
+                        vehicles = vehicleList,
+                        clients = clients,
+                        orders = orders,
+                        isProcessing = isProcessingOrder,
+                        message = orderMessage,
+                        isError = orderIsError,
+                        onVehicleClick = openHistory,
+                        onConfirm = orderViewModel::confirmOrder,
+                        onReject = orderViewModel::rejectOrder,
+                        onLogout = onLogout,
+                        showPurchasesInitially = route == Routes.ORDER_MANAGEMENT
+                    )
+                } else if (route == Routes.PROFILE) {
+                    ClientGarageScreen(
+                        profileName = currentUserName,
+                        vehicles = vehicleList,
+                        orders = orders,
+                        onAddVehicle = appViewModel::addVehicle,
+                        onVehicleClick = openHistory,
+                        onLogout = onLogout
+                    )
+                } else {
+                    AccessDeniedScreen(
+                        message = "Solo el taller puede administrar pedidos.",
+                        onBack = { navController.popBackStack() }
+                    )
+                }
             }
         }
 
@@ -842,6 +782,8 @@ fun EdMotorNavHost(
                 onCreateAppointment = appointmentViewModel::createAppointment,
                 onAccept = appointmentViewModel::acceptAppointment,
                 onReject = appointmentViewModel::rejectAppointment,
+                onCancel = appointmentViewModel::cancelAppointment,
+                onReschedule = appointmentViewModel::rescheduleAppointment,
                 onClearMessage = appointmentViewModel::clearMessage,
                 onRefresh = appointmentViewModel::refreshAppointments
             )
@@ -908,6 +850,7 @@ fun EdMotorNavHost(
                     product = null,
 
                     availableImages = availableImages,
+                    previousProducts = productEntities,
 
                     categories = categories,
 
@@ -1041,6 +984,7 @@ fun EdMotorNavHost(
                     product = selectedEntity,
 
                     availableImages = availableImages,
+                    previousProducts = productEntities,
 
                     categories = categories,
 

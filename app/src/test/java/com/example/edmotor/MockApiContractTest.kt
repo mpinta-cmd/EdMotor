@@ -6,7 +6,6 @@ import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
 import com.example.edmotor.data.remote.MockProfileCreateDto
 import com.example.edmotor.data.remote.createMockApiService
-import com.example.edmotor.data.remote.hasConfirmedOverlap
 import com.example.edmotor.data.remote.listAppointments
 import com.example.edmotor.data.remote.mockAppointmentFailureMessage
 import com.example.edmotor.data.remote.submitAppointment
@@ -236,24 +235,120 @@ class MockApiContractTest {
     }
 
     @Test
-    fun overlapUsesOnlySchedulingFieldsAndRejectsUnknownConfirmedTime() {
-        val agenda = AtomicReference<String>()
-        withAppointmentEndpoint(respond = { route, _ ->
+    fun reschedulingRecoversAnAppliedPutWithoutCreatingAnotherAppointment() {
+        val routes = ConcurrentLinkedQueue<String>()
+        val saved = AtomicReference(EXISTING_APPOINTMENT)
+        val updateBody = AtomicReference<String>()
+        val update = MockAppointmentStatusDto(null, 1_790_000_001_000, 1_800_003_600_000)
+        withAppointmentEndpoint(
+            headers = mapOf("Retry-After" to "0"),
+            respond = { route, body ->
+                routes.add(route)
+                when (route) {
+                    "GET /api/v1/appointments/7" -> 200 to saved.get()
+                    "PUT /api/v1/appointments/7" -> {
+                        updateBody.set(body)
+                        saved.set(applyUpdate(saved.get(), body))
+                        503 to "\"Response lost\""
+                    }
+                    "GET /api/v1/appointments?profileId=1" -> 200 to "[${saved.get()}]"
+                    else -> 500 to "\"Unexpected route\""
+                }
+            }
+        ) { newApi ->
+            val api = newApi()
+            val target = api.getAppointment("7")
+            api.submitAppointmentStatus(target, update)
+
+            assertEquals(
+                target.copy(
+                    scheduledAtMillis = requireNotNull(update.scheduledAtMillis),
+                    updatedAtMillis = update.updatedAtMillis
+                ),
+                newApi().listAppointments(target.profileId).single()
+            )
+        }
+        assertEquals(
+            setOf("scheduledAtMillis", "updatedAtMillis"),
+            JsonParser.parseString(updateBody.get()).asJsonObject.keySet()
+        )
+        assertEquals(
+            listOf(
+                "GET /api/v1/appointments/7",
+                "PUT /api/v1/appointments/7",
+                "GET /api/v1/appointments/7",
+                "GET /api/v1/appointments?profileId=1"
+            ),
+            routes.toList()
+        )
+    }
+
+    @Test
+    fun reschedulingRejectsAnUnrelatedOrStaleReadBackAfterAFailedPut() {
+        val update = MockAppointmentStatusDto("CONFIRMED", 1_790_000_001_000, 1_800_003_600_000)
+        val updated = applyUpdate(
+            EXISTING_APPOINTMENT,
+            """{"status":"CONFIRMED","updatedAtMillis":1790000001000,"scheduledAtMillis":1800003600000}"""
+        )
+        val incorrectRecords = listOf(
+            updated.replace("\"id\":\"7\"", "\"id\":\"8\""),
+            updated.replace("\"profileId\":\"1\"", "\"profileId\":\"2\""),
+            updated.replace("\"createdAtMillis\":1790000000000", "\"createdAtMillis\":1790000000001"),
+            updated.replace("CONFIRMED", "PENDING"),
+            updated.replace("1800003600000", "1800000000000")
+        )
+        for (record in incorrectRecords) {
+            val routes = ConcurrentLinkedQueue<String>()
+            withAppointmentEndpoint(
+                headers = mapOf("Retry-After" to "0"),
+                respond = { route, _ ->
+                    routes.add(route)
+                    when (route) {
+                        "GET /api/v1/appointments/7" -> {
+                            val afterWrite = routes.contains("PUT /api/v1/appointments/7")
+                            200 to if (afterWrite) record else EXISTING_APPOINTMENT
+                        }
+                        "PUT /api/v1/appointments/7" -> 503 to "\"Response lost\""
+                        else -> 500 to "\"Unexpected route\""
+                    }
+                }
+            ) { newApi ->
+                val api = newApi()
+                val target = api.getAppointment("7")
+                val failure = runCatching { api.submitAppointmentStatus(target, update) }.exceptionOrNull()
+                assertEquals(record, 503, (failure as? HttpException)?.code())
+            }
+            assertEquals(
+                listOf("GET /api/v1/appointments/7", "PUT /api/v1/appointments/7", "GET /api/v1/appointments/7"),
+                routes.toList()
+            )
+        }
+    }
+
+    @Test
+    fun cancelledAppointmentsStayVisibleInTheClientsListing() {
+        val saved = AtomicReference(EXISTING_APPOINTMENT)
+        withAppointmentEndpoint(respond = { route, body ->
             when (route) {
-                "GET /api/v1/appointments/7" -> 200 to EXISTING_APPOINTMENT
-                "GET /api/v1/appointments" -> 200 to agenda.get()
+                "GET /api/v1/appointments/7" -> 200 to saved.get()
+                "PUT /api/v1/appointments/7" -> {
+                    val cancelled = applyUpdate(saved.get(), body)
+                    saved.set(cancelled)
+                    200 to cancelled
+                }
+                "GET /api/v1/appointments?profileId=1" -> 200 to "[${saved.get()}]"
                 else -> 500 to "\"Unexpected route\""
             }
         }) { newApi ->
             val api = newApi()
             val target = api.getAppointment("7")
-            // Other vehicle fields cannot invalidate a well-defined slot.
-            agenda.set("""[$EXISTING_APPOINTMENT,{"id":"8","scheduledAtMillis":1800000000000,"status":"CONFIRMED","vehicleYear":"old"}]""")
-            assertTrue(api.hasConfirmedOverlap(target))
-            agenda.set("""[$EXISTING_APPOINTMENT,{"id":"8","scheduledAtMillis":1800003600000,"status":"CONFIRMED"}]""")
-            assertEquals(false, api.hasConfirmedOverlap(target))
-            agenda.set("""[$EXISTING_APPOINTMENT,{"id":"8","status":"CONFIRMED"}]""")
-            assertTrue(runCatching { api.hasConfirmedOverlap(target) }.isFailure)
+            val update = MockAppointmentStatusDto("CANCELLED", 1_790_000_001_000)
+            api.submitAppointmentStatus(target, update)
+
+            assertEquals(
+                target.copy(status = "CANCELLED", updatedAtMillis = update.updatedAtMillis),
+                newApi().listAppointments(target.profileId).single()
+            )
         }
     }
 
@@ -324,6 +419,14 @@ class MockApiContractTest {
         for (status in listOf(408, 500, 502, 503)) {
             assertEquals(fallback, mockAppointmentFailureMessage(status, fallback))
         }
+    }
+
+    private fun applyUpdate(existing: String, body: String): String {
+        val appointment = JsonParser.parseString(existing).asJsonObject
+        JsonParser.parseString(body).asJsonObject.entrySet().forEach { (name, value) ->
+            appointment.add(name, value)
+        }
+        return appointment.toString()
     }
 
     private fun withAppointmentEndpoint(

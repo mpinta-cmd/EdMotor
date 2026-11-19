@@ -15,14 +15,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AddAPhoto
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -35,6 +40,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -48,12 +54,15 @@ import com.example.edmotor.data.repository.ProductOperationResult
 import com.example.edmotor.model.Category
 import com.example.edmotor.ui.components.CategorySelector
 import com.example.edmotor.ui.components.ProductImage
+import com.example.edmotor.ui.components.ProductImageChoice
+import com.example.edmotor.ui.components.ProductImagePicker
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProductFormScreen(
     product: ProductEntity? = null,
     availableImages: List<Pair<String, Int>>,
+    previousProducts: List<ProductEntity> = emptyList(),
     categories: List<Category>,
     isSaving: Boolean = false,
     onCreateCategory: (String, (Boolean, String?) -> Unit) -> Unit,
@@ -85,13 +94,14 @@ fun ProductFormScreen(
     var promotionPrice by rememberSaveable(product?.id) { mutableStateOf(product?.promotionPriceCop?.toString() ?: "") }
     var stock by rememberSaveable(product?.id) { mutableStateOf(product?.stock?.toString() ?: "10") }
     var imageRes by rememberSaveable(product?.id) {
-        mutableStateOf(product?.imageRes ?: availableImages.firstOrNull()?.second ?: 0)
+        mutableStateOf(product?.imageRes ?: 0)
     }
     var imageUri by rememberSaveable(product?.id) { mutableStateOf(product?.imageUri) }
     var isNew by rememberSaveable(product?.id) { mutableStateOf(product?.isNew ?: false) }
     var isOnPromotion by rememberSaveable(product?.id) { mutableStateOf(product?.isOnPromotion ?: false) }
     var error by rememberSaveable(product?.id) { mutableStateOf<String?>(null) }
     var photoError by rememberSaveable(product?.id) { mutableStateOf<String?>(null) }
+    var showImageLibrary by rememberSaveable(product?.id) { mutableStateOf(false) }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -256,50 +266,31 @@ fun ProductFormScreen(
                 modifier = Modifier.fillMaxWidth().height(210.dp),
                 contentScale = ContentScale.Fit
             )
-            Button(
+            OutlinedButton(
                 onClick = { photoPicker.launch(arrayOf("image/*")) },
+                enabled = !isSaving,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    if (imageUri.isNullOrBlank()) "Elegir foto de mi dispositivo"
-                    else "Cambiar foto del dispositivo"
+                Icon(
+                    Icons.Outlined.AddAPhoto,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp).size(20.dp)
                 )
+                Text("Elegir foto de mi dispositivo")
             }
-            if (!imageUri.isNullOrBlank()) {
-                OutlinedButton(
-                    onClick = {
-                        imageUri = null
-                        photoError = null
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Quitar foto personalizada")
-                }
+            OutlinedButton(
+                onClick = { showImageLibrary = true },
+                enabled = !isSaving,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Outlined.PhotoLibrary,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp).size(20.dp)
+                )
+                Text("Elegir imágenes previamente cargadas")
             }
             photoError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-            Text(
-                "O utiliza una imagen incluida en el catálogo",
-                style = MaterialTheme.typography.labelLarge
-            )
-            availableImages.forEach { (label, resourceId) ->
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(label, modifier = Modifier.weight(1f))
-                    Checkbox(
-                        checked = imageUri.isNullOrBlank() && imageRes == resourceId,
-                        onCheckedChange = { checked ->
-                            if (checked) {
-                                imageRes = resourceId
-                                imageUri = null
-                                photoError = null
-                            }
-                        }
-                    )
-                }
-            }
 
             if (error != null) {
                 Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
@@ -394,10 +385,43 @@ fun ProductFormScreen(
                     )
                 }
                 Text(
-                    if (isEditing) "Guardar cambios" else "Registrar repuesto",
+                    if (isEditing) "Guardar cambios" else "Registrar Repuesto",
                     fontWeight = FontWeight.Bold
                 )
             }
         }
+    }
+
+    if (showImageLibrary) {
+        val previousPhotos = remember(previousProducts, context) {
+            val readableUris = context.contentResolver.persistedUriPermissions
+                .filter { it.isReadPermission }
+                .mapTo(mutableSetOf()) { it.uri.toString() }
+            previousProducts.mapNotNull { product ->
+                product.imageUri?.takeIf { it in readableUris }?.let { uri ->
+                    ProductImageChoice(product.name, product.imageRes, uri)
+                }
+            }.distinctBy { it.imageUri }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.label })
+        }
+        val catalogImages = remember(availableImages) {
+            availableImages
+                .map { (name, resourceId) -> ProductImageChoice(name, resourceId) }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.label })
+        }
+
+        ProductImagePicker(
+            previousPhotos = previousPhotos,
+            catalogImages = catalogImages,
+            selectedImageRes = imageRes,
+            selectedImageUri = imageUri,
+            onDismiss = { showImageLibrary = false },
+            onSelect = { choice ->
+                imageRes = choice.imageRes
+                imageUri = choice.imageUri
+                photoError = null
+                error = null
+                showImageLibrary = false
+            }
+        )
     }
 }
