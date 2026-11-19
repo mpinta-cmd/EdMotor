@@ -4,16 +4,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasScrollToIndexAction
-import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performScrollToKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentServiceType
@@ -26,7 +31,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 @RunWith(AndroidJUnit4::class)
 class AppointmentRequestScreenTest {
@@ -73,23 +81,88 @@ class AppointmentRequestScreenTest {
     }
 
     @Test
-    fun workshopCanAdjustTheExactTimeOfAPendingRequest() {
-        val appointment = sampleAppointment(AppointmentStatus.PENDING)
-        var changed: Pair<Long, Long>? = null
-        var confirmed: Long? = null
+    fun workshopCanAdjustARequestToAnExistingSlotAndConfirmBoth() {
+        val first = sampleAppointment(AppointmentStatus.PENDING)
+        val halfHour = 30 * 60_000L
+        val second = first.copy(id = 42L, clientName = "Gabriel", scheduledAtMillis = first.scheduledAtMillis + halfHour)
+        var appointments by mutableStateOf(listOf(first, second))
 
         compose.setContent {
             MaterialTheme {
                 AppointmentsScreen(
                     isWorkshop = true,
-                    appointments = listOf(appointment),
+                    appointments = appointments,
                     syncState = AppointmentSyncState.UP_TO_DATE,
                     vehicles = emptyList(),
                     isProcessing = false,
                     message = null,
                     isError = false,
                     onCreateAppointment = { _, _, _ -> },
-                    onAccept = { confirmed = it },
+                    onAccept = { id ->
+                        appointments = appointments.map {
+                            if (it.id == id) it.copy(status = AppointmentStatus.CONFIRMED) else it
+                        }
+                    },
+                    onReject = {},
+                    onCancel = {},
+                    onReschedule = { id, date ->
+                        appointments = appointments.map {
+                            if (it.id == id) it.copy(scheduledAtMillis = date) else it
+                        }
+                    },
+                    onClearMessage = {},
+                    onRefresh = {}
+                )
+            }
+        }
+
+        compose.onNodeWithText("Solicitudes").assertIsSelected()
+        appointmentList().performScrollToKey(first.id)
+        compose.onAllNodesWithText("Ajustar fecha y hora").onFirst().performScrollTo().performClick()
+        compose.onNodeWithText("Hora: 10:00").performClick()
+        compose.onNodeWithText("10:30").performClick()
+        compose.onNodeWithText("Guardar horario").assertIsEnabled().performClick()
+
+        listOf(first, second).forEach { appointment ->
+            appointmentList().performScrollToKey(appointment.id)
+            compose.onAllNodesWithText("Confirmar").onFirst().performScrollTo().performClick()
+        }
+
+        compose.runOnIdle {
+            assertEquals(listOf(first.id, second.id), appointments.map { it.id })
+            assertTrue(appointments.all { it.status == AppointmentStatus.CONFIRMED })
+            assertTrue(appointments.all { it.scheduledAtMillis == second.scheduledAtMillis })
+        }
+    }
+
+    @Test
+    fun workshopCalendarShowsBothSameTimeAppointmentsAndLetsItRescheduleFromTheSelectedDay() {
+        val day = Calendar.getInstance().apply {
+            add(Calendar.MONTH, 1)
+            set(Calendar.DAY_OF_MONTH, 8)
+            set(Calendar.HOUR_OF_DAY, 10)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val first = sampleAppointment(AppointmentStatus.CONFIRMED).copy(scheduledAtMillis = day.timeInMillis)
+        val second = first.copy(id = 42L, clientName = "Gabriel")
+        day.add(Calendar.DAY_OF_MONTH, 1)
+        val followingDay = first.copy(id = 43L, clientName = "Sofía", scheduledAtMillis = day.timeInMillis)
+        var changed: Pair<Long, Long>? = null
+
+        compose.setContent {
+            MaterialTheme {
+                AppointmentsScreen(
+                    isWorkshop = true,
+                    appointments = listOf(first, second, followingDay),
+                    syncState = AppointmentSyncState.UP_TO_DATE,
+                    vehicles = emptyList(),
+                    isProcessing = false,
+                    message = null,
+                    isError = false,
+                    onCreateAppointment = { _, _, _ -> },
+                    onAccept = {},
                     onReject = {},
                     onCancel = {},
                     onReschedule = { id, date -> changed = id to date },
@@ -99,16 +172,27 @@ class AppointmentRequestScreenTest {
             }
         }
 
-        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(3)
-        compose.onNodeWithText("Ajustar fecha y hora").performScrollTo().performClick()
-        compose.onNode(hasSetTextAction() and hasText("Minutos")).performTextReplacement("45")
+        compose.onNodeWithText("Calendario").performClick().assertIsSelected()
+        compose.onNodeWithContentDescription("Mes siguiente").performClick()
+        selectDay(first.scheduledAtMillis, "2 citas")
+        appointmentList().performScrollToKey(first.id)
+        compose.onNodeWithText(first.clientName, substring = true).assertExists()
+        appointmentList().performScrollToKey(second.id)
+        compose.onNodeWithText(second.clientName, substring = true).assertExists()
+        compose.onAllNodesWithText("Reagendar").onLast().performScrollTo().performClick()
+        compose.onNodeWithText("Hora: 10:00").performClick()
+        compose.onNodeWithText("08:00").performClick()
         compose.onNodeWithText("Guardar horario").assertIsEnabled().performClick()
-        compose.onNodeWithText("Confirmar").performScrollTo().performClick()
-
         compose.runOnIdle {
-            assertEquals(appointment.id to (appointment.scheduledAtMillis + 45 * 60_000L), changed)
-            assertEquals(appointment.id, confirmed)
+            assertEquals(second.id to (second.scheduledAtMillis - 2 * 60 * 60_000L), changed)
         }
+
+        appointmentList().performScrollToKey("calendar")
+        selectDay(followingDay.scheduledAtMillis, "1 cita")
+        appointmentList().performScrollToKey(followingDay.id)
+        compose.onNodeWithText(followingDay.clientName, substring = true).assertExists()
+        compose.onNodeWithText(first.clientName, substring = true).assertDoesNotExist()
+        compose.onNodeWithText(second.clientName, substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -144,8 +228,8 @@ class AppointmentRequestScreenTest {
         }
 
         compose.onNodeWithText("Ver citas agendadas").performClick()
-        compose.onNodeWithText("Citas agendadas").assertExists()
-        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(3)
+        compose.onNodeWithText("Calendario").assertIsSelected()
+        appointmentList().performScrollToKey(original.id)
         compose.onNodeWithText("Reagendar").performScrollTo().performClick()
         compose.onNodeWithText("Hora: 10:00").performClick()
         compose.onNodeWithText("08:00").performClick()
@@ -155,13 +239,21 @@ class AppointmentRequestScreenTest {
             assertEquals(AppointmentStatus.PENDING, appointment.status)
         }
 
-        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(0)
-        compose.onNodeWithText("Volver a solicitar cita").performClick()
-        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(4)
+        compose.onNodeWithText("Solicitar").performClick().assertIsSelected()
+        appointmentList().performScrollToKey(original.id)
         compose.onNodeWithText("Cancelar cita").performScrollTo().performClick()
         compose.onNodeWithText("Confirmar cancelación").assertIsEnabled().performClick()
         compose.onNodeWithText("Cancelada").assertExists()
         compose.onNodeWithText("Reagendar").assertDoesNotExist()
+    }
+
+    private fun appointmentList() = compose.onNode(hasScrollToIndexAction())
+
+    private fun selectDay(millis: Long, count: String) {
+        val date = SimpleDateFormat("d 'de' MMMM 'de' yyyy", Locale("es", "CO")).format(Date(millis))
+        compose.onNodeWithContentDescription(date)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, count))
+            .performScrollTo().performClick().assertIsSelected()
     }
 
     private fun sampleAppointment(status: String): Appointment {

@@ -26,6 +26,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,10 +36,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.BuildConfig
@@ -45,8 +51,10 @@ import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.model.appointmentDateUtcMillis
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -68,27 +76,35 @@ fun AppointmentsScreen(
     onClearMessage: () -> Unit,
     onRefresh: () -> Unit
 ) {
-    var showAgenda by rememberSaveable(isWorkshop) { mutableStateOf(false) }
+    var showCalendar by rememberSaveable(isWorkshop) { mutableStateOf(false) }
     var rescheduleId by rememberSaveable { mutableStateOf<Long?>(null) }
     var cancelId by rememberSaveable { mutableStateOf<Long?>(null) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val today = remember(nowMillis) { appointmentDateUtcMillis(nowMillis) }
+    var selectedDay by rememberSaveable(isWorkshop) { mutableLongStateOf(today) }
     val requestListState = rememberLazyListState()
-    val agendaListState = rememberLazyListState()
-    val listState = if (showAgenda) agendaListState else requestListState
+    val calendarListState = rememberLazyListState()
+    val listState = if (showCalendar) calendarListState else requestListState
+    val tabStateHolder = rememberSaveableStateHolder()
+    val coroutineScope = rememberCoroutineScope()
     val isConfigured = syncState != AppointmentSyncState.NOT_CONFIGURED
     val canManage = syncState == AppointmentSyncState.UP_TO_DATE && !isProcessing
-    val upcomingCount = appointments.count {
-        it.status == AppointmentStatus.CONFIRMED && it.scheduledAtMillis >= nowMillis
+    val orderedAppointments = remember(appointments) {
+        appointments.sortedWith(compareBy({ it.scheduledAtMillis }, { it.id }))
     }
-    val requests = remember(appointments, isWorkshop) {
-        if (isWorkshop) {
-            appointments.filter { it.status == AppointmentStatus.PENDING }.sortedBy { it.scheduledAtMillis }
-        } else {
-            appointments.filter { it.status != AppointmentStatus.CONFIRMED }.sortedByDescending { it.createdAtMillis }
-        }
+    val appointmentsByDay = remember(orderedAppointments) {
+        orderedAppointments.groupBy { appointmentDateUtcMillis(it.scheduledAtMillis) }
     }
-    val trackedAppointments = remember(appointments) {
-        appointments.filter { it.status != AppointmentStatus.PENDING }.sortedBy { it.scheduledAtMillis }
+    val requests = remember(orderedAppointments) {
+        orderedAppointments.filter { it.status == AppointmentStatus.PENDING }
+    }
+    val clientRequests = remember(orderedAppointments, isWorkshop) {
+        if (isWorkshop) emptyList() else orderedAppointments
+            .filter { it.status != AppointmentStatus.CONFIRMED }
+            .sortedByDescending { it.createdAtMillis }
+    }
+    val upcoming = remember(orderedAppointments, nowMillis) {
+        orderedAppointments.filter { it.status == AppointmentStatus.CONFIRMED && it.scheduledAtMillis >= nowMillis }
     }
 
     LaunchedEffect(Unit) {
@@ -100,130 +116,146 @@ fun AppointmentsScreen(
     LaunchedEffect(message) {
         if (!message.isNullOrBlank()) listState.scrollToItem(0)
     }
-    BackHandler(enabled = showAgenda) { showAgenda = false }
+    BackHandler(enabled = showCalendar) { showCalendar = false }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        state = listState,
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item(key = "intro") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (showAgenda) {
-                    TextButton(onClick = { showAgenda = false }) {
-                        Text(if (isWorkshop) "Volver a solicitudes" else "Volver a solicitar cita")
-                    }
+    val appointmentContent: @Composable (Appointment) -> Unit = { appointment ->
+        AppointmentCard(
+            appointment = appointment,
+            isWorkshop = isWorkshop,
+            showsReview = isWorkshop && !showCalendar,
+            canManage = canManage,
+            onAccept = { onAccept(appointment.id) },
+            onReject = { onReject(appointment.id) },
+            onReschedule = { rescheduleId = appointment.id },
+            onCancel = { cancelId = appointment.id }
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            "Citas",
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp).semantics { heading() },
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.ExtraBold
+        )
+        TabRow(selectedTabIndex = if (showCalendar) 1 else 0) {
+            Tab(
+                selected = !showCalendar,
+                onClick = { showCalendar = false },
+                text = { Text(if (isWorkshop) "Solicitudes" else "Solicitar") }
+            )
+            Tab(
+                selected = showCalendar,
+                onClick = { showCalendar = true },
+                text = { Text("Calendario") }
+            )
+        }
+
+        tabStateHolder.SaveableStateProvider(showCalendar) {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                state = listState,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (!message.isNullOrBlank()) {
+                    item(key = "message") { AppointmentMessage(message, isError, onClearMessage) }
                 }
-                Text(
-                    text = when {
-                        showAgenda -> "Citas agendadas"
-                        isWorkshop -> "Solicitudes de servicio"
-                        else -> "Solicita una cita"
-                    },
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                if (!showAgenda) {
-                    Text(
-                        text = if (isWorkshop) {
-                            "Revisa las solicitudes y ajusta su horario antes de confirmarlas."
-                        } else {
-                            "Elige tu vehículo, el servicio y un horario para que EdMotor revise tu solicitud."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (isConfigured) {
-                        OpenAgendaButton(
-                            upcomingCount = upcomingCount,
-                            onClick = { showAgenda = true }
+                item(key = "sync") {
+                    AppointmentSyncNotice(syncState, isWorkshop, appointments.isNotEmpty(), isProcessing, onRefresh)
+                }
+
+                if (isConfigured && showCalendar) {
+                    item(key = "calendar") {
+                        AppointmentMonthCalendar(
+                            selectedDay = selectedDay,
+                            today = today,
+                            appointmentsByDay = appointmentsByDay,
+                            onSelectDay = { selectedDay = it }
                         )
                     }
-                }
-            }
-        }
-
-        if (!message.isNullOrBlank()) {
-            item(key = "message") {
-                AppointmentMessage(message, isError, onClearMessage)
-            }
-        }
-
-        item(key = "sync") {
-            AppointmentSyncNotice(syncState, isWorkshop, appointments.isNotEmpty(), isProcessing, onRefresh)
-        }
-
-        if (isConfigured) {
-            if (showAgenda && isWorkshop) {
-                item(key = "agenda") {
-                    WorkshopAppointmentAgenda(
-                        appointments = trackedAppointments,
-                        nowMillis = nowMillis,
-                        showEmptyDay = syncState == AppointmentSyncState.UP_TO_DATE,
-                        appointmentContent = { appointment ->
-                            AppointmentCard(
-                                appointment = appointment,
-                                isWorkshop = true,
-                                canManage = canManage,
-                                onAccept = { onAccept(appointment.id) },
-                                onReject = { onReject(appointment.id) },
-                                onReschedule = { rescheduleId = appointment.id },
-                                onCancel = { cancelId = appointment.id }
+                    val dayAppointments = appointmentsByDay[selectedDay].orEmpty()
+                    item(key = "dayHeading") {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                formatAppointmentCalendarDay(selectedDay),
+                                modifier = Modifier.semantics { heading() },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (dayAppointments.isNotEmpty()) {
+                                Text(
+                                    if (dayAppointments.size == 1) "1 cita" else "${dayAppointments.size} citas",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    if (dayAppointments.isEmpty() && syncState == AppointmentSyncState.UP_TO_DATE) {
+                        item(key = "emptyDay") {
+                            EmptyAppointmentsMessage("No hay citas para este día.")
+                        }
+                    }
+                    items(dayAppointments, key = { it.id }) { appointmentContent(it) }
+                } else if (isConfigured) {
+                    item(key = "intro") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                if (isWorkshop) "Solicitudes pendientes (${requests.size})" else "Solicita una cita",
+                                modifier = Modifier.semantics { heading() },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (isWorkshop && requests.isNotEmpty()) {
+                                Text(
+                                    "Revisa las solicitudes y ajusta el horario antes de confirmarlas.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            OpenAgendaButton(
+                                upcomingCount = upcoming.size,
+                                onClick = {
+                                    val next = upcoming.firstOrNull() ?: requests.firstOrNull { it.scheduledAtMillis >= nowMillis }
+                                    selectedDay = next?.let { appointmentDateUtcMillis(it.scheduledAtMillis) } ?: today
+                                    showCalendar = true
+                                    coroutineScope.launch { calendarListState.scrollToItem(0) }
+                                }
                             )
                         }
-                    )
-                }
-            } else {
-                if (!isWorkshop && !showAgenda) {
-                    item(key = "request") {
-                        AppointmentRequestForm(
-                            vehicles = vehicles,
-                            nowMillis = nowMillis,
-                            isProcessing = isProcessing,
-                            onCreateAppointment = onCreateAppointment
-                        )
                     }
-                }
-
-                item(key = "heading") {
-                    Text(
-                        text = when {
-                            showAgenda -> "Mis citas confirmadas"
-                            isWorkshop -> "Solicitudes pendientes (${requests.size})"
-                            else -> "Mis solicitudes"
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                val visibleAppointments = if (showAgenda) {
-                    trackedAppointments.filter { it.status == AppointmentStatus.CONFIRMED }
-                        .sortedBy { it.scheduledAtMillis < nowMillis }
-                } else {
-                    requests
-                }
-                if (visibleAppointments.isEmpty() && syncState == AppointmentSyncState.UP_TO_DATE) {
-                    item(key = "empty") {
-                        EmptyAppointmentsMessage(
-                            when {
-                                showAgenda -> "Tus citas aparecerán aquí cuando EdMotor las confirme."
-                                isWorkshop -> "No hay solicitudes pendientes de revisar."
-                                else -> "Aquí aparecerán tus solicitudes y los cambios de estado."
+                    if (isWorkshop) {
+                        if (requests.isEmpty() && syncState == AppointmentSyncState.UP_TO_DATE) {
+                            item(key = "emptyRequests") {
+                                EmptyAppointmentsMessage("No hay solicitudes pendientes de revisar.")
                             }
-                        )
+                        }
+                        items(requests, key = { it.id }) { appointmentContent(it) }
+                    } else {
+                        item(key = "request") {
+                            AppointmentRequestForm(
+                                vehicles = vehicles,
+                                nowMillis = nowMillis,
+                                isProcessing = isProcessing,
+                                onCreateAppointment = onCreateAppointment
+                            )
+                        }
+                        item(key = "clientRequestsHeading") {
+                            Text(
+                                "Mis solicitudes",
+                                modifier = Modifier.semantics { heading() },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (clientRequests.isEmpty() && syncState == AppointmentSyncState.UP_TO_DATE) {
+                            item(key = "emptyClientRequests") {
+                                EmptyAppointmentsMessage("Aquí aparecerán tus solicitudes y sus cambios de estado.")
+                            }
+                        }
+                        items(clientRequests, key = { it.id }) { appointmentContent(it) }
                     }
-                }
-                items(visibleAppointments, key = { it.id }) { appointment ->
-                    AppointmentCard(
-                        appointment = appointment,
-                        isWorkshop = isWorkshop,
-                        canManage = canManage,
-                        onAccept = { onAccept(appointment.id) },
-                        onReject = { onReject(appointment.id) },
-                        onReschedule = { rescheduleId = appointment.id },
-                        onCancel = { cancelId = appointment.id }
-                    )
                 }
             }
         }
@@ -359,6 +391,7 @@ private fun AppointmentSyncNotice(
 private fun AppointmentCard(
     appointment: Appointment,
     isWorkshop: Boolean,
+    showsReview: Boolean,
     canManage: Boolean,
     onAccept: () -> Unit,
     onReject: () -> Unit,
@@ -422,7 +455,7 @@ private fun AppointmentCard(
             )
 
             if (appointment.canBeChanged()) {
-                val requiresReview = isWorkshop && appointment.status == AppointmentStatus.PENDING
+                val requiresReview = showsReview && appointment.status == AppointmentStatus.PENDING
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (requiresReview) {
                         Button(onClick = onAccept, enabled = canManage) { Text("Confirmar") }
@@ -439,7 +472,7 @@ private fun AppointmentCard(
 }
 
 @Composable
-internal fun EmptyAppointmentsMessage(message: String) {
+private fun EmptyAppointmentsMessage(message: String) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),

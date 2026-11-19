@@ -3,14 +3,12 @@ package com.example.edmotor.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccessTime
@@ -29,7 +27,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,7 +39,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentServiceType
@@ -53,7 +49,6 @@ import com.example.edmotor.model.appointmentDateUtcMillis
 import com.example.edmotor.model.appointmentTimeSlots
 import com.example.edmotor.model.firstAppointmentDateUtcMillis
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -165,37 +160,33 @@ internal fun AppointmentRescheduleDialog(
     onDismiss: () -> Unit,
     onSave: (Long) -> Unit
 ) {
-    val originalDate = appointmentDateUtcMillis(appointment.scheduledAtMillis)
-    val minimumDate = if (isWorkshop) appointmentDateUtcMillis(nowMillis) else firstAppointmentDateUtcMillis(nowMillis)
-    val originalTime = remember(appointment.scheduledAtMillis) {
-        Calendar.getInstance().apply { timeInMillis = appointment.scheduledAtMillis }
+    val originalStart = appointment.scheduledAtMillis
+    val originalDate = appointmentDateUtcMillis(originalStart)
+    val minimumDate = firstAppointmentDateUtcMillis(nowMillis)
+    var selectedDate by rememberSaveable(appointment.id, originalStart) {
+        mutableStateOf(maxOf(originalDate, minimumDate))
     }
-    var selectedDate by rememberSaveable(appointment.id) { mutableStateOf(maxOf(originalDate, minimumDate)) }
-    var hour by rememberSaveable(appointment.id) {
-        mutableStateOf(originalTime.get(Calendar.HOUR_OF_DAY).toString().padStart(2, '0'))
-    }
-    var minute by rememberSaveable(appointment.id) {
-        mutableStateOf(originalTime.get(Calendar.MINUTE).toString().padStart(2, '0'))
-    }
+    var selectedTime by rememberSaveable(appointment.id, originalStart) { mutableStateOf<String?>(null) }
     var showCalendar by rememberSaveable(appointment.id) { mutableStateOf(false) }
-    val slots = if (isWorkshop) emptyList() else remember(selectedDate, nowMillis) {
-        appointmentTimeSlots(selectedDate, nowMillis)
+    val slots = remember(selectedDate, nowMillis) { appointmentTimeSlots(selectedDate, nowMillis) }
+    val chosenTime = selectedTime
+    val selectedSlot = if (chosenTime == null) {
+        slots.firstOrNull { it.startsAtMillis == originalStart }
+    } else {
+        slots.firstOrNull { it.time == chosenTime }
     }
-    var selectedTime by rememberSaveable(appointment.id) {
-        mutableStateOf(slots.firstOrNull { it.time == "$hour:$minute" }?.time)
-    }
-    val selectedSlot = slots.firstOrNull { it.time == selectedTime }
-    val proposedTime = if (isWorkshop) selectedAppointmentStart(selectedDate, hour, minute) else selectedSlot?.startsAtMillis
-    val canSave = enabled && proposedTime != null && proposedTime > nowMillis && proposedTime != appointment.scheduledAtMillis
+    val newStart = selectedSlot?.startsAtMillis?.takeIf { it != originalStart }
 
     if (showCalendar) {
         AppointmentDatePicker(
             date = selectedDate,
             minimumDate = minimumDate,
             onDismiss = { showCalendar = false },
-            onSelect = {
-                selectedDate = it
-                selectedTime = null
+            onSelect = { newDate ->
+                if (newDate != selectedDate) {
+                    selectedDate = newDate
+                    selectedTime = null
+                }
             }
         )
     } else {
@@ -216,41 +207,25 @@ internal fun AppointmentRescheduleDialog(
                         )
                     }
                     DateButton(selectedDate, enabled, onClick = { showCalendar = true })
-                    if (isWorkshop) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AppointmentTimeField(hour, "Hora", Modifier.weight(1f), enabled) { hour = it }
-                            AppointmentTimeField(minute, "Minutos", Modifier.weight(1f), enabled) { minute = it }
-                        }
+                    AppointmentTimeMenu(slots, selectedSlot?.time, enabled) { selectedTime = it }
+                    if (selectedSlot == null) {
                         Text(
-                            when {
-                                proposedTime == null -> "Escribe una hora de 00 a 23 y minutos de 00 a 59."
-                                proposedTime <= nowMillis -> "Selecciona una fecha y una hora futuras."
-                                else -> "Formato de 24 horas"
-                            },
+                            if (slots.isEmpty()) "Elige otra fecha para encontrar horarios."
+                            else "Elige un horario con al menos 15 minutos de anticipación.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else {
-                        AppointmentTimeMenu(slots, selectedSlot?.time, enabled) { selectedTime = it }
-                        if (selectedSlot == null) {
-                            Text(
-                                "Elige un horario con al menos 15 minutos de anticipación.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 }
             },
             confirmButton = {
                 Button(
-                    enabled = canSave,
+                    enabled = enabled && newStart != null,
                     onClick = {
-                        val checkedAt = System.currentTimeMillis()
-                        if (proposedTime != null && proposedTime > checkedAt &&
-                            (isWorkshop || appointmentTimeSlots(selectedDate, checkedAt).any { it.startsAtMillis == proposedTime })
+                        if (newStart != null && appointmentTimeSlots(selectedDate, System.currentTimeMillis())
+                                .any { it.startsAtMillis == newStart }
                         ) {
-                            onSave(proposedTime)
+                            onSave(newStart)
                         }
                     }
                 ) { Text("Guardar horario") }
@@ -258,38 +233,6 @@ internal fun AppointmentRescheduleDialog(
             dismissButton = { TextButton(onClick = onDismiss) { Text("Volver") } }
         )
     }
-}
-
-@Composable
-private fun AppointmentTimeField(
-    value: String,
-    label: String,
-    modifier: Modifier,
-    enabled: Boolean,
-    onChange: (String) -> Unit
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { onChange(it.filter { char -> char in '0'..'9' }.take(2)) },
-        modifier = modifier,
-        enabled = enabled,
-        label = { Text(label) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        singleLine = true
-    )
-}
-
-private fun selectedAppointmentStart(date: Long, hour: String, minute: String): Long? {
-    val parsedHour = hour.toIntOrNull()?.takeIf { it in 0..23 } ?: return null
-    val parsedMinute = minute.toIntOrNull()?.takeIf { it in 0..59 } ?: return null
-    val utcDate = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = date }
-    return runCatching {
-        Calendar.getInstance().apply {
-            isLenient = false
-            clear()
-            set(utcDate.get(Calendar.YEAR), utcDate.get(Calendar.MONTH), utcDate.get(Calendar.DAY_OF_MONTH), parsedHour, parsedMinute)
-        }.timeInMillis
-    }.getOrNull()
 }
 
 @Composable
