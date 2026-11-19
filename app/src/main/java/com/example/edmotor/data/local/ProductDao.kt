@@ -170,7 +170,7 @@ interface ProductDao {
         UPDATE products
         SET isActive = 0,
             updatedAtMillis = :updatedAt
-        WHERE id = :productId
+        WHERE id = :productId AND isActive = 1
     """)
     suspend fun deactivate(
         productId: Int,
@@ -251,11 +251,11 @@ interface ProductDao {
     fun observeOutOfStockCount(): Flow<Int>
 
     @Query("""
-        SELECT COALESCE(SUM(stock), 0)
+        SELECT COALESCE(SUM(MAX(stock, 0)), 0)
         FROM products
         WHERE isActive = 1
     """)
-    fun observeTotalUnits(): Flow<Int>
+    fun observeTotalUnits(): Flow<Long>
 
     // ==========================================
     // COMPROBAR CARGA INICIAL

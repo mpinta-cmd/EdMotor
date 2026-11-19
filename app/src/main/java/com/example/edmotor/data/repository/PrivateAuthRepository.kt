@@ -12,6 +12,7 @@ import com.example.edmotor.session.LocalPasswordHasher
 import com.example.edmotor.session.LocalPasswordRecord
 import com.example.edmotor.session.SessionManager
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,7 +36,7 @@ class PrivateAuthRepository(
     }
 
     suspend fun restore(): UserEntity? = sessionManager.restoreProfile(credentialedDemo = demoProfiles != null) { key ->
-        userDao.findByRemoteAuthId(key)?.takeIf(::isCredentialedAccount)?.withoutCredentials()
+        userDao.findByRemoteAuthId(key)?.takeIf(::isCredentialedAccount)
     }
 
     suspend fun signIn(username: String, password: String): UserEntity = credentialMutex.withLock {
@@ -56,8 +57,12 @@ class PrivateAuthRepository(
         createAccount(username, "EdMotor", password, UserRole.WORKSHOP)
 
     suspend fun rememberVerifiedProfile(user: UserEntity): UserEntity {
-        require(isCredentialedAccount(user))
-        val profile = user.withoutCredentials()
+        val current = userDao.findById(user.id)?.takeIf {
+            it.username == user.username && it.remoteAuthId == user.remoteAuthId && it.role == user.role &&
+                it.createdAtMillis == user.createdAtMillis && it.passwordHash == user.passwordHash && it.salt == user.salt &&
+                isCredentialedAccount(it)
+        } ?: throw invalidCredentials()
+        val profile = current.withoutCredentials()
         sessionManager.selectProfile(profile, credentialedDemo = demoProfiles != null)
         return profile
     }
@@ -97,11 +102,18 @@ class PrivateAuthRepository(
         ensureAvailableUsername(normalized)
         val passwordRecord = withContext(Dispatchers.Default) { LocalPasswordHasher.create(password) }
 
+        val projectKey = bridge?.demoProjectKey
+        val pending = projectKey?.let { sessionManager.prepareDemoRegistration(it, normalized) }
         val key = if (bridge != null) {
             val provisioned = try {
-                bridge.provisionClientProfile("Cliente ${UUID.randomUUID()}")
+                bridge.provisionClientProfile(
+                    alias = pending?.alias ?: "Cliente ${UUID.randomUUID()}",
+                    recovering = pending?.recovering == true
+                )
             } catch (_: ClientProfileCreationUnverifiedException) {
-                throw PrivateAccessException("No se pudo confirmar el enlace de demostración. Comprueba tu conexión.")
+                throw PrivateAccessException(
+                    "No se pudo confirmar el perfil de demostración. Reintenta con el mismo usuario cuando tengas conexión."
+                )
             }
             if (provisioned.role != UserRole.CLIENT) {
                 throw PrivateAccessException("No se pudo verificar el perfil de cliente de demostración.")
@@ -113,7 +125,7 @@ class PrivateAuthRepository(
             LocalAccountIdentity.createClientKey()
         }
 
-        database.withTransaction {
+        val account = database.withTransaction {
             if (isOwner && isOwnerConfigured()) {
                 throw PrivateAccessException("El propietario ya está configurado en esta instalación.")
             }
@@ -133,6 +145,16 @@ class PrivateAuthRepository(
             if (!isCredentialedAccount(inserted)) throw PrivateAccessException("La identidad de la cuenta no es válida.")
             inserted
         }
+        if (projectKey != null && pending != null) {
+            try {
+                sessionManager.finishDemoRegistration(projectKey, normalized, pending.alias)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // La cuenta ya existe en Room y puede iniciar sesión.
+            }
+        }
+        account
     }
 
     private suspend fun saveDemoOwnerPassword(

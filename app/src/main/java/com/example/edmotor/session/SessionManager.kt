@@ -2,12 +2,18 @@ package com.example.edmotor.session
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.UserRole
+import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,7 +23,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-private val Context.edMotorAccessDataStore by preferencesDataStore(name = "edmotor_selected_profile")
+private val Context.edMotorAccessDataStore by preferencesDataStore(
+    name = "edmotor_selected_profile",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
+
+internal data class PendingDemoRegistration(val alias: String, val recovering: Boolean)
 
 /** Recuerda la selección. Room sigue siendo la fuente del perfil. */
 class SessionManager internal constructor(private val dataStore: DataStore<Preferences>) {
@@ -32,19 +43,33 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
         loadProfile: suspend (String) -> UserEntity?
     ): UserEntity? =
         sessionMutex.withLock {
-            val preferences = dataStore.data.first()
-            val key = preferences[if (credentialedDemo) DEMO_CREDENTIAL_PROFILE_KEY else PROFILE_KEY]
-            val role = preferences[if (credentialedDemo) DEMO_CREDENTIAL_PROFILE_ROLE else PROFILE_ROLE]
-            val user = key?.takeIf { it.isNotBlank() }?.let { loadProfile(it) }
-            val restored = user?.takeIf {
-                it.id > 0 && it.remoteAuthId == key && it.role == role && it.hasKnownRole()
-            }
+            try {
+                val preferences = dataStore.data.first()
+                val keys = if (credentialedDemo) demoKeys else privateKeys
+                val key = preferences[keys.profile]
+                val role = preferences[keys.role]
+                val createdAt = preferences[keys.createdAt]
+                val user = key?.takeIf { it.isNotBlank() }?.let { loadProfile(it) }
+                val restored = user?.takeIf {
+                    it.id > 0 && it.remoteAuthId == key && it.role == role && it.hasKnownRole() &&
+                        (createdAt == null || it.createdAtMillis == createdAt)
+                }?.withoutPassword()
 
-            if (restored == null && (key != null || role != null ||
-                (credentialedDemo && (preferences[PROFILE_KEY] != null || preferences[PROFILE_ROLE] != null))
-            )) removeRememberedProfile()
-            _currentUser.value = restored
-            restored
+                if (restored == null && (keys.existsIn(preferences) ||
+                        credentialedDemo && privateKeys.existsIn(preferences))) {
+                    removeRememberedProfile()
+                }
+                if (restored != null && createdAt == null) {
+                    dataStore.edit { it[keys.createdAt] = restored.createdAtMillis }
+                }
+                _currentUser.value = restored
+                restored
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _currentUser.value = null
+                throw error
+            }
         }
 
     suspend fun selectProfile(user: UserEntity, credentialedDemo: Boolean = false) {
@@ -54,17 +79,13 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
         withContext(NonCancellable) {
             sessionMutex.withLock {
                 dataStore.edit { preferences ->
-                    if (credentialedDemo) {
-                        preferences.remove(PROFILE_KEY)
-                        preferences.remove(PROFILE_ROLE)
-                        preferences[DEMO_CREDENTIAL_PROFILE_KEY] = key
-                        preferences[DEMO_CREDENTIAL_PROFILE_ROLE] = user.role
-                    } else {
-                        preferences[PROFILE_KEY] = key
-                        preferences[PROFILE_ROLE] = user.role
-                    }
+                    val keys = if (credentialedDemo) demoKeys else privateKeys
+                    preferences.removeAccess(if (credentialedDemo) privateKeys else demoKeys)
+                    preferences[keys.profile] = key
+                    preferences[keys.role] = user.role
+                    preferences[keys.createdAt] = user.createdAtMillis
                 }
-                _currentUser.value = user
+                _currentUser.value = user.withoutPassword()
             }
         }
     }
@@ -78,22 +99,60 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
         }
     }
 
+    internal suspend fun prepareDemoRegistration(projectKey: String, username: String): PendingDemoRegistration {
+        val key = demoRegistrationKey(projectKey, username)
+        val newAlias = "Cliente ${UUID.randomUUID()}"
+        val prepared = dataStore.edit { preferences ->
+            if (!preferences.contains(key)) preferences[key] = newAlias
+        }
+        val alias = checkNotNull(prepared[key])
+        return PendingDemoRegistration(alias, alias != newAlias)
+    }
+
+    internal suspend fun finishDemoRegistration(projectKey: String, username: String, alias: String) {
+        val key = demoRegistrationKey(projectKey, username)
+        dataStore.edit { preferences ->
+            if (preferences[key] == alias) preferences.remove(key)
+        }
+    }
+
+    private fun demoRegistrationKey(projectKey: String, username: String): Preferences.Key<String> {
+        require(mockProjectKey.matches(projectKey) && LocalCredentialValidation.isStoredUsername(username))
+        return stringPreferencesKey("pending_demo_profile:$projectKey:$username")
+    }
+
     private suspend fun removeRememberedProfile() {
         dataStore.edit { preferences ->
-            preferences.remove(PROFILE_KEY)
-            preferences.remove(PROFILE_ROLE)
-            preferences.remove(DEMO_CREDENTIAL_PROFILE_KEY)
-            preferences.remove(DEMO_CREDENTIAL_PROFILE_ROLE)
+            preferences.removeAccess(privateKeys)
+            preferences.removeAccess(demoKeys)
         }
+    }
+
+    private fun MutablePreferences.removeAccess(keys: AccessKeys) {
+        remove(keys.profile)
+        remove(keys.role)
+        remove(keys.createdAt)
     }
 
     private fun UserEntity.hasKnownRole(): Boolean = UserRole.entries.any { it.name == role }
 
+    private fun UserEntity.withoutPassword(): UserEntity = copy(passwordHash = "", salt = "")
+
+    private class AccessKeys(profileKey: String, roleKey: String, createdAtKey: String) {
+        val profile = stringPreferencesKey(profileKey)
+        val role = stringPreferencesKey(roleKey)
+        val createdAt = longPreferencesKey(createdAtKey)
+
+        fun existsIn(preferences: Preferences): Boolean =
+            preferences.contains(profile) || preferences.contains(role) || preferences.contains(createdAt)
+    }
+
     private companion object {
-        val PROFILE_KEY = stringPreferencesKey("selected_profile_key")
-        val PROFILE_ROLE = stringPreferencesKey("selected_profile_role")
+        val mockProjectKey = Regex("[0-9a-f]{24}")
+        val privateKeys = AccessKeys("selected_profile_key", "selected_profile_role", "selected_profile_created_at")
         // Las selecciones antiguas de la demostración no prueban que se ingresó una contraseña.
-        val DEMO_CREDENTIAL_PROFILE_KEY = stringPreferencesKey("demo_credential_profile_key")
-        val DEMO_CREDENTIAL_PROFILE_ROLE = stringPreferencesKey("demo_credential_profile_role")
+        val demoKeys = AccessKeys(
+            "demo_credential_profile_key", "demo_credential_profile_role", "demo_credential_profile_created_at"
+        )
     }
 }

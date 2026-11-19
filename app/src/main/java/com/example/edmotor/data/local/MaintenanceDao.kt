@@ -14,46 +14,32 @@ interface MaintenanceDao {
 
     @Transaction
     @Query("""
-        SELECT * FROM maintenance_records
-        WHERE vehicleId = :vehicleId
-        ORDER BY serviceDate DESC, id DESC
+        SELECT maintenance_records.* FROM maintenance_records
+        JOIN vehicles ON vehicles.id = maintenance_records.vehicleId
+        JOIN users ON users.id = :requestingUserId
+        WHERE maintenance_records.vehicleId = :vehicleId
+          AND users.role = :requestingRole
+          AND (users.role = 'WORKSHOP' OR
+               (users.role = 'CLIENT' AND vehicles.ownerUserId = users.id))
+        ORDER BY maintenance_records.serviceDate DESC, maintenance_records.id DESC
     """)
     fun observeByVehicle(
-        vehicleId: Int
+        vehicleId: Int,
+        requestingUserId: Int,
+        requestingRole: String
     ): Flow<List<MaintenanceWithParts>>
 
 
     @Transaction
     @Query("""
         SELECT * FROM maintenance_records
-        WHERE id = :recordId
+        WHERE id = :recordId AND vehicleId = :vehicleId
         LIMIT 1
     """)
     suspend fun findWithParts(
-        recordId: Int
-    ): MaintenanceWithParts?
-
-
-    @Query("""
-        SELECT * FROM maintenance_records
-        WHERE id = :recordId
-        LIMIT 1
-    """)
-    suspend fun findById(
-        recordId: Int
-    ): MaintenanceRecordEntity?
-
-
-    @Query("""
-        SELECT * FROM maintenance_records
-        WHERE id = :recordId
-        AND vehicleId = :vehicleId
-        LIMIT 1
-    """)
-    suspend fun findByIdForVehicle(
         recordId: Int,
         vehicleId: Int
-    ): MaintenanceRecordEntity?
+    ): MaintenanceWithParts?
 
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
@@ -66,15 +52,6 @@ interface MaintenanceDao {
     suspend fun update(
         record: MaintenanceRecordEntity
     )
-
-
-    @Query("""
-        DELETE FROM maintenance_records
-        WHERE id = :recordId
-    """)
-    suspend fun deleteById(
-        recordId: Int
-    ): Int
 
 
     @Query("""

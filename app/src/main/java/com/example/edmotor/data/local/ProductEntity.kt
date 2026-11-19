@@ -66,13 +66,9 @@ data class ProductEntity(
 
     val discountPercentage: Int
         get() {
-            if (effectivePriceCop >= priceCop || priceCop <= 0) {
-                return 0
-            }
-
-            return (
-                    (priceCop - effectivePriceCop) * 100 / priceCop
-                    ).toInt()
+            val effectivePrice = effectivePriceCop
+            if (priceCop <= 0 || effectivePrice >= priceCop) return 0
+            return ((priceCop - effectivePrice).toBigInteger() * 100.toBigInteger() / priceCop.toBigInteger()).toInt()
         }
 
     val availabilityLabel: String

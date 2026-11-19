@@ -8,8 +8,10 @@ import com.example.edmotor.data.local.ProductCategoryDao
 import com.example.edmotor.data.local.ProductCategoryEntity
 import com.example.edmotor.data.local.ProductDao
 import com.example.edmotor.data.local.ProductEntity
+import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.Category
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.model.categoryKey
 import com.example.edmotor.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -33,10 +35,8 @@ class ProductRepository(
     private val sessionManager: SessionManager
 ) {
 
-    private fun hasWorkshopPermission(requestedRole: UserRole): Boolean {
-        val currentUser = sessionManager.currentUser.value
-        return requestedRole == UserRole.WORKSHOP &&
-                currentUser?.role == UserRole.WORKSHOP.name
+    private fun workshopFor(requestedRole: UserRole): UserEntity? = sessionManager.currentUser.value?.takeIf {
+        requestedRole == UserRole.WORKSHOP && it.id > 0 && it.role == UserRole.WORKSHOP.name
     }
 
     private fun denied() = ProductOperationResult.Error(
@@ -45,7 +45,7 @@ class ProductRepository(
 
     private fun categoryEntity(name: String): ProductCategoryEntity {
         val known = categoryList.firstOrNull {
-            it.nombre.equals(name.trim(), ignoreCase = true)
+            categoryKey(it.nombre) == categoryKey(name)
         }
         return ProductCategoryEntity(
             name = name.trim(),
@@ -55,20 +55,19 @@ class ProductRepository(
 
     fun observeCategories(): Flow<List<Category>> =
         categoryDao.observeAll().map { entities ->
-            entities.map { Category(emoji = it.emoji, nombre = it.name) }
+            entities.distinctBy { categoryKey(it.name) }
+                .map { Category(emoji = it.emoji, nombre = it.name) }
         }
 
     suspend fun initializeCatalog(): Result<Int> {
         return try {
             val inserted = database.withTransaction {
-                val defaultCategories = categoryList.map {
+                val knownCategories = categoryDao.getAll().mapTo(mutableSetOf()) { categoryKey(it.name) }
+                val defaults = categoryList.map {
                     ProductCategoryEntity(name = it.nombre, emoji = it.emoji)
                 }
-                categoryDao.insertAllIgnore(defaultCategories)
-
-                productDao.getDistinctCategories().forEach { name ->
-                    if (name.isNotBlank()) categoryDao.insertIgnore(categoryEntity(name))
-                }
+                val legacyCategories = productDao.getDistinctCategories().map(::categoryEntity)
+                categoryDao.insertAllIgnore((defaults + legacyCategories).filter { knownCategories.add(categoryKey(it.name)) })
 
                 if (productDao.countProducts() > 0) {
                     return@withTransaction 0
@@ -110,8 +109,10 @@ class ProductRepository(
     fun observeCatalog(): Flow<List<ProductEntity>> = productDao.observeActiveProducts()
     fun observeAllProducts(): Flow<List<ProductEntity>> = productDao.observeAllProducts()
     fun observeProduct(id: Int): Flow<ProductEntity?> = productDao.observeProduct(id)
-    fun observeByCategory(category: String): Flow<List<ProductEntity>> =
-        productDao.observeByCategory(category.trim())
+    fun observeByCategory(category: String): Flow<List<ProductEntity>> {
+        val key = categoryKey(category)
+        return productDao.observeActiveProducts().map { products -> products.filter { categoryKey(it.category) == key } }
+    }
     fun searchProducts(query: String): Flow<List<ProductEntity>> =
         productDao.searchProducts(query.trim())
     fun observeNewProducts(): Flow<List<ProductEntity>> = productDao.observeNewProducts()
@@ -127,13 +128,13 @@ class ProductRepository(
 
     fun observeProductCount(): Flow<Int> = productDao.observeProductCount()
     fun observeOutOfStockCount(): Flow<Int> = productDao.observeOutOfStockCount()
-    fun observeTotalUnits(): Flow<Int> = productDao.observeTotalUnits()
+    fun observeTotalUnits(): Flow<Long> = productDao.observeTotalUnits()
 
     suspend fun createCategory(
         role: UserRole,
         name: String
     ): ProductOperationResult {
-        if (!hasWorkshopPermission(role)) return denied()
+        val workshop = workshopFor(role) ?: return denied()
 
         val cleanName = name.trim()
         if (cleanName.length < 2) {
@@ -142,29 +143,16 @@ class ProductRepository(
             )
         }
 
-        return try {
-            database.withTransaction {
-                if (categoryDao.findByName(cleanName) != null) {
-                    return@withTransaction ProductOperationResult.Error(
-                        "Esa categoría ya existe."
-                    )
-                }
+        if (cleanName.any(Char::isISOControl)) {
+            return ProductOperationResult.Error("El nombre de la categoría contiene caracteres no válidos.")
+        }
 
-                val inserted = categoryDao.insertIgnore(categoryEntity(cleanName))
-                if (inserted == -1L) {
-                    ProductOperationResult.Error("Esa categoría ya existe.")
-                } else {
-                    ProductOperationResult.Success(
-                        message = "Categoría creada correctamente."
-                    )
-                }
+        return modifyInventory(workshop, "No fue posible crear la categoría.") {
+            if (findCategory(cleanName) != null || categoryDao.insertIgnore(categoryEntity(cleanName)) == -1L) {
+                ProductOperationResult.Error("Esa categoría ya existe.")
+            } else {
+                ProductOperationResult.Success(message = "Categoría creada correctamente.")
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ProductOperationResult.Error(
-                e.message ?: "No fue posible crear la categoría."
-            )
         }
     }
 
@@ -182,7 +170,7 @@ class ProductRepository(
         promotionPriceCop: Long?,
         imageUri: String? = null
     ): ProductOperationResult {
-        if (!hasWorkshopPermission(role)) return denied()
+        val workshop = workshopFor(role) ?: return denied()
 
         val cleanName = name.trim()
         val cleanDescription = description.trim()
@@ -201,12 +189,12 @@ class ProductRepository(
         )
         if (validation != null) return ProductOperationResult.Error(validation)
 
-        return try {
+        return modifyInventory(workshop, "No fue posible registrar el repuesto.") {
             val now = System.currentTimeMillis()
             val product = ProductEntity(
                 name = cleanName,
                 description = cleanDescription,
-                category = cleanCategory,
+                category = resolveCategory(cleanCategory),
                 priceCop = priceCop,
                 promotionPriceCop = if (isOnPromotion) promotionPriceCop else null,
                 imageRes = imageRes,
@@ -221,20 +209,9 @@ class ProductRepository(
                 updatedAtMillis = now
             )
 
-            val id = database.withTransaction {
-                categoryDao.insertIgnore(categoryEntity(cleanCategory))
-                productDao.insert(product).toInt()
-            }
-
             ProductOperationResult.Success(
-                productId = id,
+                productId = Math.toIntExact(productDao.insert(product)),
                 message = "Repuesto creado con éxito."
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ProductOperationResult.Error(
-                e.message ?: "No fue posible registrar el repuesto."
             )
         }
     }
@@ -243,7 +220,7 @@ class ProductRepository(
         role: UserRole,
         product: ProductEntity
     ): ProductOperationResult {
-        if (!hasWorkshopPermission(role)) return denied()
+        val workshop = workshopFor(role) ?: return denied()
         if (product.id <= 0) {
             return ProductOperationResult.Error("El identificador del producto no es válido.")
         }
@@ -255,54 +232,30 @@ class ProductRepository(
             priceCop = product.priceCop,
             imageRes = product.imageRes,
             imageUri = product.imageUri,
-            stock = product.stock,
             isOnPromotion = product.isOnPromotion,
             promotionPriceCop = product.promotionPriceCop
         )
         if (validation != null) return ProductOperationResult.Error(validation)
 
-        return try {
-            database.withTransaction {
-                val existing = productDao.findById(product.id)
-                    ?: return@withTransaction ProductOperationResult.Error(
-                        "El producto no existe."
-                    )
+        return modifyInventory(workshop, "No fue posible actualizar el repuesto.") {
+            val existing = productDao.findById(product.id)?.takeIf { it.isActive }
+                ?: return@modifyInventory ProductOperationResult.Error("El repuesto no está activo.")
 
-                val cleanName = product.name.trim()
-                val updated = product.copy(
-                    name = cleanName,
-                    description = product.description.trim(),
-                    category = product.category.trim(),
-                    contentDescription = product.contentDescription.trim().ifBlank { cleanName },
-                    promotionPriceCop = if (product.isOnPromotion) {
-                        product.promotionPriceCop
-                    } else {
-                        null
-                    },
-                    rating = existing.rating,
-                    stock = existing.stock,
-                    isActive = existing.isActive,
-                    createdAtMillis = existing.createdAtMillis,
-                    updatedAtMillis = System.currentTimeMillis()
-                )
-
-                categoryDao.insertIgnore(categoryEntity(updated.category))
-                val rows = productDao.update(updated)
-                if (rows > 0) {
-                    ProductOperationResult.Success(
-                        productId = product.id,
-                        message = "Repuesto actualizado correctamente."
-                    )
-                } else {
-                    ProductOperationResult.Error("No se pudo actualizar el repuesto.")
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ProductOperationResult.Error(
-                e.message ?: "Error al actualizar el repuesto."
+            val cleanName = product.name.trim()
+            val updated = product.copy(
+                name = cleanName,
+                description = product.description.trim(),
+                category = resolveCategory(product.category.trim()),
+                contentDescription = product.contentDescription.trim().ifBlank { cleanName },
+                promotionPriceCop = product.promotionPriceCop.takeIf { product.isOnPromotion },
+                rating = existing.rating,
+                stock = existing.stock,
+                isActive = existing.isActive,
+                createdAtMillis = existing.createdAtMillis,
+                updatedAtMillis = System.currentTimeMillis()
             )
+            check(productDao.update(updated) == 1)
+            ProductOperationResult.Success(product.id, "Repuesto actualizado correctamente.")
         }
     }
 
@@ -315,7 +268,7 @@ class ProductRepository(
         productId: Int,
         delta: Int
     ): ProductOperationResult {
-        if (!hasWorkshopPermission(role)) return denied()
+        val workshop = workshopFor(role) ?: return denied()
         if (productId <= 0) {
             return ProductOperationResult.Error("El producto seleccionado no es válido.")
         }
@@ -323,51 +276,20 @@ class ProductRepository(
             return ProductOperationResult.Error("Indica una cantidad mayor que cero.")
         }
 
-        return try {
-            database.withTransaction {
-                val product = productDao.findById(productId)
-                    ?: return@withTransaction ProductOperationResult.Error(
-                        "No se encontró el repuesto."
-                    )
-
-                if (!product.isActive) {
-                    return@withTransaction ProductOperationResult.Error(
-                        "Este repuesto está retirado del catálogo."
-                    )
-                }
-
-                val resultingStock = product.stock.toLong() + delta.toLong()
-                if (resultingStock < 0L) {
-                    return@withTransaction ProductOperationResult.Error(
-                        "No puedes disminuir más unidades de las disponibles."
-                    )
-                }
-                if (resultingStock > Int.MAX_VALUE) {
-                    return@withTransaction ProductOperationResult.Error(
-                        "La cantidad supera el límite permitido."
-                    )
-                }
-
-                val rows = productDao.updateStock(
-                    productId = productId,
-                    newStock = resultingStock.toInt()
-                )
-                if (rows == 1) {
-                    val action = if (delta > 0) "aumentado" else "disminuido"
-                    ProductOperationResult.Success(
-                        productId = productId,
-                        message = "Stock $action correctamente. Existencias: ${resultingStock.toInt()}."
-                    )
-                } else {
-                    ProductOperationResult.Error("No fue posible actualizar el inventario.")
-                }
+        return modifyInventory(workshop, "No fue posible modificar el inventario.") {
+            val availableStock = productDao.getAvailableStock(productId)
+                ?: return@modifyInventory ProductOperationResult.Error("El repuesto no está activo.")
+            val resultingStock = availableStock.toLong() + delta.toLong()
+            if (resultingStock < 0L) {
+                return@modifyInventory ProductOperationResult.Error("No puedes disminuir más unidades de las disponibles.")
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ProductOperationResult.Error(
-                e.message ?: "No fue posible modificar el inventario."
-            )
+            if (resultingStock > Int.MAX_VALUE) {
+                return@modifyInventory ProductOperationResult.Error("La cantidad supera el límite permitido.")
+            }
+
+            check(productDao.updateStock(productId, resultingStock.toInt()) == 1)
+            val action = if (delta > 0) "aumentado" else "disminuido"
+            ProductOperationResult.Success(productId, "Stock $action correctamente. Existencias: $resultingStock.")
         }
     }
 
@@ -376,7 +298,7 @@ class ProductRepository(
         productId: Int,
         newStock: Int
     ): ProductOperationResult {
-        if (!hasWorkshopPermission(role)) return denied()
+        val workshop = workshopFor(role) ?: return denied()
         if (productId <= 0) {
             return ProductOperationResult.Error("El producto seleccionado no es válido.")
         }
@@ -384,22 +306,12 @@ class ProductRepository(
             return ProductOperationResult.Error("Las existencias no pueden ser negativas.")
         }
 
-        return try {
-            val updated = productDao.updateStock(productId, newStock)
-            if (updated > 0) {
-                ProductOperationResult.Success(
-                    productId = productId,
-                    message = "Inventario actualizado correctamente."
-                )
-            } else {
-                ProductOperationResult.Error("No se encontró el producto.")
+        return modifyInventory(workshop, "No fue posible actualizar el inventario.") {
+            if (productDao.getAvailableStock(productId) == null) {
+                return@modifyInventory ProductOperationResult.Error("El repuesto no está activo.")
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ProductOperationResult.Error(
-                e.message ?: "No fue posible actualizar el inventario."
-            )
+            check(productDao.updateStock(productId, newStock) == 1)
+            ProductOperationResult.Success(productId, "Inventario actualizado correctamente.")
         }
     }
 
@@ -407,12 +319,12 @@ class ProductRepository(
         role: UserRole,
         productId: Int
     ): ProductOperationResult {
-        if (!hasWorkshopPermission(role)) return denied()
+        val workshop = workshopFor(role) ?: return denied()
         if (productId <= 0) {
             return ProductOperationResult.Error("El producto seleccionado no es válido.")
         }
 
-        return try {
+        return modifyInventory(workshop, "No se pudo eliminar el repuesto.") {
             val updated = productDao.deactivate(productId)
             if (updated > 0) {
                 ProductOperationResult.Success(
@@ -420,15 +332,39 @@ class ProductRepository(
                     message = "Repuesto eliminado del catálogo correctamente."
                 )
             } else {
-                ProductOperationResult.Error("No se encontró el repuesto.")
+                ProductOperationResult.Error("El repuesto no está activo.")
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ProductOperationResult.Error(
-                e.message ?: "No se pudo eliminar el repuesto."
-            )
         }
+    }
+
+    private suspend fun findCategory(name: String): ProductCategoryEntity? {
+        val key = categoryKey(name)
+        return categoryDao.getAll().firstOrNull { categoryKey(it.name) == key }
+    }
+
+    private suspend fun resolveCategory(name: String): String =
+        findCategory(name)?.name ?: name.also { check(categoryDao.insertIgnore(categoryEntity(it)) != -1L) }
+
+    private fun matchesWorkshop(candidate: UserEntity?, workshop: UserEntity): Boolean =
+        candidate?.id == workshop.id && candidate.remoteAuthId == workshop.remoteAuthId && candidate.role == UserRole.WORKSHOP.name
+
+    private suspend fun modifyInventory(
+        workshop: UserEntity,
+        fallbackMessage: String,
+        operation: suspend () -> ProductOperationResult
+    ): ProductOperationResult = try {
+        database.withTransaction {
+            if (!matchesWorkshop(sessionManager.currentUser.value, workshop) ||
+                !matchesWorkshop(database.userDao().findById(workshop.id), workshop)
+            ) return@withTransaction denied()
+            val result = operation()
+            check(matchesWorkshop(sessionManager.currentUser.value, workshop))
+            result
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        ProductOperationResult.Error(fallbackMessage)
     }
 
     private fun validateProduct(
@@ -438,18 +374,18 @@ class ProductRepository(
         priceCop: Long,
         imageRes: Int,
         imageUri: String? = null,
-        stock: Int,
+        stock: Int? = null,
         isOnPromotion: Boolean,
         promotionPriceCop: Long?
     ): String? {
         if (name.trim().length < 3) return "El nombre debe tener al menos 3 caracteres."
         if (description.isBlank()) return "La descripción es obligatoria."
-        if (category.isBlank()) return "Selecciona una categoría."
+        if (category.isBlank() || category.any(Char::isISOControl)) return "Selecciona una categoría válida."
         if (priceCop <= 0) return "El precio debe ser mayor que cero."
         if (imageRes <= 0 && imageUri.isNullOrBlank()) {
             return "Selecciona una fotografía válida."
         }
-        if (stock < 0) return "Las existencias no pueden ser negativas."
+        if (stock != null && stock < 0) return "Las existencias no pueden ser negativas."
 
         if (isOnPromotion) {
             if (promotionPriceCop == null || promotionPriceCop <= 0) {

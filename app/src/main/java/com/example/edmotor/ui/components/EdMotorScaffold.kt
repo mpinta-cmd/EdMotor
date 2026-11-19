@@ -53,6 +53,7 @@ import com.example.edmotor.ui.theme.AppThemeMode
 fun EdMotorScaffold(
     currentRoute: String?,
     cartCount: Int,
+    hasCartItems: Boolean,
     pendingOrderCount: Int = 0,
     pendingAppointmentCount: Int = 0,
     themeMode: AppThemeMode,
@@ -111,8 +112,11 @@ fun EdMotorScaffold(
 
     val isDetailRoute =
         currentRoute == Routes.PRODUCT_DETAIL ||
-                currentRoute?.startsWith("historialMantenimiento/") == true ||
-                currentRoute?.startsWith("formularioMantenimiento/") == true
+                currentRoute == Routes.MAINTENANCE_HISTORY ||
+                currentRoute == Routes.MAINTENANCE_FORM ||
+                currentRoute == Routes.PRODUCT_MANAGEMENT ||
+                currentRoute == Routes.PRODUCT_CREATE ||
+                currentRoute == Routes.PRODUCT_EDIT
 
     Scaffold(
         modifier = Modifier
@@ -167,7 +171,7 @@ fun EdMotorScaffold(
         floatingActionButton = {
             AnimatedVisibility(
                 visible =
-                    cartCount > 0 &&
+                    hasCartItems &&
                             currentRoute != Routes.CAR &&
                             !isDetailRoute,
 
@@ -193,10 +197,10 @@ fun EdMotorScaffold(
 
                     text = {
                         Text(
-                            if (cartCount > 99) {
-                                "Carrito · 99+"
-                            } else {
-                                "Carrito · $cartCount"
+                            when {
+                                cartCount > 99 -> "Carrito · 99+"
+                                cartCount > 0 -> "Carrito · $cartCount"
+                                else -> "Carrito"
                             }
                         )
                     },

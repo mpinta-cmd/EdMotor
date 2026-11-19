@@ -86,6 +86,7 @@ class OrderRepository(
                 )
                 orderDao.insertOrderItems(orderItems.map { it.copy(orderId = orderId) })
                 cartDao.clearForUser(activeClient.id)
+                requireActiveSession(client, UserRole.CLIENT)
 
                 OrderOperationResult.Success("Pedido #$orderId guardado en este dispositivo.")
             }
@@ -123,6 +124,7 @@ class OrderRepository(
                 updatedAtMillis = now
             )
             check(updated == 1) { "Este pedido ya fue procesado." }
+            requireActiveSession(workshop, UserRole.WORKSHOP)
             OrderOperationResult.Success("Pedido #$orderId confirmado. Inventario actualizado.")
         }
     }
@@ -131,22 +133,35 @@ class OrderRepository(
         workshop: UserEntity,
         orderId: Int
     ): OrderOperationResult = orderOperation("No fue posible rechazar el pedido.") {
-        requireActiveUser(workshop, UserRole.WORKSHOP)
-        val updated = orderDao.updateOrderStatus(
-            orderId = requireOrderId(orderId),
-            status = OrderStatus.REJECTED,
-            updatedAtMillis = System.currentTimeMillis()
-        )
-        check(updated == 1) { "El pedido no existe o ya fue procesado." }
-        OrderOperationResult.Success("Pedido #$orderId rechazado.")
+        database.withTransaction {
+            requireActiveUser(workshop, UserRole.WORKSHOP)
+            val updated = orderDao.updateOrderStatus(
+                orderId = requireOrderId(orderId),
+                status = OrderStatus.REJECTED,
+                updatedAtMillis = System.currentTimeMillis()
+            )
+            check(updated == 1) { "El pedido no existe o ya fue procesado." }
+            requireActiveSession(workshop, UserRole.WORKSHOP)
+            OrderOperationResult.Success("Pedido #$orderId rechazado.")
+        }
     }
 
-    private fun requireActiveUser(user: UserEntity, requiredRole: UserRole): UserEntity {
+    private suspend fun requireActiveUser(user: UserEntity, requiredRole: UserRole): UserEntity {
+        requireActiveSession(user, requiredRole)
+        val persisted = database.userDao().findById(user.id)
+        check(persisted?.remoteAuthId == user.remoteAuthId && persisted?.role == requiredRole.name) {
+            "La cuenta activa ya no tiene permiso para realizar esta operación."
+        }
+        return requireNotNull(persisted)
+    }
+
+    private fun requireActiveSession(user: UserEntity, requiredRole: UserRole) {
         val active = sessionManager.currentUser.value
-        check(active != null && active.id > 0 && active.id == user.id && active.role == requiredRole.name) {
+        check(user.id > 0 && user.role == requiredRole.name && active?.id == user.id &&
+            active.remoteAuthId == user.remoteAuthId && active.role == requiredRole.name
+        ) {
             "La sesión activa no tiene permiso para realizar esta operación."
         }
-        return active
     }
 
     private fun requireOrderId(orderId: Int): Long {
@@ -163,8 +178,12 @@ class OrderRepository(
         throw e
     } catch (_: ArithmeticException) {
         OrderOperationResult.Error("El pedido supera los límites de almacenamiento.")
-    } catch (e: Exception) {
+    } catch (e: IllegalArgumentException) {
         OrderOperationResult.Error(e.message ?: fallbackMessage)
+    } catch (e: IllegalStateException) {
+        OrderOperationResult.Error(e.message ?: fallbackMessage)
+    } catch (_: Exception) {
+        OrderOperationResult.Error(fallbackMessage)
     }
 }
 
@@ -180,7 +199,7 @@ private fun StoredOrderWithItems.toModel() = OrderWithItems(
         createdAtMillis = order.createdAtMillis,
         confirmedAtMillis = order.confirmedAtMillis
     ),
-    items = items.map {
+    items = items.sortedBy { it.id }.map {
         OrderItem(it.productName, it.category, it.unitPriceCop, it.quantity, it.subtotalCop)
     }
 )

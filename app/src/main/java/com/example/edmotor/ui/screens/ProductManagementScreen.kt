@@ -2,10 +2,14 @@ package com.example.edmotor.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,7 +37,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.edmotor.data.local.ProductEntity
 import com.example.edmotor.ui.components.StockAdjustmentDialog
 import com.example.edmotor.viewmodel.ProductViewModel
@@ -53,13 +57,14 @@ import java.util.Locale
 fun ProductManagementScreen(
     viewModel: ProductViewModel,
     onCreateProduct: () -> Unit,
-    onEditProduct: (ProductEntity) -> Unit
+    onEditProduct: (ProductEntity) -> Unit,
+    onBack: () -> Unit
 ) {
-    val products by viewModel.products.collectAsState()
-    val query by viewModel.searchQuery.collectAsState()
-    val isSaving by viewModel.isSaving.collectAsState()
-    val message by viewModel.message.collectAsState()
-    val isError by viewModel.isError.collectAsState()
+    val products by viewModel.products.collectAsStateWithLifecycle()
+    val query by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
+    val message by viewModel.message.collectAsStateWithLifecycle()
+    val isError by viewModel.isError.collectAsStateWithLifecycle()
 
     var stockProduct by remember { mutableStateOf<ProductEntity?>(null) }
     var stockIncrease by remember { mutableStateOf(true) }
@@ -72,13 +77,14 @@ fun ProductManagementScreen(
                     it.description.contains(query, true)
         }
     }
-    val availableUnits = products.sumOf { it.stock.coerceAtLeast(0) }
+    val availableUnits = products.sumOf { it.stock.coerceAtLeast(0).toLong() }
     val outOfStock = products.count { it.stock <= 0 && it.isActive }
 
     Scaffold(
         floatingActionButton = {
             Button(
                 onClick = onCreateProduct,
+                enabled = !isSaving,
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
@@ -86,100 +92,111 @@ fun ProductManagementScreen(
             }
         }
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp)
+                .consumeWindowInsets(padding)
+                .imePadding(),
+            verticalArrangement = Arrangement.spacedBy(11.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 90.dp)
         ) {
-            Text(
-                "Administración de inventario",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.padding(top = 16.dp)
-            )
-            Text(
-                "Edita repuestos, registra entradas y salidas y retira productos del catálogo.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 5.dp, bottom = 16.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                InventoryMetric("Productos", products.size.toString(), Modifier.weight(1f))
-                InventoryMetric("Unidades", availableUnits.toString(), Modifier.weight(1f))
-                InventoryMetric(
-                    "Agotados",
-                    outOfStock.toString(),
-                    Modifier.weight(1f),
-                    warning = outOfStock > 0
+            item(key = "title") {
+                Column {
+                    TextButton(onClick = onBack) { Text("Volver") }
+                    Text(
+                        "Administración de inventario",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        "Edita repuestos, registra entradas y salidas y retira productos del catálogo.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+                }
+            }
+            item(key = "metrics") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    InventoryMetric("Productos", products.size.toString(), Modifier.weight(1f))
+                    InventoryMetric("Unidades", availableUnits.toString(), Modifier.weight(1f))
+                    InventoryMetric(
+                        "Agotados",
+                        outOfStock.toString(),
+                        Modifier.weight(1f),
+                        warning = outOfStock > 0
+                    )
+                }
+            }
+            item(key = "search") {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = viewModel::updateSearchQuery,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Buscar repuestos") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(15.dp)
                 )
             }
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = viewModel::updateSearchQuery,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                placeholder = { Text("Buscar repuestos...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                singleLine = true,
-                shape = RoundedCornerShape(15.dp)
-            )
-
             if (isSaving) {
-                CircularProgressIndicator(
-                    modifier = Modifier.padding(5.dp).size(20.dp),
-                    strokeWidth = 2.dp
-                )
+                item(key = "loading") {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(5.dp).size(20.dp),
+                        strokeWidth = 2.dp
+                    )
+                }
             }
-
-            if (message != null) {
-                Text(
-                    text = message.orEmpty(),
-                    color = if (isError) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
+            message?.let { status ->
+                item(key = "message") {
+                    Text(
+                        text = status,
+                        color = if (isError) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
 
             if (filteredProducts.isEmpty()) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(30.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        Icons.Default.Inventory2,
-                        contentDescription = null,
-                        modifier = Modifier.size(42.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text("No hay repuestos registrados.", modifier = Modifier.padding(top = 12.dp))
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(11.dp),
-                    contentPadding = PaddingValues(bottom = 90.dp)
-                ) {
-                    items(filteredProducts, key = { it.id }) { product ->
-                        ProductManagementCard(
-                            product = product,
-                            onEdit = { onEditProduct(product) },
-                            onIncrease = {
-                                stockProduct = product
-                                stockIncrease = true
-                            },
-                            onDecrease = {
-                                stockProduct = product
-                                stockIncrease = false
-                            },
-                            onDelete = { deleteProduct = product }
+                item(key = "empty") {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(30.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            Icons.Default.Inventory2,
+                            contentDescription = null,
+                            modifier = Modifier.size(42.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            if (query.isBlank()) "No hay repuestos registrados."
+                            else "No encontramos repuestos para esta búsqueda.",
+                            modifier = Modifier.padding(top = 12.dp)
                         )
                     }
+                }
+            } else {
+                items(filteredProducts, key = { it.id }) { product ->
+                    ProductManagementCard(
+                        product = product,
+                        enabled = !isSaving,
+                        onEdit = { onEditProduct(product) },
+                        onIncrease = {
+                            stockProduct = product
+                            stockIncrease = true
+                        },
+                        onDecrease = {
+                            stockProduct = product
+                            stockIncrease = false
+                        },
+                        onDelete = { deleteProduct = product }
+                    )
                 }
             }
         }
@@ -214,6 +231,7 @@ fun ProductManagementScreen(
             },
             confirmButton = {
                 TextButton(
+                    enabled = !isSaving,
                     onClick = {
                         viewModel.deleteProduct(product.id)
                         deleteProduct = null
@@ -256,9 +274,11 @@ private fun InventoryMetric(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProductManagementCard(
     product: ProductEntity,
+    enabled: Boolean,
     onEdit: () -> Unit,
     onIncrease: () -> Unit,
     onDecrease: () -> Unit,
@@ -291,10 +311,10 @@ private fun ProductManagementCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                IconButton(onClick = onEdit) {
+                IconButton(onClick = onEdit, enabled = enabled) {
                     Icon(Icons.Default.Edit, contentDescription = "Editar producto")
                 }
-                IconButton(onClick = onDelete) {
+                IconButton(onClick = onDelete, enabled = enabled) {
                     Icon(
                         Icons.Default.Delete,
                         contentDescription = "Eliminar producto",
@@ -312,39 +332,26 @@ private fun ProductManagementCard(
                 )
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column {
-                    Text("Stock: ${product.stock}", fontWeight = FontWeight.Bold)
-                    val statusColor = when {
-                        product.stock <= 0 -> MaterialTheme.colorScheme.error
-                        product.stock <= 3 -> Color(0xFFB7791F)
-                        else -> MaterialTheme.colorScheme.primary
-                    }
-                    Text(
-                        product.availabilityLabel,
-                        color = statusColor,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+            Column {
+                Text("Stock: ${product.stock}", fontWeight = FontWeight.Bold)
+                val statusColor = when {
+                    product.stock <= 0 -> MaterialTheme.colorScheme.error
+                    product.stock <= 3 -> Color(0xFFB7791F)
+                    else -> MaterialTheme.colorScheme.primary
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(
-                        onClick = onDecrease,
-                        enabled = product.stock > 0,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Disminuir")
-                    }
-                    FilledTonalButton(
-                        onClick = onIncrease,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Aumentar")
-                    }
+                Text(
+                    product.availabilityLabel,
+                    color = statusColor,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = onDecrease, enabled = enabled && product.stock > 0) {
+                    Text("Disminuir")
+                }
+                FilledTonalButton(onClick = onIncrease, enabled = enabled) {
+                    Text("Aumentar")
                 }
             }
 

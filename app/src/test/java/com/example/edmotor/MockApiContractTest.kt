@@ -5,8 +5,12 @@ import com.example.edmotor.data.remote.MockApiService
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
 import com.example.edmotor.data.remote.MockProfileCreateDto
+import com.example.edmotor.data.remote.createMockApiService
+import com.example.edmotor.data.remote.hasConfirmedOverlap
 import com.example.edmotor.data.remote.listAppointments
 import com.example.edmotor.data.remote.mockAppointmentFailureMessage
+import com.example.edmotor.data.remote.submitAppointment
+import com.example.edmotor.data.remote.submitAppointmentStatus
 import com.google.gson.JsonParser
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
@@ -142,7 +146,7 @@ class MockApiContractTest {
         ) { newApi ->
             val api = newApi()
             assertTrue(api.listAppointments("3").isEmpty())
-            val created = api.createAppointment(MockAppointmentCreateDto(
+            val created = api.submitAppointment(MockAppointmentCreateDto(
                 profileId = "3",
                 serviceType = "Revisión general",
                 vehicleBrand = "Vehículo",
@@ -166,6 +170,91 @@ class MockApiContractTest {
             "POST /api/v1/appointments",
             "GET /api/v1/appointments?profileId=3"
         ), routes.toList())
+    }
+
+    @Test
+    fun ambiguousPostReconcilesExactAttemptWithoutRetryingTheWrite() {
+        val routes = ConcurrentLinkedQueue<String>()
+        val otherAttempt = EXISTING_APPOINTMENT.replace("1790000000000", "1790000000001")
+        val requestedAppointment = EXISTING_APPOINTMENT.replace("\"id\":\"7\"", "\"id\":\"8\"")
+        withAppointmentEndpoint(
+            headers = mapOf("Retry-After" to "0"),
+            respond = { route, _ ->
+                routes.add(route)
+                when (route) {
+                    "POST /api/v1/appointments" -> 503 to "\"Response lost\""
+                    "GET /api/v1/appointments?profileId=1" -> 200 to "[$otherAttempt,$requestedAppointment]"
+                    else -> 500 to "\"Unexpected route\""
+                }
+            }
+        ) { newApi -> assertEquals("8", newApi().submitAppointment(REQUEST).id) }
+        assertEquals(listOf("POST /api/v1/appointments", "GET /api/v1/appointments?profileId=1"), routes.toList())
+    }
+
+    @Test
+    fun appointmentWritesDoNotFollowRedirects() {
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(
+            headers = mapOf("Location" to "/api/v1/appointments/redirected"),
+            respond = { route, _ ->
+                routes.add(route)
+                302 to "\"Redirected\""
+            }
+        ) { newApi ->
+            val failure = runCatching { newApi().createAppointment(REQUEST) }.exceptionOrNull()
+            assertEquals(302, (failure as? HttpException)?.code())
+        }
+        assertEquals(listOf("POST /api/v1/appointments"), routes.toList())
+    }
+
+    @Test
+    fun ambiguousPutRecoversCurrentStatusWithoutReplaying() {
+        val routes = ConcurrentLinkedQueue<String>()
+        val confirmed = EXISTING_APPOINTMENT.replace("PENDING", "CONFIRMED")
+        withAppointmentEndpoint(
+            headers = mapOf("Retry-After" to "0"),
+            respond = { route, _ ->
+                when (route) {
+                    "PUT /api/v1/appointments/7" -> {
+                        routes.add(route)
+                        503 to "\"Response lost\""
+                    }
+                    "GET /api/v1/appointments/7" -> {
+                        val wasUpdated = routes.peek() != null
+                        routes.add(route)
+                        200 to if (wasUpdated) confirmed else EXISTING_APPOINTMENT
+                    }
+                    else -> 500 to "\"Unexpected route\""
+                }
+            }
+        ) { newApi ->
+            val api = newApi()
+            val target = api.getAppointment("7")
+            api.submitAppointmentStatus(target, MockAppointmentStatusDto("CONFIRMED", 1_790_000_001_000))
+        }
+        assertEquals(listOf("GET /api/v1/appointments/7", "PUT /api/v1/appointments/7", "GET /api/v1/appointments/7"), routes.toList())
+    }
+
+    @Test
+    fun overlapUsesOnlySchedulingFieldsAndRejectsUnknownConfirmedTime() {
+        val agenda = AtomicReference<String>()
+        withAppointmentEndpoint(respond = { route, _ ->
+            when (route) {
+                "GET /api/v1/appointments/7" -> 200 to EXISTING_APPOINTMENT
+                "GET /api/v1/appointments" -> 200 to agenda.get()
+                else -> 500 to "\"Unexpected route\""
+            }
+        }) { newApi ->
+            val api = newApi()
+            val target = api.getAppointment("7")
+            // Other vehicle fields cannot invalidate a well-defined slot.
+            agenda.set("""[$EXISTING_APPOINTMENT,{"id":"8","scheduledAtMillis":1800000000000,"status":"CONFIRMED","vehicleYear":"old"}]""")
+            assertTrue(api.hasConfirmedOverlap(target))
+            agenda.set("""[$EXISTING_APPOINTMENT,{"id":"8","scheduledAtMillis":1800003600000,"status":"CONFIRMED"}]""")
+            assertEquals(false, api.hasConfirmedOverlap(target))
+            agenda.set("""[$EXISTING_APPOINTMENT,{"id":"8","status":"CONFIRMED"}]""")
+            assertTrue(runCatching { api.hasConfirmedOverlap(target) }.isFailure)
+        }
     }
 
     @Test
@@ -206,6 +295,7 @@ class MockApiContractTest {
         val routes = ConcurrentLinkedQueue<String>()
         val conflicting = EXISTING_APPOINTMENT.replace("\"id\":\"7\"", "\"id\":\"6\"")
         val otherVersion = conflicting.replace("PENDING", "CONFIRMED")
+        val optionalFieldsMissing = """{"id":"8","profileId":"1","scheduledAtMillis":1800000000000,"status":"PENDING"}"""
         withAppointmentEndpoint(
             respond = { route, _ ->
                 routes.add(route)
@@ -215,11 +305,12 @@ class MockApiContractTest {
                     $conflicting,
                     $otherVersion,
                     $EXISTING_APPOINTMENT,
-                    $EXISTING_APPOINTMENT
+                    $EXISTING_APPOINTMENT,
+                    $optionalFieldsMissing
                 ]""".trimIndent()
             }
         ) { newApi ->
-            assertEquals("7", newApi().listAppointments("1").single().id)
+            assertEquals(listOf("7", "8"), newApi().listAppointments("1").map { it.id })
         }
         assertEquals(listOf("GET /api/v1/appointments?profileId=1"), routes.toList())
     }
@@ -236,6 +327,7 @@ class MockApiContractTest {
     }
 
     private fun withAppointmentEndpoint(
+        headers: Map<String, String> = emptyMap(),
         respond: (route: String, body: String) -> Pair<Int, String>,
         assertions: suspend (() -> MockApiService) -> Unit
     ) {
@@ -246,18 +338,13 @@ class MockApiContractTest {
             val (status, response) = respond(route, body)
             val payload = response.toByteArray(Charsets.UTF_8)
             exchange.responseHeaders.set("Content-Type", "application/json")
+            headers.forEach { (name, value) -> exchange.responseHeaders.set(name, value) }
             exchange.sendResponseHeaders(status, payload.size.toLong())
             exchange.responseBody.use { it.write(payload) }
         }
         server.start()
         try {
-            val newApi = {
-                Retrofit.Builder()
-                    .baseUrl("http://127.0.0.1:${server.address.port}/api/v1/")
-                    .addConverterFactory(GsonConverterFactory.create())
-                    .build()
-                    .create(MockApiService::class.java)
-            }
+            val newApi = { createMockApiService("http://127.0.0.1:${server.address.port}/api/v1/") }
             runBlocking { assertions(newApi) }
         } finally {
             server.stop(0)
@@ -266,5 +353,10 @@ class MockApiContractTest {
 
     private companion object {
         const val EXISTING_APPOINTMENT = """{"id":"7","profileId":"1","serviceType":"Revisión general","vehicleBrand":"Demo","vehicleModel":"Modelo","vehicleYear":2023,"scheduledAtMillis":1800000000000,"status":"PENDING","createdAtMillis":1790000000000,"updatedAtMillis":1790000000000}"""
+        val REQUEST = MockAppointmentCreateDto(
+            profileId = "1", serviceType = "Revisión general", vehicleBrand = "Demo", vehicleModel = "Modelo",
+            vehicleYear = 2023, scheduledAtMillis = 1_800_000_000_000, status = "PENDING",
+            createdAtMillis = 1_790_000_000_000, updatedAtMillis = 1_790_000_000_000
+        )
     }
 }

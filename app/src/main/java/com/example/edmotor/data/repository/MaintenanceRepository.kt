@@ -10,90 +10,125 @@ import com.example.edmotor.data.local.MaintenancePartEntity
 import com.example.edmotor.data.local.MaintenanceRecordEntity
 import com.example.edmotor.data.local.MaintenanceWithParts
 import com.example.edmotor.data.local.ProductDao
+import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.local.VehicleDao
 import com.example.edmotor.model.MaintenanceDraft
+import com.example.edmotor.model.MaintenancePartDraft
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.session.SessionManager
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 class MaintenanceRepository(
     private val database: EdMotorDatabase,
     private val maintenanceDao: MaintenanceDao,
     private val partDao: MaintenancePartDao,
     private val vehicleDao: VehicleDao,
-    private val productDao: ProductDao
+    private val productDao: ProductDao,
+    private val sessionManager: SessionManager
 ) {
 
-    private suspend fun requireWorkshop(userId: Int) {
-        if (userId <= 0) throw EdMotorException.PermissionDenied()
+    private fun requireActiveWorkshop(userId: Int): UserEntity =
+        sessionManager.currentUser.value
+            ?.takeIf { userId > 0 && it.id == userId && it.role == UserRole.WORKSHOP.name }
+            ?: throw EdMotorException.PermissionDenied("Solo el taller puede realizar esta operación.")
 
-        val user = database.userDao().findById(userId)
-            ?: throw EdMotorException.PermissionDenied()
+    private suspend fun requireStoredWorkshop(workshop: UserEntity) {
+        val stored = database.userDao().findById(workshop.id)
+        if (stored == null || stored.role != UserRole.WORKSHOP.name ||
+            stored.remoteAuthId != workshop.remoteAuthId ||
+            stored.createdAtMillis != workshop.createdAtMillis
+        ) {
+            throw EdMotorException.PermissionDenied("Solo el taller puede realizar esta operación.")
+        }
+        requireCurrentSession(workshop)
+    }
 
-        if (user.role != UserRole.WORKSHOP.name) {
-            throw EdMotorException.PermissionDenied(
-                "Solo el taller puede realizar esta operación."
-            )
+    private fun requireCurrentSession(workshop: UserEntity) {
+        if (sessionManager.currentUser.value !== workshop) {
+            throw EdMotorException.PermissionDenied("La sesión del taller cambió.")
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun observeForVehicle(
         vehicleId: Int,
-        requestingUserId: Int
-    ): Flow<List<MaintenanceWithParts>> = flow {
-        if (vehicleId <= 0 || requestingUserId <= 0) {
-            emit(emptyList())
-            return@flow
+        requestingUserId: Int,
+        requestingRole: String
+    ): Flow<List<MaintenanceWithParts>> = sessionManager.currentUser.flatMapLatest { user ->
+        if (vehicleId > 0 && requestingUserId > 0 && user?.id == requestingUserId && user.role == requestingRole) {
+            maintenanceDao.observeByVehicle(vehicleId, requestingUserId, requestingRole).map { records ->
+                if (sessionManager.currentUser.value === user) records else emptyList()
+            }
+        } else {
+            flowOf(emptyList())
         }
-
-        val user = database.userDao().findById(requestingUserId)
-        val vehicle = vehicleDao.findById(vehicleId)
-        val allowed = user != null && vehicle != null &&
-                (user.role == UserRole.WORKSHOP.name || vehicle.ownerUserId == user.id)
-
-        if (allowed) emitAll(maintenanceDao.observeByVehicle(vehicleId))
-        else emit(emptyList())
-    }
+    }.buffer(0).distinctUntilChanged()
 
     suspend fun findWithParts(
         recordId: Int,
         vehicleId: Int,
         requestingUserId: Int
     ): MaintenanceWithParts? {
-        requireWorkshop(requestingUserId)
+        val workshop = requireActiveWorkshop(requestingUserId)
         if (recordId <= 0 || vehicleId <= 0) {
             throw EdMotorException.Validation("Los datos del mantenimiento no son válidos.")
         }
 
-        val record = maintenanceDao.findByIdForVehicle(recordId, vehicleId)
-            ?: return null
-        return maintenanceDao.findWithParts(record.id)
+        return database.withTransaction {
+            requireStoredWorkshop(workshop)
+            maintenanceDao.findWithParts(recordId, vehicleId).also { requireCurrentSession(workshop) }
+        }
     }
 
-    /** Restituye al inventario los productos que ya estaban asociados al mantenimiento. */
-    private suspend fun restoreCatalogStock(parts: List<MaintenancePartEntity>) {
-        parts.forEach { part ->
-            val productId = part.catalogProductId ?: return@forEach
-            val quantity = part.quantity.toInt()
-            if (quantity <= 0 || quantity.toDouble() != part.quantity) {
+    private suspend fun adjustCatalogStock(
+        previousParts: List<MaintenancePartEntity>,
+        newParts: List<MaintenancePartDraft>
+    ) {
+        val quantityChanges = mutableMapOf<Int, Long>()
+        for (part in previousParts) {
+            val productId = part.catalogProductId ?: continue
+            if (!part.quantity.isFinite() || part.quantity < 1 || part.quantity % 1 != 0.0) {
                 throw EdMotorException.Validation(
-                    "No se puede restituir el stock de ${part.name}: la cantidad registrada no es entera."
+                    "No se puede ajustar el stock de ${part.name}: la cantidad registrada no es entera."
                 )
             }
 
-            val product = productDao.findById(productId) ?: return@forEach
-            val restoredStock = product.stock.toLong() + quantity
-            if (restoredStock > Int.MAX_VALUE) {
-                throw EdMotorException.Validation("Restituir ${part.name} supera el límite de existencias.")
+            // Las versiones anteriores descontaban con toInt(), que limita a Int.MAX_VALUE.
+            quantityChanges[productId] = quantityChanges.getOrDefault(productId, 0L) - part.quantity.toInt()
+        }
+        for (part in newParts) {
+            val productId = part.catalogProductId ?: continue
+            quantityChanges[productId] = quantityChanges.getOrDefault(productId, 0L) + part.quantity.toInt()
+        }
+
+        for ((productId, quantityChange) in quantityChanges) {
+            if (quantityChange == 0L) continue
+            val product = productDao.findById(productId)
+            if (product == null) {
+                if (quantityChange < 0) continue
+                throw EdMotorException.NotFound("El repuesto seleccionado ya no existe en el inventario.")
             }
-            val rows = productDao.updateStock(
-                productId = productId,
-                newStock = restoredStock.toInt()
-            )
-            if (rows != 1) {
+            if (quantityChange > 0 && !product.isActive) {
+                throw EdMotorException.Validation("${product.name} ya no está disponible en el inventario.")
+            }
+            val newStock = product.stock.toLong() - quantityChange
+            if (newStock < 0) {
                 throw EdMotorException.Validation(
-                    "No fue posible restituir las existencias de ${product.name}."
+                    "Stock insuficiente para ${product.name}. Necesitas $quantityChange unidades adicionales y hay ${product.stock}."
+                )
+            }
+            if (newStock > Int.MAX_VALUE) {
+                throw EdMotorException.Validation("Restituir ${product.name} supera el límite de existencias.")
+            }
+            if (productDao.updateStock(productId, newStock.toInt()) != 1) {
+                throw EdMotorException.Validation(
+                    "No fue posible actualizar el stock de ${product.name}."
                 )
             }
         }
@@ -105,7 +140,7 @@ class MaintenanceRepository(
         recordId: Int?,
         draft: MaintenanceDraft
     ) {
-        requireWorkshop(workshopUserId)
+        val workshop = requireActiveWorkshop(workshopUserId)
 
         if (vehicleId <= 0) {
             throw EdMotorException.Validation("Vehículo no válido.")
@@ -124,7 +159,7 @@ class MaintenanceRepository(
             throw EdMotorException.Validation("El identificador del mantenimiento no es válido.")
         }
 
-        val validParts = draft.parts.filter { it.name.isNotBlank() }
+        val validParts = draft.parts.filter { it.name.isNotBlank() || it.catalogProductId != null }
         validParts.forEach { part ->
             val error = EdMotorValidation.validateMaintenancePart(
                 name = part.name,
@@ -137,101 +172,75 @@ class MaintenanceRepository(
                 if (part.catalogProductId <= 0) {
                     throw EdMotorException.Validation("El repuesto seleccionado no es válido.")
                 }
-                if (part.quantity < 1.0 || part.quantity % 1.0 != 0.0) {
+                if (part.quantity !in 1.0..Int.MAX_VALUE.toDouble() || part.quantity % 1.0 != 0.0) {
                     throw EdMotorException.Validation(
-                        "La cantidad de un repuesto del inventario debe ser un número entero."
+                        "La cantidad de un repuesto del inventario debe ser un entero entre 1 y ${Int.MAX_VALUE}."
                     )
                 }
             }
         }
 
         database.withTransaction {
+            requireStoredWorkshop(workshop)
             val vehicle = vehicleDao.findById(vehicleId)
                 ?: throw EdMotorException.NotFound("No se encontró el vehículo.")
 
             val existing = recordId?.let { id ->
-                maintenanceDao.findByIdForVehicle(id, vehicleId)
+                maintenanceDao.findWithParts(id, vehicleId)
                     ?: throw EdMotorException.NotFound(
                         "El mantenimiento no pertenece a este vehículo."
                     )
             }
 
-            // Si se edita un mantenimiento, primero se devuelve al inventario
-            // lo que se había consumido en el registro anterior. La transacción
-            // revierte esta restitución si falla cualquier validación posterior.
-            if (existing != null) {
-                val previousParts = maintenanceDao.findWithParts(existing.id)?.parts.orEmpty()
-                restoreCatalogStock(previousParts)
-                partDao.deleteForRecord(existing.id)
+            val serviceDate = draft.serviceDate.trim()
+            val nextServiceDate = draft.nextServiceDate?.trim()?.takeIf { it.isNotEmpty() }
+            if (serviceDate != existing?.record?.serviceDate && !EdMotorValidation.isValidMaintenanceDate(serviceDate)) {
+                throw EdMotorException.Validation("Indica una fecha de mantenimiento válida (AAAA-MM-DD).")
+            }
+            if (nextServiceDate != null && nextServiceDate != existing?.record?.nextServiceDate &&
+                !EdMotorValidation.isValidMaintenanceDate(nextServiceDate)
+            ) {
+                throw EdMotorException.Validation("Indica una próxima fecha válida (AAAA-MM-DD).")
             }
 
-            // Descontar el stock de los repuestos seleccionados del catálogo.
-            // Los materiales escritos manualmente (catalogProductId = null)
-            // quedan registrados, pero no afectan el inventario.
-            validParts.forEach { part ->
-                val productId = part.catalogProductId ?: return@forEach
-                val quantity = part.quantity.toInt()
-                val product = productDao.findById(productId)
-                    ?: throw EdMotorException.NotFound(
-                        "El repuesto seleccionado ya no existe en el inventario."
-                    )
-
-                if (!product.isActive) {
-                    throw EdMotorException.Validation(
-                        "${product.name} ya no está disponible en el inventario."
-                    )
-                }
-                if (product.stock < quantity) {
-                    throw EdMotorException.Validation(
-                        "Stock insuficiente para ${product.name}. Necesitas $quantity y hay ${product.stock}."
-                    )
-                }
-
-                val rows = productDao.updateStock(
-                    productId = product.id,
-                    newStock = product.stock - quantity
-                )
-                if (rows != 1) {
-                    throw EdMotorException.Validation(
-                        "No fue posible actualizar el stock de ${product.name}."
-                    )
-                }
-            }
+            adjustCatalogStock(existing?.parts.orEmpty(), validParts)
 
             val now = System.currentTimeMillis()
             val savedId = if (existing != null) {
+                partDao.deleteForRecord(existing.record.id)
                 maintenanceDao.update(
-                    existing.copy(
+                    existing.record.copy(
                         updatedByUserId = workshopUserId,
                         serviceType = draft.serviceType.trim(),
-                        serviceDate = draft.serviceDate.trim(),
+                        serviceDate = serviceDate,
                         mileageKm = draft.mileageKm,
                         description = draft.description.trim(),
                         laborCostCop = draft.laborCostCop,
                         nextServiceMileageKm = draft.nextServiceMileageKm,
-                        nextServiceDate = draft.nextServiceDate?.trim()?.takeIf { it.isNotEmpty() },
+                        nextServiceDate = nextServiceDate,
                         observations = draft.observations.trim(),
                         updatedAtMillis = now
                     )
                 )
-                existing.id
+                existing.record.id
             } else {
-                maintenanceDao.insert(
+                val insertedId = maintenanceDao.insert(
                     MaintenanceRecordEntity(
                         vehicleId = vehicleId,
                         createdByUserId = workshopUserId,
                         serviceType = draft.serviceType.trim(),
-                        serviceDate = draft.serviceDate.trim(),
+                        serviceDate = serviceDate,
                         mileageKm = draft.mileageKm,
                         description = draft.description.trim(),
                         laborCostCop = draft.laborCostCop,
                         nextServiceMileageKm = draft.nextServiceMileageKm,
-                        nextServiceDate = draft.nextServiceDate?.trim()?.takeIf { it.isNotEmpty() },
+                        nextServiceDate = nextServiceDate,
                         observations = draft.observations.trim(),
                         createdAtMillis = now,
                         updatedAtMillis = now
                     )
-                ).toInt()
+                )
+                Math.toIntExact(insertedId)
             }
 
             val parts = validParts.map { part ->
@@ -251,34 +260,36 @@ class MaintenanceRepository(
 
             val currentKm = vehicle.mileage.filter { it.isDigit() }.toIntOrNull() ?: 0
             if (draft.mileageKm >= currentKm) {
-                vehicleDao.update(vehicle.copy(mileage = "${draft.mileageKm} km"))
+                vehicleDao.updateMileage(vehicle.id, "${draft.mileageKm} km")
             }
+            requireCurrentSession(workshop)
         }
     }
 
     suspend fun deleteMaintenance(
         recordId: Int,
+        vehicleId: Int,
         workshopUserId: Int
     ) {
-        requireWorkshop(workshopUserId)
-        if (recordId <= 0) {
+        val workshop = requireActiveWorkshop(workshopUserId)
+        if (recordId <= 0 || vehicleId <= 0) {
             throw EdMotorException.Validation("El mantenimiento seleccionado no es válido.")
         }
 
         database.withTransaction {
-            val record = maintenanceDao.findById(recordId)
-                ?: throw EdMotorException.NotFound("No se encontró el mantenimiento.")
-
-            val withParts = maintenanceDao.findWithParts(recordId)
-            restoreCatalogStock(withParts?.parts.orEmpty())
+            requireStoredWorkshop(workshop)
+            val existing = maintenanceDao.findWithParts(recordId, vehicleId)
+                ?: throw EdMotorException.NotFound("El mantenimiento no pertenece a este vehículo.")
+            adjustCatalogStock(existing.parts, emptyList())
 
             val deleted = maintenanceDao.deleteByIdForVehicle(
                 recordId = recordId,
-                vehicleId = record.vehicleId
+                vehicleId = vehicleId
             )
             if (deleted == 0) {
                 throw EdMotorException.NotFound("No fue posible eliminar el mantenimiento.")
             }
+            requireCurrentSession(workshop)
         }
     }
 }

@@ -41,23 +41,26 @@ class UserRepository(
         }.map { it.copy(passwordHash = "", salt = "") }
     }
 
-    suspend fun provisionClientProfile(alias: String): DemoProfile {
+    internal val demoProjectKey: String? get() = mockApi?.projectKey
+
+    internal suspend fun provisionClientProfile(alias: String, recovering: Boolean): DemoProfile {
         require(!privateAccounts && alias.startsWith(DEMO_ALIAS_PREFIX) &&
             isCanonicalUuid(alias.removePrefix(DEMO_ALIAS_PREFIX))) {
             "El perfil de demostración necesita un alias anónimo."
         }
         val connection = mockApi
         if (connection == null) {
-            return DemoProfile("$REGISTERED_CLIENT_PREFIX${UUID.randomUUID()}", alias, UserRole.CLIENT)
+            return DemoProfile("$REGISTERED_CLIENT_PREFIX${alias.removePrefix(DEMO_ALIAS_PREFIX)}", alias, UserRole.CLIENT)
         }
 
         return try {
-            val created = connection.service.createProfile(MockProfileCreateDto(displayName = alias))
-                .toDemoProfile(connection)
-            check(created != null && created.role == UserRole.CLIENT && created.displayName == alias) {
-                "MockAPI no devolvió el perfil de cliente esperado."
-            }
-            created
+            enrollDemoClient(
+                alias = alias,
+                recovering = recovering,
+                listProfiles = { connection.service.getProfiles() },
+                createProfile = { connection.service.createProfile(MockProfileCreateDto(displayName = alias)) },
+                mapProfile = { it.toDemoProfile(connection) }
+            )
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

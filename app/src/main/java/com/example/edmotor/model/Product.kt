@@ -22,7 +22,8 @@ data class Product(
     val isNew: Boolean = false,
     val isOnPromotion: Boolean = false,
     val promotionPrice: String? = null,
-    val imageUri: String? = null
+    val imageUri: String? = null,
+    val discountPercentage: Int = 0
 ) {
 
     val isOutOfStock: Boolean

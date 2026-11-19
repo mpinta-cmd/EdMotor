@@ -10,7 +10,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -90,6 +93,64 @@ class SessionManagerTest {
 
         withFreshStore(file) { session ->
             assertNull(session.restoreProfile(credentialedDemo = true) { error("Sesión de credenciales eliminada") })
+        }
+    }
+
+    @Test
+    fun recreatedRoomAccountCannotReuseAnOldSessionForTheSameKeyAndRole() = runBlocking {
+        val file = File(scratch.root, "different-account.preferences_pb")
+        val owner = demoOwner()
+        withFreshStore(file) { it.selectProfile(owner, credentialedDemo = true) }
+
+        withFreshStore(file) { session ->
+            val replacement = owner.copy(createdAtMillis = owner.createdAtMillis + 1)
+            assertNull(session.restoreProfile(credentialedDemo = true) { replacement })
+            assertNull(session.currentUser.value)
+        }
+    }
+
+    @Test
+    fun staleActiveAccountIsClearedIfRoomCannotValidateRestore() = runBlocking {
+        val file = File(scratch.root, "room-unavailable.preferences_pb")
+        val profile = demoClient().copy(passwordHash = "hash-for-test", salt = "salt-for-test")
+        withFreshStore(file) { session ->
+            session.selectProfile(profile)
+            assertEquals("", session.currentUser.value?.passwordHash)
+            assertEquals("", session.currentUser.value?.salt)
+
+            val failure = runCatching { session.restoreProfile { error("Room no está disponible") } }
+            assertTrue(failure.isFailure)
+            assertNull(session.currentUser.value)
+            assertEquals("", session.restoreProfile { profile }?.passwordHash)
+        }
+    }
+
+    @Test
+    fun pendingSignupSurvivesProcessRecreationAndStaysInItsProject() = runBlocking {
+        val file = File(scratch.root, "pending-registration.preferences_pb")
+        val project = "2".repeat(24)
+        val otherProject = "3".repeat(24)
+        var originalAlias = ""
+        withFreshStore(file) { session ->
+            val prepared = session.prepareDemoRegistration(project, "cliente_1")
+            assertFalse(prepared.recovering)
+            originalAlias = prepared.alias
+            session.clearSession()
+        }
+
+        withFreshStore(file) { session ->
+            val retry = session.prepareDemoRegistration(project, "cliente_1")
+            assertTrue(retry.recovering)
+            assertEquals(originalAlias, retry.alias)
+            assertNotEquals(originalAlias, session.prepareDemoRegistration(otherProject, "cliente_1").alias)
+            assertNotEquals(originalAlias, session.prepareDemoRegistration(project, "cliente_2").alias)
+            session.finishDemoRegistration(project, "cliente_1", retry.alias)
+        }
+
+        withFreshStore(file) { session ->
+            val newAttempt = session.prepareDemoRegistration(project, "cliente_1")
+            assertFalse(newAttempt.recovering)
+            assertNotEquals(originalAlias, newAttempt.alias)
         }
     }
 

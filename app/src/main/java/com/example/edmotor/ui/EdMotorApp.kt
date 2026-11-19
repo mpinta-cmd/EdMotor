@@ -3,6 +3,7 @@ package com.example.edmotor.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
@@ -200,19 +201,17 @@ private fun EdMotorAppContent(
         appViewModel.observeCart(currentUserId, currentUserRole)
     }.collectAsStateWithLifecycle(initialValue = emptyMap())
 
-    val cartCount = if (currentUserRole == UserRole.WORKSHOP.name) {
-        0
-    } else {
-        cartQuantity.values.sum()
-    }
+    val isWorkshop = currentUserRole == UserRole.WORKSHOP.name
+    val cartCount = if (isWorkshop) 0 else cartQuantity.values
+        .sumOf { it.coerceAtLeast(0).toLong() }
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
 
     val pendingOrderCount by orderViewModel.pendingOrdersCount
         .collectAsStateWithLifecycle(initialValue = 0)
 
     val pendingAppointmentCount by appointmentViewModel.pendingCount
         .collectAsStateWithLifecycle(initialValue = 0)
-
-    val isWorkshop = currentUserRole == UserRole.WORKSHOP.name
 
     // ==========================================
     // NAVEGACIÓN
@@ -256,6 +255,8 @@ private fun EdMotorAppContent(
 
         cartCount = cartCount,
 
+        hasCartItems = !isWorkshop && cartQuantity.isNotEmpty(),
+
         pendingOrderCount = if (isWorkshop) pendingOrderCount else 0,
 
         pendingAppointmentCount = if (isWorkshop) pendingAppointmentCount else 0,
@@ -284,6 +285,8 @@ private fun EdMotorAppContent(
 
             cartQuantity = cartQuantity,
 
+            cartCount = cartCount,
+
             appViewModel = appViewModel,
 
             maintenanceViewModel = maintenanceViewModel,
@@ -301,6 +304,7 @@ private fun EdMotorAppContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
         )
     }
 }

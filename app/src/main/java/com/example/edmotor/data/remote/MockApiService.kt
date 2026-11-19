@@ -1,11 +1,13 @@
 package com.example.edmotor.data.remote
 
 import com.example.edmotor.model.AppointmentStatus
+import com.example.edmotor.model.APPOINTMENT_DURATION_MILLIS
 import com.example.edmotor.model.isValidAppointmentStart
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonParseException
+import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -26,9 +28,6 @@ interface MockApiService {
 
     @GET("appointments?limit=1&page=1")
     suspend fun probeAppointments(): JsonArray
-
-    @GET("appointments")
-    suspend fun getAppointmentsForReview(): List<MockAppointmentDto>
 
     @GET("appointments/{id}")
     suspend fun getAppointment(@Path("id") id: String): MockAppointmentDto
@@ -56,9 +55,9 @@ data class MockProfileCreateDto(val displayName: String) {
 data class MockAppointmentDto(
     val id: String,
     val profileId: String,
-    val serviceType: String,
-    val vehicleBrand: String,
-    val vehicleModel: String,
+    val serviceType: String?,
+    val vehicleBrand: String?,
+    val vehicleModel: String?,
     val vehicleYear: Int,
     val scheduledAtMillis: Long,
     val status: String,
@@ -88,7 +87,12 @@ internal suspend fun MockApiService.listAppointments(profileId: String? = null):
         if (profileId == null || error.code() != 404) throw error
 
         // MockAPI devuelve 404 tanto para un filtro sin coincidencias como para un recurso ausente.
-        probeAppointments()
+        try {
+            probeAppointments()
+        } catch (probeError: HttpException) {
+            probeError.response()?.errorBody()?.close()
+            throw probeError
+        }
         return emptyList()
     }
 
@@ -98,6 +102,97 @@ internal suspend fun MockApiService.listAppointments(profileId: String? = null):
         .mapNotNull { matches -> matches.distinct().singleOrNull() }
         .filter { profileId == null || it.profileId == profileId }
 }
+
+internal suspend fun MockApiService.findSubmittedAppointment(request: MockAppointmentCreateDto): MockAppointmentDto? {
+    val matches = listAppointments(request.profileId).filter { it.matchesSubmission(request) }
+    check(matches.size <= 1)
+    return matches.singleOrNull()
+}
+
+internal suspend fun MockApiService.submitAppointment(request: MockAppointmentCreateDto): MockAppointmentDto =
+    reconcileMockAppointmentWrite(
+        write = {
+            createAppointment(request).also {
+                check(it.status == AppointmentStatus.PENDING && it.matchesSubmission(request))
+            }
+        },
+        readBack = { findSubmittedAppointment(request) }
+    )
+
+internal suspend fun MockApiService.hasConfirmedOverlap(target: MockAppointmentDto): Boolean {
+    var targetFound = false
+    var overlaps = false
+    val start = target.scheduledAtMillis
+    check(isValidAppointmentStart(start))
+
+    for (element in getAppointments()) {
+        if (!element.isJsonObject) continue
+        val row = element.asJsonObject
+        val id = row.get("id").stringValue()
+        val status = row.get("status").stringValue()
+        val scheduledAt = row.get("scheduledAtMillis").stringValue()?.toLongOrNull()
+
+        if (id == target.id) {
+            check(!targetFound && status == AppointmentStatus.PENDING && scheduledAt == start &&
+                row.get("profileId").stringValue() == target.profileId)
+            targetFound = true
+        }
+        if (status == AppointmentStatus.CONFIRMED) {
+            check(scheduledAt != null && isValidAppointmentStart(scheduledAt))
+            overlaps = overlaps ||
+                (scheduledAt < start + APPOINTMENT_DURATION_MILLIS && scheduledAt > start - APPOINTMENT_DURATION_MILLIS)
+        }
+    }
+    check(targetFound)
+    return overlaps
+}
+
+internal suspend fun MockApiService.submitAppointmentStatus(
+    target: MockAppointmentDto,
+    request: MockAppointmentStatusDto
+) {
+    reconcileMockAppointmentWrite(
+        write = {
+            updateAppointment(target.id, request).also { check(it.matchesReview(target, request.status)) }
+        },
+        readBack = { getAppointment(target.id).takeIf { it.matchesReview(target, request.status) } }
+    )
+}
+
+private suspend fun reconcileMockAppointmentWrite(
+    write: suspend () -> MockAppointmentDto,
+    readBack: suspend () -> MockAppointmentDto?
+): MockAppointmentDto = try {
+    write()
+} catch (error: CancellationException) {
+    throw error
+} catch (error: Exception) {
+    if (error is HttpException) {
+        error.response()?.errorBody()?.close()
+        if (isDefinitiveMockAppointmentFailure(error.code())) throw error
+    }
+
+    val recovered = try {
+        readBack()
+    } catch (readError: CancellationException) {
+        throw readError
+    } catch (_: Exception) {
+        null
+    }
+    recovered ?: throw error
+}
+
+private fun MockAppointmentDto.matchesSubmission(request: MockAppointmentCreateDto): Boolean =
+    mockAppointmentId(id) != null && profileId == request.profileId &&
+        scheduledAtMillis == request.scheduledAtMillis && createdAtMillis == request.createdAtMillis &&
+        serviceType == request.serviceType && status in appointmentStatuses
+
+private fun MockAppointmentDto.matchesReview(target: MockAppointmentDto, requestedStatus: String): Boolean =
+    id == target.id && profileId == target.profileId && scheduledAtMillis == target.scheduledAtMillis &&
+        createdAtMillis == target.createdAtMillis && status == requestedStatus
+
+private fun JsonElement?.stringValue(): String? =
+    this?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { if (it.isString || it.isNumber) it.asString else null }
 
 private val appointmentJson = Gson()
 private val appointmentProfileId = Regex("[A-Za-z0-9_-]{1,64}")
@@ -118,6 +213,8 @@ private fun JsonElement.toMockAppointment(): MockAppointmentDto? {
 
 internal fun mockAppointmentId(value: String?): Long? =
     value?.toLongOrNull()?.takeIf { it > 0L && it.toString() == value }
+
+internal fun isDefinitiveMockAppointmentFailure(status: Int): Boolean = status in setOf(400, 404, 422, 429)
 
 internal fun mockAppointmentFailureMessage(status: Int, fallback: String): String = when (status) {
     400, 422 -> "MockAPI rechazó los datos de la cita (HTTP $status). Revisa los campos del recurso appointments."

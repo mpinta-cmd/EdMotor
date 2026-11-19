@@ -114,34 +114,7 @@ fun ProductDetailScreen(
     val hasPromotion = product.isOnPromotion &&
             !promotionPrice.isNullOrBlank()
 
-    val discountPercentage = remember(
-        product.price,
-        product.promotionPrice,
-        hasPromotion
-    ) {
-
-        if (hasPromotion) {
-
-            val original = product.price
-                .filter { it.isDigit() }
-                .toLongOrNull() ?: 0L
-
-            val promotional = promotionPrice
-                ?.filter { it.isDigit() }
-                ?.toLongOrNull() ?: 0L
-
-            if (original > 0 && promotional > 0 &&
-                promotional < original
-            ) {
-                ((original - promotional) * 100 / original).toInt()
-            } else {
-                0
-            }
-
-        } else {
-            0
-        }
-    }
+    val discountPercentage = product.discountPercentage
 
     // ==========================================
     // 3. CONTENEDOR PRINCIPAL

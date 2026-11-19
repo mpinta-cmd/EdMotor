@@ -3,6 +3,9 @@ package com.example.edmotor.data.remote
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Locale
+import okhttp3.OkHttpClient
+import okhttp3.RequestBody
+import okio.BufferedSink
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -33,16 +36,35 @@ class MockApiConnection private constructor(
             ) return null
 
             val endpoint = "https://$host${uri.normalize().rawPath.trimEnd('/')}/"
-            val service = runCatching {
-                Retrofit.Builder()
-                    .baseUrl(endpoint)
-                    .addConverterFactory(GsonConverterFactory.create())
-                    .build()
-                    .create(MockApiService::class.java)
-            }.getOrNull() ?: return null
+            val service = runCatching { createMockApiService(endpoint) }.getOrNull() ?: return null
             val key = MessageDigest.getInstance("SHA-256").digest(endpoint.toByteArray(Charsets.UTF_8))
                 .take(12).joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 0xff) }
             return MockApiConnection(service, key)
         }
     }
 }
+
+internal fun createMockApiService(endpoint: String): MockApiService = Retrofit.Builder()
+    .baseUrl(endpoint)
+    .client(OkHttpClient.Builder()
+        .retryOnConnectionFailure(false)
+        .followRedirects(false)
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val body = request.body
+            if (body == null || request.method != "POST" && request.method != "PUT") {
+                chain.proceed(request)
+            } else {
+                val oneShot = object : RequestBody() {
+                    override fun contentType() = body.contentType()
+                    override fun contentLength() = body.contentLength()
+                    override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
+                    override fun isOneShot() = true
+                }
+                chain.proceed(request.newBuilder().method(request.method, oneShot).build())
+            }
+        }
+        .build())
+    .addConverterFactory(GsonConverterFactory.create())
+    .build()
+    .create(MockApiService::class.java)

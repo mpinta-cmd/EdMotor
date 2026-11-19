@@ -64,7 +64,8 @@ class AppContainer(context: Context) {
         maintenanceDao = database.maintenanceDao(),
         partDao = database.maintenancePartDao(),
         vehicleDao = database.vehicleDao(),
-        productDao = database.productDao()
+        productDao = database.productDao(),
+        sessionManager = sessionManager
     )
 
     private val productRepository = ProductRepository(

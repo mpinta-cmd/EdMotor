@@ -11,7 +11,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,6 +82,7 @@ fun EdMotorNavHost(
     currentUserName: String,
     currentUserRole: String,
     cartQuantity: Map<Int, Int>,
+    cartCount: Int,
     appViewModel: EdMotorViewModel,
     maintenanceViewModel: MaintenanceViewModel,
     productViewModel: ProductViewModel,
@@ -116,18 +120,7 @@ fun EdMotorNavHost(
     // 2. ESTADOS DE MANTENIMIENTO
     // =====================================================
 
-    val maintenanceRecords by maintenanceViewModel.records
-        .collectAsStateWithLifecycle()
-
-    val editingRecord by maintenanceViewModel.editingRecord
-        .collectAsStateWithLifecycle()
-
-    val isLoadingRecord by maintenanceViewModel.isLoadingRecord
-        .collectAsStateWithLifecycle()
-
-    val editingRecordError by maintenanceViewModel.editingRecordError
-        .collectAsStateWithLifecycle()
-
+    val isSavingMaintenance by maintenanceViewModel.isSaving.collectAsStateWithLifecycle(initialValue = false)
 
     // =====================================================
     // 3. ESTADOS DEL INVENTARIO
@@ -202,8 +195,6 @@ fun EdMotorNavHost(
 
     val context = LocalContext.current
 
-    val carCount = cartQuantity.values.sum()
-
 
     // =====================================================
     // 7. MENSAJES DE VALIDACIÓN DEL CARRITO
@@ -274,7 +265,11 @@ fun EdMotorNavHost(
                 onDecrease = appViewModel::decreaseQuantity,
 
                 onAdjustStock = { productId, delta ->
-                    productViewModel.adjustStock(productId, delta)
+                    productViewModel.adjustStock(productId, delta) { result ->
+                        if (result is com.example.edmotor.data.repository.ProductOperationResult.Error) {
+                            Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 },
 
                 // ACCESO EXCLUSIVO DEL TALLER
@@ -324,7 +319,7 @@ fun EdMotorNavHost(
 
                     quantity = cartQuantity[selectedProduct.id] ?: 0,
 
-                    cartCount = if (isWorkshop) 0 else carCount,
+                    cartCount = cartCount,
 
                     isFavorite = selectedProduct.id in favoriteProductIds,
 
@@ -433,15 +428,15 @@ fun EdMotorNavHost(
             ServicesScreen(
 
                 onOpenGarage = {
-                    navController.navigate(Routes.PROFILE)
+                    onNavigate(Routes.PROFILE)
                 },
 
                 onOpenAppointments = {
-                    navController.navigate(Routes.APPOINTMENTS)
+                    onNavigate(Routes.APPOINTMENTS)
                 },
 
                 onOpenCatalog = {
-                    navController.navigate(Routes.HOME)
+                    onNavigate(Routes.HOME)
                 }
             )
         }
@@ -566,9 +561,12 @@ fun EdMotorNavHost(
             val vehicleId =
                 entry.arguments?.getInt("vehicleId") ?: -1
 
-            LaunchedEffect(vehicleId) {
-                maintenanceViewModel.selectVehicle(vehicleId)
-            }
+            val maintenanceRecords by remember(maintenanceViewModel, vehicleId, currentUserId, currentUserRole) {
+                maintenanceViewModel.observeRecords(vehicleId, currentUserId, currentUserRole)
+            }.collectAsStateWithLifecycle(initialValue = null)
+            val maintenanceMessage by remember(maintenanceViewModel, vehicleId) {
+                maintenanceViewModel.observeOperationMessage(vehicleId)
+            }.collectAsStateWithLifecycle(initialValue = null)
 
             val vehicle = vehicleList.firstOrNull {
                 it.id == vehicleId
@@ -604,9 +602,17 @@ fun EdMotorNavHost(
 
                     vehicle = vehicle,
 
-                    records = maintenanceRecords,
+                    records = maintenanceRecords.orEmpty().filter { it.record.vehicleId == vehicleId },
+
+                    isLoading = maintenanceRecords == null,
+
+                    isProcessing = isSavingMaintenance,
 
                     canManage = isWorkshop,
+
+                    message = maintenanceMessage.takeIf { isWorkshop },
+
+                    onClearMessage = maintenanceViewModel::clearMessage,
 
                     onAdd = {
 
@@ -629,7 +635,7 @@ fun EdMotorNavHost(
                         }
                     },
 
-                    onDelete = maintenanceViewModel::deleteMaintenance,
+                    onDelete = { recordId -> maintenanceViewModel.deleteMaintenance(vehicleId, recordId) },
 
                     onBack = {
                         navController.popBackStack()
@@ -668,19 +674,21 @@ fun EdMotorNavHost(
                 it.id == vehicleId
             }
 
-            LaunchedEffect(vehicleId, recordId) {
+            val editorState by remember(maintenanceViewModel, vehicleId, recordId) {
+                maintenanceViewModel.observeEditor(vehicleId, recordId)
+            }.collectAsStateWithLifecycle(initialValue = null)
+            val recordForRoute = editorState?.record?.takeIf {
+                it.record.id == recordId && it.record.vehicleId == vehicleId
+            }
+            var saveError by rememberSaveable { mutableStateOf<String?>(null) }
 
-                maintenanceViewModel.selectVehicle(vehicleId)
-
-                if (recordId > 0 && isWorkshop) {
-
+            LaunchedEffect(vehicleId, recordId, isWorkshop) {
+                if (recordId > 0 && isWorkshop && recordForRoute == null) {
                     maintenanceViewModel.loadRecord(
                         recordId = recordId,
                         vehicleId = vehicleId
                     )
-
-                } else {
-
+                } else if (recordId <= 0 && isWorkshop) {
                     maintenanceViewModel.clearEditingRecord()
                 }
             }
@@ -706,10 +714,10 @@ fun EdMotorNavHost(
             } else if (
                 recordId > 0 &&
                 (
-                        isLoadingRecord ||
+                        editorState?.isLoading == true ||
                                 (
-                                        editingRecord == null &&
-                                                editingRecordError == null
+                                        recordForRoute == null &&
+                                                editorState?.error == null
                                         )
                         )
             ) {
@@ -723,11 +731,11 @@ fun EdMotorNavHost(
 
             } else if (
                 recordId > 0 &&
-                editingRecord == null
+                recordForRoute == null
             ) {
 
                 AccessDeniedScreen(
-                    message = editingRecordError
+                    message = editorState?.error
                         ?: "No fue posible cargar el mantenimiento.",
                     onBack = {
                         navController.popBackStack()
@@ -741,14 +749,17 @@ fun EdMotorNavHost(
                     vehicleTitle =
                         "${vehicle.brand} ${vehicle.model} · ${vehicle.plate}",
 
-                    existingRecord =
-                        if (recordId > 0) editingRecord else null,
+                    existingRecord = recordForRoute,
 
                     availableProducts = productEntities,
 
                     categories = categories,
 
                     isCreatingProduct = isSavingProduct,
+
+                    isSaving = isSavingMaintenance,
+
+                    saveError = saveError,
 
                     onCreateCategory = { name, onResult ->
                         productViewModel.createCategory(name) { result ->
@@ -787,7 +798,7 @@ fun EdMotorNavHost(
                     },
 
                     onSave = { draft ->
-
+                        saveError = null
                         maintenanceViewModel.saveMaintenance(
 
                             vehicleId = vehicleId,
@@ -799,18 +810,9 @@ fun EdMotorNavHost(
                             draft = draft
 
                         ) { success, message ->
-
-                            if (success) {
-
-                                navController.popBackStack()
-
-                            } else {
-
-                                Toast.makeText(
-                                    context,
-                                    message ?: "No fue posible guardar.",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                            if (navController.currentBackStackEntry == entry) {
+                                if (success) navController.popBackStack()
+                                else saveError = message ?: "No fue posible guardar el mantenimiento."
                             }
                         }
                     },
@@ -869,7 +871,8 @@ fun EdMotorNavHost(
                         navController.navigate(
                             Routes.productEdit(product.id)
                         )
-                    }
+                    },
+                    onBack = { navController.popBackStack() }
                 )
 
             } else {
@@ -888,7 +891,7 @@ fun EdMotorNavHost(
         // 11. CREAR REPUESTO
         // =================================================
 
-        composable(Routes.PRODUCT_CREATE) {
+        composable(Routes.PRODUCT_CREATE) { entry ->
 
             if (isWorkshop) {
 
@@ -960,14 +963,16 @@ fun EdMotorNavHost(
                     },
 
                     onCreated = { productId ->
-                        navController.navigate(Routes.productEdit(productId)) {
-                            popUpTo(Routes.PRODUCT_CREATE) { inclusive = true }
-                            launchSingleTop = true
+                        if (navController.currentBackStackEntry == entry) {
+                            navController.navigate(Routes.productEdit(productId)) {
+                                popUpTo(Routes.PRODUCT_CREATE) { inclusive = true }
+                                launchSingleTop = true
+                            }
                         }
                     },
 
                     onBack = {
-                        navController.popBackStack()
+                        if (navController.currentBackStackEntry == entry) navController.popBackStack()
                     }
                 )
 
@@ -1067,7 +1072,7 @@ fun EdMotorNavHost(
                     onCreated = { },
 
                     onBack = {
-                        navController.popBackStack()
+                        if (navController.currentBackStackEntry == entry) navController.popBackStack()
                     }
                 )
             }

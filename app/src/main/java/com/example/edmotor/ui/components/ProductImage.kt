@@ -1,8 +1,10 @@
 package com.example.edmotor.ui.components
 
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.TypedValue
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -12,11 +14,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,6 +35,9 @@ fun ProductImage(
     contentScale: ContentScale = ContentScale.Fit
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
+    val configuration = LocalConfiguration.current
+    val hasCatalogImage = remember(resources, configuration, imageRes) { resources.hasProductDrawable(imageRes) }
 
     val bitmap by produceState<Bitmap?>(
         initialValue = null,
@@ -62,7 +70,7 @@ fun ProductImage(
             )
         }
 
-        imageRes > 0 -> {
+        hasCatalogImage -> {
             Image(
                 painter = painterResource(id = imageRes),
                 contentDescription = contentDescription,
@@ -79,6 +87,27 @@ fun ProductImage(
                 Text("Sin imagen", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+private fun Resources.hasProductDrawable(id: Int): Boolean {
+    if (id <= 0) return false
+    return try {
+        val type = getResourceTypeName(id)
+        if (type != "drawable" && type != "mipmap") return false
+
+        val resource = TypedValue().also { getValue(id, it, true) }
+        val path = resource.string?.toString() ?: return false
+        if (path.endsWith(".xml")) {
+            getXml(id).use { parser ->
+                parser.nextTag()
+                parser.name == "vector"
+            }
+        } else {
+            true
+        }
+    } catch (_: Exception) {
+        false
     }
 }
 

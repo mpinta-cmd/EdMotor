@@ -1,8 +1,11 @@
 package com.example.edmotor.data
 
 import com.example.edmotor.model.Category
+import com.example.edmotor.model.categoryKey
 
-const val FAVORITES_CATEGORY = "Productos favoritos"
+const val FAVORITES_FILTER_KEY = "filters:favorites"
+
+fun catalogCategoryFilterKey(name: String): String = "category:${categoryKey(name)}"
 
 val categoryList = listOf(
     Category(

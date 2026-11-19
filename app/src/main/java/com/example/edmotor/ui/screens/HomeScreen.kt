@@ -60,7 +60,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-import com.example.edmotor.data.FAVORITES_CATEGORY
+import com.example.edmotor.data.FAVORITES_FILTER_KEY
+import com.example.edmotor.data.catalogCategoryFilterKey
 import com.example.edmotor.model.Category
 import com.example.edmotor.model.Product
 import com.example.edmotor.ui.theme.AzulNitro
@@ -123,24 +124,8 @@ fun HomeScreen(
     // 4. CATEGORÍAS VISIBLES
     // ==========================================
 
-    val categoriesToDisplay = remember(
-        categories,
-        favoriteProductIds
-    ) {
-        buildList {
-
-            if (favoriteProductIds.isNotEmpty()) {
-                add(
-                    Category(
-                        emoji = "♥",
-                        nombre = FAVORITES_CATEGORY
-                    )
-                )
-            }
-
-            addAll(categories)
-        }
-    }
+    val categoriesToDisplay = remember(categories) { categories.distinctBy { catalogCategoryFilterKey(it.nombre) } }
+    val selectedCategoryName = categoriesToDisplay.firstOrNull { catalogCategoryFilterKey(it.nombre) == selectedCategory }?.nombre
 
     // ==========================================
     // 5. FILTRAR PRODUCTOS
@@ -168,14 +153,10 @@ fun HomeScreen(
 
                 null -> true
 
-                FAVORITES_CATEGORY ->
+                FAVORITES_FILTER_KEY ->
                     item.id in favoriteProductIds
 
-                else ->
-                    item.category.equals(
-                        selectedCategory,
-                        ignoreCase = true
-                    )
+                else -> catalogCategoryFilterKey(item.category) == selectedCategory
             }
 
             matchesText && matchesCategory
@@ -299,7 +280,7 @@ fun HomeScreen(
                 contentPadding = PaddingValues(vertical = 3.dp)
             ) {
 
-                item(key = "category_all") {
+                item(key = "filters:all") {
 
                     CategoryBadge(
                         category = Category(
@@ -315,16 +296,26 @@ fun HomeScreen(
                     )
                 }
 
+                if (favoriteProductIds.isNotEmpty()) {
+                    item(key = FAVORITES_FILTER_KEY) {
+                        CategoryBadge(
+                            category = Category(emoji = "♥", nombre = "Mis favoritos"),
+                            isSelected = selectedCategory == FAVORITES_FILTER_KEY,
+                            onClick = { onCategorySelect(FAVORITES_FILTER_KEY) }
+                        )
+                    }
+                }
+
                 lazyItems(
                     items = categoriesToDisplay,
-                    key = { category -> category.nombre }
+                    key = { category -> catalogCategoryFilterKey(category.nombre) }
                 ) { category ->
 
                     CategoryBadge(
                         category = category,
-                        isSelected = selectedCategory == category.nombre,
+                        isSelected = selectedCategory == catalogCategoryFilterKey(category.nombre),
                         onClick = {
-                            onCategorySelect(category.nombre)
+                            onCategorySelect(catalogCategoryFilterKey(category.nombre))
                         }
                     )
                 }
@@ -376,7 +367,7 @@ fun HomeScreen(
                         Text(
                             text = when (selectedCategory) {
 
-                                FAVORITES_CATEGORY ->
+                                FAVORITES_FILTER_KEY ->
                                     "Tus productos favoritos"
 
                                 null ->
@@ -386,7 +377,7 @@ fun HomeScreen(
                                         "Resultados de búsqueda"
                                     }
 
-                                else -> selectedCategory
+                                else -> selectedCategoryName ?: "Categoría"
                             },
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.ExtraBold,
@@ -629,7 +620,7 @@ private fun EmptyProductsMessage(
             }
 
             Text(
-                text = if (selectedCategory == FAVORITES_CATEGORY) {
+                text = if (selectedCategory == FAVORITES_FILTER_KEY) {
                     "Todavía no tienes favoritos"
                 } else {
                     "No encontramos ese repuesto"

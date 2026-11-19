@@ -36,6 +36,7 @@ interface CartDao {
     @Query("""
         SELECT * FROM cart_items
         WHERE userId = :userId
+        ORDER BY productId ASC
     """)
     suspend fun getItemsForUser(
         userId: Int

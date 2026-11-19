@@ -4,7 +4,7 @@ package com.example.edmotor.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 
-import com.example.edmotor.data.FAVORITES_CATEGORY
+import com.example.edmotor.data.FAVORITES_FILTER_KEY
 import com.example.edmotor.data.repository.CartOperationResult
 import com.example.edmotor.data.repository.CartRepository
 import com.example.edmotor.data.repository.FavoriteRepository
@@ -123,7 +123,7 @@ class EdMotorViewModel(
         observeForAccount(userId, roleName, emptySet()) { account ->
             favoriteRepository.observeFavorites(account.userId).onEach { favorites ->
                 if (activeAccount.value == account && favorites.isEmpty() &&
-                    _selectedCategory.value == FAVORITES_CATEGORY
+                    _selectedCategory.value == FAVORITES_FILTER_KEY
                 ) {
                     _selectedCategory.value = null
                 }
@@ -131,14 +131,15 @@ class EdMotorViewModel(
         }
 
     fun toggleFavorite(productId: Int) {
-
-        val userId = activeAccount.value?.userId ?: return
-
+        val account = activeAccount.value ?: return
         viewModelScope.launch {
-            favoriteRepository.toggleFavorite(
-                userId,
-                productId
-            )
+            try {
+                favoriteRepository.toggleFavorite(account.userId, productId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                showAccountError(account, "No pudimos actualizar tus favoritos. Intenta de nuevo.")
+            }
         }
     }
 
@@ -194,65 +195,42 @@ class EdMotorViewModel(
     // AGREGAR UNIDAD AL CARRITO
     // ==========================================
 
-    fun increaseQuantity(productId: Int) {
-        val account = activeAccount.value ?: return
-
-        viewModelScope.launch {
-            val result = cartRepository.increaseQuantity(account.userId, productId)
-            if (activeAccount.value == account) {
-                cartFeedback.value = when (result) {
-                    is CartOperationResult.Success -> null
-                    is CartOperationResult.Error -> CartFeedback(account, result.message)
-                }
-            }
-        }
+    fun increaseQuantity(productId: Int) = changeCart { userId ->
+        cartRepository.increaseQuantity(userId, productId)
     }
 
     // ==========================================
     // DISMINUIR UNIDAD
     // ==========================================
 
-    fun decreaseQuantity(productId: Int) {
-
-        val userId = activeAccount.value?.userId ?: return
-
-        viewModelScope.launch {
-
-            cartRepository.decreaseQuantity(
-                userId,
-                productId
-            )
-        }
+    fun decreaseQuantity(productId: Int) = changeCart { userId ->
+        cartRepository.decreaseQuantity(userId, productId)
     }
 
     // ==========================================
     // ELIMINAR PRODUCTO
     // ==========================================
 
-    fun removeProductFromCart(productId: Int) {
-
-        val userId = activeAccount.value?.userId ?: return
-
-        viewModelScope.launch {
-
-            cartRepository.removeProduct(
-                userId,
-                productId
-            )
-        }
+    fun removeProductFromCart(productId: Int) = changeCart { userId ->
+        cartRepository.removeProduct(userId, productId)
     }
 
     // ==========================================
     // VACIAR CARRITO
     // ==========================================
 
-    fun clearCart() {
+    fun clearCart() = changeCart { userId -> cartRepository.clearCart(userId) }
 
-        val userId = activeAccount.value?.userId ?: return
-
+    private fun changeCart(operation: suspend (Int) -> CartOperationResult) {
+        val account = activeAccount.value?.takeIf { it.role == UserRole.CLIENT } ?: return
         viewModelScope.launch {
-            cartRepository.clearCart(userId)
+            val result = operation(account.userId)
+            if (result is CartOperationResult.Error) showAccountError(account, result.message)
         }
+    }
+
+    private fun showAccountError(account: ActiveAccount, message: String) {
+        if (activeAccount.value == account) cartFeedback.value = CartFeedback(account, message)
     }
 
     // ==========================================

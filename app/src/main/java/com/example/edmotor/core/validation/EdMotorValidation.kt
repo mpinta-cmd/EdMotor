@@ -2,8 +2,12 @@
 package com.example.edmotor.core.validation
 
 import java.util.Calendar
+import java.util.GregorianCalendar
+import java.util.TimeZone
 
 object EdMotorValidation {
+
+    private val maintenanceDateFormat = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
     fun validateVehicle(
         brand: String,
@@ -69,7 +73,7 @@ object EdMotorValidation {
         unitPriceCop: Long
     ): String? {
 
-        if (name.isBlank()) return null
+        if (name.isBlank()) return "Indica el nombre del repuesto."
 
         if (!quantity.isFinite() || quantity <= 0.0) {
             return "La cantidad del repuesto debe ser mayor que cero."
@@ -80,5 +84,19 @@ object EdMotorValidation {
         }
 
         return null
+    }
+
+    fun isValidMaintenanceDate(value: String): Boolean {
+        if (!maintenanceDateFormat.matches(value)) return false
+        val date = GregorianCalendar(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            isLenient = false
+            set(
+                value.substring(0, 4).toInt(),
+                value.substring(5, 7).toInt() - 1,
+                value.substring(8).toInt()
+            )
+        }
+        return runCatching { date.timeInMillis }.isSuccess
     }
 }

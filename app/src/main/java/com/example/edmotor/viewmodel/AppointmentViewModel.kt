@@ -116,6 +116,7 @@ class AppointmentViewModel(
     }
 
     private fun execute(account: AppointmentAccount, request: suspend () -> AppointmentOperationResult) {
+        val activeUser = sessionManager.currentUser.value
         val currentOperation = operation.value
         if (currentOperation.account == account && currentOperation.isProcessing) return
 
@@ -127,11 +128,11 @@ class AppointmentViewModel(
             } catch (e: CancellationException) {
                 operation.update { if (it === processing) OperationState() else it }
                 throw e
-            } catch (e: Exception) {
-                AppointmentOperationResult.Error(e.message ?: "No fue posible completar la operación.")
+            } catch (_: Exception) {
+                AppointmentOperationResult.Error("No fue posible completar la operación.")
             }
 
-            val completed = if (repository.accountFor(sessionManager.currentUser.value) != account) {
+            val completed = if (sessionManager.currentUser.value !== activeUser) {
                 OperationState()
             } else {
                 when (result) {

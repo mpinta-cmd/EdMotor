@@ -12,8 +12,8 @@ interface ProductCategoryDao {
     @Query("SELECT * FROM product_categories ORDER BY name COLLATE NOCASE ASC")
     fun observeAll(): Flow<List<ProductCategoryEntity>>
 
-    @Query("SELECT * FROM product_categories WHERE name = :name COLLATE NOCASE LIMIT 1")
-    suspend fun findByName(name: String): ProductCategoryEntity?
+    @Query("SELECT * FROM product_categories ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAll(): List<ProductCategoryEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(category: ProductCategoryEntity): Long

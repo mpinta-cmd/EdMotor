@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -88,6 +91,7 @@ fun ProductFormScreen(
     var isNew by rememberSaveable(product?.id) { mutableStateOf(product?.isNew ?: false) }
     var isOnPromotion by rememberSaveable(product?.id) { mutableStateOf(product?.isOnPromotion ?: false) }
     var error by rememberSaveable(product?.id) { mutableStateOf<String?>(null) }
+    var photoError by rememberSaveable(product?.id) { mutableStateOf<String?>(null) }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -99,9 +103,11 @@ fun ProductFormScreen(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (_: SecurityException) {
-                // El proveedor puede no ofrecer permisos persistentes.
+                photoError = "No se pudo conservar el acceso a esa foto. Elige otro archivo."
+                return@rememberLauncherForActivityResult
             }
             imageUri = uri.toString()
+            photoError = null
             error = null
         }
     }
@@ -115,7 +121,7 @@ fun ProductFormScreen(
             TopAppBar(
                 title = { Text(if (isEditing) "Editar repuesto" else "Nuevo repuesto") },
                 navigationIcon = {
-                    TextButton(onClick = onBack) { Text("Volver") }
+                    TextButton(onClick = onBack, enabled = !isSaving) { Text("Volver") }
                 }
             )
         }
@@ -124,6 +130,8 @@ fun ProductFormScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -259,12 +267,16 @@ fun ProductFormScreen(
             }
             if (!imageUri.isNullOrBlank()) {
                 OutlinedButton(
-                    onClick = { imageUri = null },
+                    onClick = {
+                        imageUri = null
+                        photoError = null
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Quitar foto personalizada")
                 }
             }
+            photoError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             Text(
                 "O utiliza una imagen incluida en el catálogo",
@@ -282,6 +294,7 @@ fun ProductFormScreen(
                             if (checked) {
                                 imageRes = resourceId
                                 imageUri = null
+                                photoError = null
                             }
                         }
                     )
@@ -372,7 +385,7 @@ fun ProductFormScreen(
                     }
                 },
                 enabled = !isSaving,
-                modifier = Modifier.fillMaxWidth().height(54.dp)
+                modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)
             ) {
                 if (isSaving) {
                     CircularProgressIndicator(

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -31,8 +32,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +51,7 @@ import com.example.edmotor.model.Category
 import com.example.edmotor.model.MaintenancePartDraft
 import com.example.edmotor.ui.components.ProductImage
 import com.example.edmotor.ui.components.CategorySelector
+import java.io.Serializable
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -60,6 +65,11 @@ private data class PartFormState(
     val quantity: String = "1",
     val unit: String = "unidad",
     val unitPrice: String = "0"
+) : Serializable
+
+private val partDraftSaver = Saver<SnapshotStateList<PartFormState>, ArrayList<PartFormState>>(
+    save = { ArrayList(it) },
+    restore = { it.toMutableStateList() }
 )
 
 @Composable
@@ -69,6 +79,8 @@ fun MaintenanceFormScreen(
     availableProducts: List<ProductEntity>,
     categories: List<Category>,
     isCreatingProduct: Boolean = false,
+    isSaving: Boolean,
+    saveError: String?,
     onCreateCategory: (String, (Boolean, String?) -> Unit) -> Unit,
     onCreateProduct: (
         String,
@@ -107,7 +119,7 @@ fun MaintenanceFormScreen(
         mutableStateOf(existingRecord?.record?.observations ?: "")
     }
 
-    val parts = remember(existingRecord?.record?.id) {
+    val parts = rememberSaveable(existingRecord?.record?.id, saver = partDraftSaver) {
         mutableStateListOf<PartFormState>().apply {
             val existingParts = existingRecord?.parts.orEmpty()
             if (existingParts.isEmpty()) add(PartFormState())
@@ -128,10 +140,10 @@ fun MaintenanceFormScreen(
         }
     }
 
-    var localError by remember { mutableStateOf<String?>(null) }
+    var localError by rememberSaveable { mutableStateOf<String?>(null) }
     var productPickerIndex by remember { mutableStateOf<Int?>(null) }
     var showNewProductDialog by remember { mutableStateOf(false) }
-    var pendingCreatedProductId by remember { mutableStateOf<Int?>(null) }
+    var pendingCreatedProductId by rememberSaveable { mutableStateOf<Int?>(null) }
     var newProductError by remember { mutableStateOf<String?>(null) }
 
     var newProductName by remember { mutableStateOf("") }
@@ -151,9 +163,11 @@ fun MaintenanceFormScreen(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (_: SecurityException) {
-                // Se conserva la URI devuelta por el selector del sistema.
+                newProductError = "No se pudo conservar el acceso a esa foto. Elige otro archivo."
+                return@rememberLauncherForActivityResult
             }
             newProductImageUri = uri.toString()
+            newProductError = null
         }
     }
 
@@ -182,11 +196,12 @@ fun MaintenanceFormScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        TextButton(onClick = onBack) { Text("← Volver al historial") }
+        TextButton(onClick = onBack, enabled = !isSaving) { Text("← Volver al historial") }
         Text(
             if (existingRecord == null) "Registrar mantenimiento" else "Editar mantenimiento",
             style = MaterialTheme.typography.headlineSmall,
@@ -301,8 +316,8 @@ fun MaintenanceFormScreen(
                                 val selectedProduct = availableProducts.firstOrNull { it.id == part.catalogProductId }
                                 val previouslyUsed = existingRecord?.parts
                                     ?.filter { it.catalogProductId == part.catalogProductId }
-                                    ?.sumOf { it.quantity.toInt() } ?: 0
-                                val effectiveStock = (selectedProduct?.stock ?: 0) + previouslyUsed
+                                    ?.sumOf { it.quantity.toInt().toLong() } ?: 0L
+                                val effectiveStock = (selectedProduct?.stock ?: 0).toLong() + previouslyUsed
                                 Text(
                                     if (selectedProduct != null) "Stock disponible para este mantenimiento: $effectiveStock" else "Este producto ya no aparece en el catálogo.",
                                     color = if (effectiveStock <= 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
@@ -401,14 +416,15 @@ fun MaintenanceFormScreen(
             }
         }
 
-        if (localError != null) {
-            Text(localError.orEmpty(), color = MaterialTheme.colorScheme.error)
-        }
+        (localError ?: saveError)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         Button(
             onClick = {
                 val parsedMileage = mileage.toIntOrNull()
-                val draftParts = parts.filter { it.name.isNotBlank() }.map { part ->
+                val parsedLaborCost = laborCost.toLongOrNull()
+                val parsedNextMileage = nextMileage.toIntOrNull()
+                val namedParts = parts.filter { it.name.isNotBlank() }
+                val draftParts = namedParts.map { part ->
                     MaintenancePartDraft(
                         catalogProductId = part.catalogProductId,
                         name = part.name,
@@ -423,10 +439,14 @@ fun MaintenanceFormScreen(
 
                 localError = when {
                     serviceType.isBlank() -> "Escribe el tipo de mantenimiento."
-                    !serviceDate.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$")) -> "La fecha debe tener el formato AAAA-MM-DD."
+                    serviceDate != existingRecord?.record?.serviceDate &&
+                            !serviceDate.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$")) -> "La fecha debe tener el formato AAAA-MM-DD."
                     parsedMileage == null -> "Ingresa el kilometraje del vehículo."
                     description.isBlank() -> "Describe el trabajo realizado."
-                    draftParts.any { it.quantity <= 0.0 } -> "Todas las cantidades de repuestos deben ser mayores que cero."
+                    laborCost.isNotBlank() && parsedLaborCost == null -> "Ingresa un costo de mano de obra válido."
+                    nextMileage.isNotBlank() && parsedNextMileage == null -> "Ingresa un kilometraje válido para el próximo servicio."
+                    namedParts.any { it.unitPrice.isNotBlank() && it.unitPrice.toLongOrNull() == null } -> "Ingresa un precio válido para cada repuesto."
+                    draftParts.any { !it.quantity.isFinite() || it.quantity <= 0.0 } -> "Todas las cantidades de repuestos deben ser mayores que cero."
                     draftParts.any { it.catalogProductId != null && it.quantity % 1.0 != 0.0 } -> "Los repuestos del inventario se descuentan en unidades enteras."
                     else -> null
                 }
@@ -438,8 +458,8 @@ fun MaintenanceFormScreen(
                             serviceDate = serviceDate,
                             mileageKm = parsedMileage!!,
                             description = description,
-                            laborCostCop = laborCost.toLongOrNull() ?: 0L,
-                            nextServiceMileageKm = nextMileage.toIntOrNull(),
+                            laborCostCop = parsedLaborCost ?: 0L,
+                            nextServiceMileageKm = parsedNextMileage,
                             nextServiceDate = nextDate.takeIf { it.isNotBlank() },
                             observations = observations,
                             parts = draftParts
@@ -447,12 +467,13 @@ fun MaintenanceFormScreen(
                     )
                 }
             },
+            enabled = !isSaving && !isCreatingProduct && pendingCreatedProductId == null,
             modifier = Modifier.fillMaxWidth(),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp)
         ) {
-            Text("Guardar mantenimiento", fontWeight = FontWeight.Bold)
+            Text(if (isSaving) "Guardando mantenimiento…" else "Guardar mantenimiento", fontWeight = FontWeight.Bold)
         }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp)) {
+        OutlinedButton(onClick = onBack, enabled = !isSaving, modifier = Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp)) {
             Text("Cancelar")
         }
     }
@@ -477,8 +498,8 @@ fun MaintenanceFormScreen(
                     productsToShow.forEach { product ->
                         val oldQuantity = existingRecord?.parts
                             ?.filter { it.catalogProductId == product.id }
-                            ?.sumOf { it.quantity.toInt() } ?: 0
-                        val stockForThisEdit = product.stock + oldQuantity
+                            ?.sumOf { it.quantity.toInt().toLong() } ?: 0L
+                        val stockForThisEdit = product.stock.toLong() + oldQuantity
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -565,7 +586,7 @@ fun MaintenanceFormScreen(
             },
             confirmButton = {
                 Button(
-                    enabled = !isCreatingProduct,
+                    enabled = !isCreatingProduct && pendingCreatedProductId == null,
                     onClick = {
                         val price = newProductPrice.toLongOrNull()
                         val stock = newProductStock.toIntOrNull()

@@ -12,10 +12,10 @@ private fun formatProductPrice(value: Long): String {
 }
 
 fun ProductEntity.toProduct(): Product {
-
+    val promotion = effectivePriceCop.takeIf { it != priceCop }
     val badge = when {
         stock <= 0 -> "Agotado"
-        isOnPromotion -> "Oferta"
+        promotion != null -> "Oferta"
         isNew -> "Nuevo"
         else -> ""
     }
@@ -33,9 +33,8 @@ fun ProductEntity.toProduct(): Product {
         category = category,
         stock = stock,
         isNew = isNew,
-        isOnPromotion = isOnPromotion,
-        promotionPrice = promotionPriceCop?.let {
-            formatProductPrice(it)
-        }
+        isOnPromotion = promotion != null,
+        promotionPrice = promotion?.let(::formatProductPrice),
+        discountPercentage = discountPercentage
     )
 }
