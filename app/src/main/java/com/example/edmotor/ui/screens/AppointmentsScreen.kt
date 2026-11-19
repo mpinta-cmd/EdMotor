@@ -1,6 +1,8 @@
 package com.example.edmotor.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -9,25 +11,30 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccessTime
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.EventAvailable
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,9 +49,11 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.BuildConfig
 import com.example.edmotor.data.local.AppointmentWorkWithMaintenance
@@ -97,6 +106,7 @@ fun AppointmentsScreen(
     val coroutineScope = rememberCoroutineScope()
     val isConfigured = syncState != AppointmentSyncState.NOT_CONFIGURED
     val canManage = syncState == AppointmentSyncState.UP_TO_DATE && !isProcessing
+    val colors = MaterialTheme.colorScheme
     val orderedAppointments = remember(appointments) {
         appointments.sortedWith(compareBy({ it.scheduledAtMillis }, { it.id }))
     }
@@ -154,25 +164,12 @@ fun AppointmentsScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Text(
-            "Citas",
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp).semantics { heading() },
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.ExtraBold
+    Column(modifier = Modifier.fillMaxSize().background(colors.background)) {
+        AppointmentHeader(
+            requestLabel = if (isWorkshop) "Solicitudes" else "Solicitar",
+            showCalendar = showCalendar,
+            onSelect = { showCalendar = it }
         )
-        TabRow(selectedTabIndex = if (showCalendar) 1 else 0) {
-            Tab(
-                selected = !showCalendar,
-                onClick = { showCalendar = false },
-                text = { Text(if (isWorkshop) "Solicitudes" else "Solicitar") }
-            )
-            Tab(
-                selected = showCalendar,
-                onClick = { showCalendar = true },
-                text = { Text("Calendario") }
-            )
-        }
 
         tabStateHolder.SaveableStateProvider(showCalendar) {
             LazyColumn(
@@ -199,19 +196,32 @@ fun AppointmentsScreen(
                     }
                     val dayAppointments = appointmentsByDay[selectedDay].orEmpty()
                     item(key = "dayHeading") {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                formatAppointmentCalendarDay(selectedDay),
-                                modifier = Modifier.semantics { heading() },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (dayAppointments.isNotEmpty()) {
-                                Text(
-                                    if (dayAppointments.size == 1) "1 cita" else "${dayAppointments.size} citas",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            color = colors.primaryContainer,
+                            contentColor = colors.onPrimaryContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.CalendarMonth, contentDescription = null, modifier = Modifier.size(22.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        formatAppointmentCalendarDay(selectedDay),
+                                        modifier = Modifier.semantics { heading() },
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (dayAppointments.isNotEmpty()) {
+                                        Text(
+                                            if (dayAppointments.size == 1) "1 cita" else "${dayAppointments.size} citas",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -345,21 +355,79 @@ fun AppointmentsScreen(
 }
 
 @Composable
+private fun AppointmentHeader(requestLabel: String, showCalendar: Boolean, onSelect: (Boolean) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val tabShape = RoundedCornerShape(12.dp)
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(shape = tabShape, color = colors.primaryContainer, contentColor = colors.onPrimaryContainer) {
+                Icon(Icons.Outlined.CalendarMonth, contentDescription = null, modifier = Modifier.padding(9.dp).size(23.dp))
+            }
+            Text(
+                "Citas",
+                modifier = Modifier.semantics { heading() },
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            color = colors.surfaceVariant,
+            border = BorderStroke(1.dp, colors.outline)
+        ) {
+            Row(
+                modifier = Modifier.padding(4.dp).selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf(requestLabel, "Calendario").forEachIndexed { index, label ->
+                    val isCalendar = index == 1
+                    val selected = showCalendar == isCalendar
+                    Tab(
+                        selected = selected,
+                        onClick = { onSelect(isCalendar) },
+                        modifier = Modifier.weight(1f).clip(tabShape)
+                            .background(if (selected) colors.primary else colors.surfaceVariant),
+                        selectedContentColor = colors.onPrimary,
+                        unselectedContentColor = colors.onSurfaceVariant
+                    ) {
+                        Text(
+                            label,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun OpenAgendaButton(upcomingCount: Int, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = colors.primaryContainer,
-        contentColor = colors.onPrimaryContainer
+        color = colors.primary,
+        contentColor = colors.onPrimary
     ) {
         Row(
             modifier = Modifier.padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(shape = CircleShape, color = colors.surface, contentColor = colors.primary) {
+            Surface(shape = RoundedCornerShape(14.dp), color = colors.secondaryContainer, contentColor = colors.onSecondaryContainer) {
                 Icon(Icons.Outlined.EventAvailable, contentDescription = null, modifier = Modifier.padding(10.dp))
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -375,7 +443,7 @@ private fun OpenAgendaButton(upcomingCount: Int, onClick: () -> Unit) {
                     )
                 }
             }
-            Icon(Icons.Outlined.ChevronRight, contentDescription = null)
+            Icon(Icons.Outlined.ChevronRight, contentDescription = null, modifier = Modifier.size(22.dp))
         }
     }
 }
@@ -384,15 +452,15 @@ private fun OpenAgendaButton(upcomingCount: Int, onClick: () -> Unit) {
 private fun AppointmentMessage(message: String, isError: Boolean, onDismiss: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = if (isError) colors.errorContainer else colors.secondaryContainer,
-        contentColor = if (isError) colors.onErrorContainer else colors.onSecondaryContainer
+        shape = RoundedCornerShape(16.dp),
+        color = if (isError) colors.errorContainer else colors.primaryContainer,
+        contentColor = if (isError) colors.onErrorContainer else colors.onPrimaryContainer
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(message, modifier = Modifier.weight(1f))
+            Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
             TextButton(onClick = onDismiss) { Text("Cerrar") }
         }
     }
@@ -429,7 +497,10 @@ private fun AppointmentSyncNotice(
             if (!isDeviceAgenda) TextButton(onClick = onRefresh) { Text("Reintentar") }
         }
         AppointmentSyncState.UP_TO_DATE -> if (!isDeviceAgenda) {
-            TextButton(onClick = onRefresh, enabled = !isProcessing) { Text("Actualizar citas") }
+            TextButton(onClick = onRefresh, enabled = !isProcessing) {
+                Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("Actualizar citas", modifier = Modifier.padding(start = 7.dp))
+            }
         }
     }
 }
@@ -458,27 +529,21 @@ private fun AppointmentCard(
         AppointmentStatus.CANCELLED -> Triple("Cancelada", colors.surfaceVariant, colors.onSurfaceVariant)
         else -> Triple(appointment.status, colors.surfaceVariant, colors.onSurfaceVariant)
     }
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
-        elevation = CardDefaults.cardElevation(2.dp)
+        shape = RoundedCornerShape(20.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                itemVerticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    appointment.description,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
                 Surface(shape = CircleShape, color = statusContainer, contentColor = statusColor) {
                     Text(
                         statusLabel,
@@ -487,36 +552,54 @@ private fun AppointmentCard(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.AccessTime, contentDescription = null, modifier = Modifier.size(16.dp), tint = colors.primary)
+                    Text(
+                        formatAppointmentDateTime(appointment.scheduledAtMillis),
+                        color = colors.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
             Text(
-                formatAppointmentDateTime(appointment.scheduledAtMillis),
-                color = colors.primary,
+                appointment.description,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
             if (isWorkshop) {
-                Text(appointment.clientName.ifBlank { "Cliente" }, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    appointment.clientName.ifBlank { "Cliente" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
-            Text(
-                listOf(
-                    "${appointment.vehicleBrand} ${appointment.vehicleModel}",
-                    appointment.vehicleYear.toString(),
-                    appointment.vehiclePlate
-                ).filter { it.isNotBlank() }.joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.onSurfaceVariant
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.DirectionsCar, contentDescription = null, modifier = Modifier.size(18.dp), tint = colors.onSurfaceVariant)
+                Text(
+                    listOf(
+                        "${appointment.vehicleBrand} ${appointment.vehicleModel}",
+                        appointment.vehicleYear.toString(),
+                        appointment.vehiclePlate
+                    ).filter { it.isNotBlank() }.joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant
+                )
+            }
 
             if (appointment.canBeChanged()) {
+                HorizontalDivider(color = colors.outline)
                 val requiresReview = showsReview && appointment.status == AppointmentStatus.PENDING
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val actionShape = RoundedCornerShape(12.dp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (isWorkshop && appointment.status == AppointmentStatus.CONFIRMED) {
-                        Button(onClick = onFinish, enabled = canManage) { Text("Terminar cita") }
+                        Button(onClick = onFinish, enabled = canManage, shape = actionShape) { Text("Terminar cita") }
                     }
                     if (requiresReview) {
-                        Button(onClick = onAccept, enabled = canManage) { Text("Confirmar") }
-                        OutlinedButton(onClick = onReject, enabled = canManage) { Text("Rechazar") }
+                        Button(onClick = onAccept, enabled = canManage, shape = actionShape) { Text("Confirmar") }
+                        OutlinedButton(onClick = onReject, enabled = canManage, shape = actionShape) { Text("Rechazar") }
                     }
-                    OutlinedButton(onClick = onReschedule, enabled = canManage) {
+                    OutlinedButton(onClick = onReschedule, enabled = canManage, shape = actionShape) {
                         Text(if (requiresReview) "Ajustar fecha y hora" else "Reagendar")
                     }
                     TextButton(onClick = onCancel, enabled = canManage) { Text("Cancelar cita") }
@@ -532,22 +615,35 @@ private fun AppointmentCard(
                     )
                 }
                 if (!isWorkshop) {
-                    Text(
-                        "Listo para recoger",
-                        color = colors.primary,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = colors.primaryContainer,
+                        contentColor = colors.onPrimaryContainer
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.EventAvailable, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Text("Listo para recoger", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
                 if (maintenance != null) {
                     AppointmentMaintenanceSummary(maintenance)
                     if (onViewMaintenance != null) {
-                        OutlinedButton(onClick = { onViewMaintenance(maintenance.record.vehicleId) }) {
+                        OutlinedButton(
+                            onClick = { onViewMaintenance(maintenance.record.vehicleId) },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
                             Text("Ver mantenimiento")
                         }
                     }
                 } else if (isWorkshop) {
-                    Button(onClick = onRegisterMaintenance, enabled = canManage) { Text("Registrar mantenimiento") }
+                    Button(onClick = onRegisterMaintenance, enabled = canManage, shape = RoundedCornerShape(12.dp)) {
+                        Text("Registrar mantenimiento")
+                    }
                 }
             }
         }
@@ -567,7 +663,10 @@ private fun AppointmentMaintenanceSummary(maintenance: MaintenanceWithParts) {
         contentColor = colors.onSurfaceVariant
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Mantenimiento realizado", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Build, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
+                Text("Mantenimiento realizado", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            }
             Text(record.serviceType, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             Text(record.description, style = MaterialTheme.typography.bodyMedium)
             if (parts.isNotEmpty()) {

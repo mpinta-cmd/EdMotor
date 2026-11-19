@@ -298,7 +298,9 @@ fun EdMotorNavHost(
                             launchSingleTop = true
                         }
                     }
-                }
+                },
+
+                onOpenAppointments = { onNavigate(Routes.APPOINTMENTS) }
             )
         }
 

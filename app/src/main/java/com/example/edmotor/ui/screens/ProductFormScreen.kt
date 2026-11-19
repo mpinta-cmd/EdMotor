@@ -4,8 +4,11 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -16,33 +19,36 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -56,6 +62,8 @@ import com.example.edmotor.ui.components.CategorySelector
 import com.example.edmotor.ui.components.ProductImage
 import com.example.edmotor.ui.components.ProductImageChoice
 import com.example.edmotor.ui.components.ProductImagePicker
+import com.example.edmotor.ui.theme.EdMotorHeroNavy
+import com.example.edmotor.ui.theme.EdMotorPhotoMatte
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,268 +134,313 @@ fun ProductFormScreen(
     val stockValue = stock.toIntOrNull()
     val promotionValue = promotionPrice.toLongOrNull()
 
+    val colors = MaterialTheme.colorScheme
+    val fieldShape = RoundedCornerShape(14.dp)
+
     Scaffold(
+        containerColor = colors.background,
         topBar = {
             TopAppBar(
                 title = { Text(if (isEditing) "Editar repuesto" else "Nuevo repuesto") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = EdMotorHeroNavy,
+                    titleContentColor = ProductHeaderContent,
+                    navigationIconContentColor = ProductHeaderContent
+                ),
                 navigationIcon = {
-                    TextButton(onClick = onBack, enabled = !isSaving) { Text("Volver") }
+                    TextButton(onClick = onBack, enabled = !isSaving) {
+                        Text(
+                            "Volver",
+                            color = ProductHeaderContent.copy(alpha = if (isSaving) 0.38f else 1f)
+                        )
+                    }
                 }
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .consumeWindowInsets(padding)
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+        Box(
+            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding(),
+            contentAlignment = Alignment.TopCenter
         ) {
-            Text(
-                if (isEditing) "Modificar toda la información del producto"
-                else "Registrar un nuevo producto en el catálogo",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it; error = null },
-                label = { Text("Nombre del repuesto") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = description,
-                onValueChange = { description = it; error = null },
-                label = { Text("Descripción") },
-                minLines = 3,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Text("Categoría del repuesto", fontWeight = FontWeight.SemiBold)
-            CategorySelector(
-                selectedCategory = category,
-                categories = categories,
-                onCategorySelected = {
-                    category = it
-                    error = null
-                },
-                onCreateCategory = onCreateCategory
-            )
-
-            OutlinedTextField(
-                value = price,
-                onValueChange = { price = it.filter(Char::isDigit); error = null },
-                label = { Text("Precio normal (COP)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
+            Column(
+                modifier = Modifier.widthIn(max = 700.dp).fillMaxSize()
+                    .verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Column(
-                    Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                ProductFormSection("Datos del repuesto") {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = {
+                            name = it
+                            error = null
+                        },
+                        label = { Text("Nombre del repuesto") },
+                        singleLine = true,
+                        shape = fieldShape,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = {
+                            description = it
+                            error = null
+                        },
+                        label = { Text("Descripción") },
+                        minLines = 3,
+                        shape = fieldShape,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text("Categoría del repuesto", fontWeight = FontWeight.SemiBold)
+                    CategorySelector(
+                        selectedCategory = category,
+                        categories = categories,
+                        onCategorySelected = {
+                            category = it
+                            error = null
+                        },
+                        onCreateCategory = onCreateCategory
+                    )
+                }
+
+                ProductFormSection("Precio e inventario") {
+                    OutlinedTextField(
+                        value = price,
+                        onValueChange = {
+                            price = it.filter(Char::isDigit)
+                            error = null
+                        },
+                        label = { Text("Precio normal (COP)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = fieldShape,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = colors.secondaryContainer,
+                        contentColor = colors.onSecondaryContainer
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Producto en promoción", fontWeight = FontWeight.Bold)
-                            Text(
-                                "Activar un precio especial para este repuesto.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        Switch(
-                            checked = isOnPromotion,
-                            onCheckedChange = {
-                                isOnPromotion = it
-                                error = null
+                        Column(
+                            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Producto en promoción",
+                                    modifier = Modifier.weight(1f),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Switch(
+                                    checked = isOnPromotion,
+                                    onCheckedChange = {
+                                        isOnPromotion = it
+                                        error = null
+                                    }
+                                )
                             }
-                        )
+                            if (isOnPromotion) {
+                                Surface(
+                                    color = colors.surface,
+                                    shape = fieldShape
+                                ) {
+                                    OutlinedTextField(
+                                        value = promotionPrice,
+                                        onValueChange = {
+                                            promotionPrice = it.filter(Char::isDigit)
+                                            error = null
+                                        },
+                                        label = { Text("Precio promocional (COP)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        shape = fieldShape,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        }
                     }
-                    if (isOnPromotion) {
+
+                    if (product == null) {
                         OutlinedTextField(
-                            value = promotionPrice,
+                            value = stock,
                             onValueChange = {
-                                promotionPrice = it.filter(Char::isDigit)
+                                stock = it.filter(Char::isDigit)
                                 error = null
                             },
-                            label = { Text("Precio promocional (COP)") },
+                            label = { Text("Cantidad inicial") },
+                            supportingText = { Text("Ingresa 0 si el producto está agotado.") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
+                            shape = fieldShape,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                }
-            }
 
-            if (product == null) {
-                OutlinedTextField(
-                    value = stock,
-                    onValueChange = { stock = it.filter(Char::isDigit); error = null },
-                    label = { Text("Cantidad inicial") },
-                    supportingText = { Text("Ingresa 0 si el producto está agotado.") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Producto nuevo", fontWeight = FontWeight.Bold)
-                    Text(
-                        "Mostrar la etiqueta NUEVO en el catálogo.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                Checkbox(checked = isNew, onCheckedChange = { isNew = it })
-            }
-
-            Text("Fotografía del repuesto", fontWeight = FontWeight.Bold)
-            ProductImage(
-                imageUri = imageUri,
-                imageRes = imageRes,
-                contentDescription = name.ifBlank { "Vista previa del repuesto" },
-                modifier = Modifier.fillMaxWidth().height(210.dp),
-                contentScale = ContentScale.Fit
-            )
-            OutlinedButton(
-                onClick = { photoPicker.launch(arrayOf("image/*")) },
-                enabled = !isSaving,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    Icons.Outlined.AddAPhoto,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp).size(20.dp)
-                )
-                Text("Elegir foto de mi dispositivo")
-            }
-            OutlinedButton(
-                onClick = { showImageLibrary = true },
-                enabled = !isSaving,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    Icons.Outlined.PhotoLibrary,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp).size(20.dp)
-                )
-                Text("Elegir imágenes previamente cargadas")
-            }
-            photoError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-            if (error != null) {
-                Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
-            }
-
-            Spacer(Modifier.height(5.dp))
-            Button(
-                onClick = {
-                    error = when {
-                        name.trim().length < 3 -> "El nombre debe tener al menos 3 caracteres."
-                        description.isBlank() -> "Escribe una descripción."
-                        category.isBlank() -> "Selecciona una categoría o crea una nueva."
-                        priceValue == null || priceValue <= 0 -> "El precio debe ser mayor que cero."
-                        product == null && stockValue == null -> "La cantidad ingresada no es válida."
-                        imageRes <= 0 && imageUri.isNullOrBlank() ->
-                            "Selecciona una fotografía del dispositivo o una imagen del catálogo."
-                        isOnPromotion && (
-                                promotionValue == null ||
-                                        promotionValue <= 0 ||
-                                        promotionValue >= (priceValue ?: 0)
-                                ) -> "El precio promocional debe ser menor al precio normal."
-                        else -> null
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Producto nuevo", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Mostrar la etiqueta NUEVO en el catálogo.",
+                                color = colors.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Checkbox(checked = isNew, onCheckedChange = { isNew = it })
                     }
+                }
 
-                    if (error == null) {
-                        if (product == null) {
-                            onSave(
-                                name.trim(),
-                                description.trim(),
-                                category.trim(),
-                                priceValue!!,
-                                imageRes,
-                                name.trim(),
-                                stockValue!!,
-                                isNew,
-                                isOnPromotion,
-                                if (isOnPromotion) promotionValue else null,
-                                imageUri
-                            ) { result ->
-                                when (result) {
-                                    is ProductOperationResult.Success -> {
-                                        Toast.makeText(
-                                            context,
-                                            "Repuesto creado con éxito.",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                        result.productId?.let(onCreated)
-                                            ?: run {
-                                                error = "El repuesto se creó, pero no se recibió su identificador."
-                                            }
+                ProductFormSection("Fotografía del repuesto") {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = EdMotorPhotoMatte,
+                        border = BorderStroke(1.dp, colors.outline)
+                    ) {
+                        ProductImage(
+                            imageUri = imageUri,
+                            imageRes = imageRes,
+                            contentDescription = name.ifBlank { "Vista previa del repuesto" },
+                            modifier = Modifier.fillMaxWidth().height(200.dp).padding(12.dp),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { photoPicker.launch(arrayOf("image/*")) },
+                        enabled = !isSaving,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        shape = fieldShape
+                    ) {
+                        Icon(
+                            Icons.Outlined.AddAPhoto,
+                            contentDescription = null,
+                            modifier = Modifier.padding(end = 8.dp).size(20.dp)
+                        )
+                        Text("Elegir foto de mi dispositivo")
+                    }
+                    OutlinedButton(
+                        onClick = { showImageLibrary = true },
+                        enabled = !isSaving,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        shape = fieldShape
+                    ) {
+                        Icon(
+                            Icons.Outlined.PhotoLibrary,
+                            contentDescription = null,
+                            modifier = Modifier.padding(end = 8.dp).size(20.dp)
+                        )
+                        Text("Elegir imágenes previamente cargadas")
+                    }
+                    photoError?.let { Text(it, color = colors.error) }
+                }
+
+                if (error != null) {
+                    Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                }
+
+                Spacer(Modifier.height(5.dp))
+                Button(
+                    onClick = {
+                        error = when {
+                            name.trim().length < 3 -> "El nombre debe tener al menos 3 caracteres."
+                            description.isBlank() -> "Escribe una descripción."
+                            category.isBlank() -> "Selecciona una categoría o crea una nueva."
+                            priceValue == null || priceValue <= 0 -> "El precio debe ser mayor que cero."
+                            product == null && stockValue == null -> "La cantidad ingresada no es válida."
+                            imageRes <= 0 && imageUri.isNullOrBlank() ->
+                                "Selecciona una fotografía del dispositivo o una imagen del catálogo."
+                            isOnPromotion && (
+                                    promotionValue == null ||
+                                            promotionValue <= 0 ||
+                                            promotionValue >= (priceValue ?: 0)
+                                    ) -> "El precio promocional debe ser menor al precio normal."
+                            else -> null
+                        }
+
+                        if (error == null) {
+                            if (product == null) {
+                                onSave(
+                                    name.trim(),
+                                    description.trim(),
+                                    category.trim(),
+                                    priceValue!!,
+                                    imageRes,
+                                    name.trim(),
+                                    stockValue!!,
+                                    isNew,
+                                    isOnPromotion,
+                                    if (isOnPromotion) promotionValue else null,
+                                    imageUri
+                                ) { result ->
+                                    when (result) {
+                                        is ProductOperationResult.Success -> {
+                                            Toast.makeText(
+                                                context,
+                                                "Repuesto creado con éxito.",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                            result.productId?.let(onCreated)
+                                                ?: run {
+                                                    error = "El repuesto se creó, pero no se recibió su identificador."
+                                                }
+                                        }
+                                        is ProductOperationResult.Error -> error = result.message
                                     }
-                                    is ProductOperationResult.Error -> error = result.message
                                 }
-                            }
-                        } else {
-                            onUpdate(
-                                product.copy(
-                                    name = name.trim(),
-                                    description = description.trim(),
-                                    category = category.trim(),
-                                    priceCop = priceValue!!,
-                                    promotionPriceCop = if (isOnPromotion) promotionValue else null,
-                                    imageRes = imageRes,
-                                    imageUri = imageUri,
-                                    contentDescription = name.trim(),
-                                    isNew = isNew,
-                                    isOnPromotion = isOnPromotion
-                                )
-                            ) { result ->
-                                when (result) {
-                                    is ProductOperationResult.Success -> {
-                                        Toast.makeText(
-                                            context,
-                                            "Repuesto actualizado correctamente.",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                        onBack()
+                            } else {
+                                onUpdate(
+                                    product.copy(
+                                        name = name.trim(),
+                                        description = description.trim(),
+                                        category = category.trim(),
+                                        priceCop = priceValue!!,
+                                        promotionPriceCop = if (isOnPromotion) promotionValue else null,
+                                        imageRes = imageRes,
+                                        imageUri = imageUri,
+                                        contentDescription = name.trim(),
+                                        isNew = isNew,
+                                        isOnPromotion = isOnPromotion
+                                    )
+                                ) { result ->
+                                    when (result) {
+                                        is ProductOperationResult.Success -> {
+                                            Toast.makeText(
+                                                context,
+                                                "Repuesto actualizado correctamente.",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                            onBack()
+                                        }
+                                        is ProductOperationResult.Error -> error = result.message
                                     }
-                                    is ProductOperationResult.Error -> error = result.message
                                 }
                             }
                         }
+                    },
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    if (isSaving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.padding(end = 10.dp).size(20.dp),
+                            strokeWidth = 2.dp
+                        )
                     }
-                },
-                enabled = !isSaving,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)
-            ) {
-                if (isSaving) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.padding(end = 10.dp),
-                        strokeWidth = 2.dp
+                    Text(
+                        if (isEditing) "Guardar cambios" else "Registrar Repuesto",
+                        fontWeight = FontWeight.Bold
                     )
                 }
-                Text(
-                    if (isEditing) "Guardar cambios" else "Registrar Repuesto",
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }
@@ -423,5 +476,24 @@ fun ProductFormScreen(
                 showImageLibrary = false
             }
         )
+    }
+}
+
+@Composable
+private fun ProductFormSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            content()
+        }
     }
 }

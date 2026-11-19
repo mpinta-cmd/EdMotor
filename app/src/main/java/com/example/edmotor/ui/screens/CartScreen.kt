@@ -1,6 +1,6 @@
-
 package com.example.edmotor.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,17 +14,23 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -48,7 +54,7 @@ fun CartScreen(
     isOrderError: Boolean,
     onClearOrderMessage: () -> Unit
 ) {
-
+    val colors = MaterialTheme.colorScheme
     val productsById = remember(products) { products.associateBy { it.id } }
     val hasUnavailableProducts = cartQuantity.any { (productId, quantity) ->
         val product = productsById[productId]
@@ -73,36 +79,77 @@ fun CartScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "title") {
-            Text(
-                "Carrito de compras",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = colors.primaryContainer,
+                contentColor = colors.onPrimaryContainer
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(shape = RoundedCornerShape(16.dp), color = colors.surface, contentColor = colors.primary) {
+                        Icon(Icons.Outlined.ShoppingCart, contentDescription = null, modifier = Modifier.padding(12.dp))
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            "Carrito de compras",
+                            modifier = Modifier.semantics { heading() },
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (cartQuantity.isNotEmpty()) {
+                            val lines = cartQuantity.size
+                            Text(
+                                if (lines == 1) "1 repuesto" else "$lines repuestos",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         if (orderMessage != null) {
             item(key = "message") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = orderMessage,
-                        color = if (isOrderError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = onClearOrderMessage) { Text("Cerrar") }
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isOrderError) colors.errorContainer else colors.secondaryContainer,
+                    contentColor = if (isOrderError) colors.onErrorContainer else colors.onSecondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = orderMessage,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onClearOrderMessage) { Text("Cerrar") }
+                    }
                 }
             }
         }
 
         if (cartQuantity.isEmpty()) {
             item(key = "empty") {
-                Text(
-                    "Tu carrito está vacío. Selecciona repuestos del catálogo.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp)
-                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = colors.surface,
+                    border = BorderStroke(1.dp, colors.outline)
+                ) {
+                    Text(
+                        "Tu carrito está vacío. Selecciona repuestos del catálogo.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 28.dp)
+                    )
+                }
             }
         } else {
             items(cartQuantity.entries.toList(), key = { it.key }) { (productId, quantity) ->
@@ -123,60 +170,80 @@ fun CartScreen(
                         enabled = !isSubmittingOrder
                     )
                 } else {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text(product?.name ?: "Repuesto #$productId", fontWeight = FontWeight.Bold)
-                            Text(unavailableReason.orEmpty())
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        color = colors.surface,
+                        border = BorderStroke(1.dp, colors.outline)
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                product?.name ?: "Repuesto #$productId",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(unavailableReason.orEmpty(), color = colors.error)
                             TextButton(
                                 onClick = { onRemove(productId) },
-                                enabled = !isSubmittingOrder
-                            ) { Text("Quitar del carrito") }
+                                enabled = !isSubmittingOrder,
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Icon(Icons.Outlined.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Quitar del carrito")
+                            }
                         }
                     }
                 }
             }
 
             item(key = "summary") {
-                Card(
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    shape = RoundedCornerShape(22.dp),
+                    color = colors.surface,
+                    border = BorderStroke(1.dp, colors.outline)
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text(
-                            "Total del pedido",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            "\$" + moneyFormat.format(totalAmount),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            color = colors.primaryContainer,
+                            contentColor = colors.onPrimaryContainer
+                        ) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("Total del pedido", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    "\$" + moneyFormat.format(totalAmount),
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
                         Text(
                             restriction ?: "El pedido se guardará en este dispositivo, en Mis compras.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (restriction == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                            color = if (restriction == null) colors.onSurfaceVariant else colors.error
                         )
                         Button(
                             onClick = onSubmitOrder,
                             enabled = !isSubmittingOrder && restriction == null,
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(14.dp)
                         ) {
                             if (isSubmittingOrder) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(20.dp),
+                                    color = colors.onSurfaceVariant,
                                     strokeWidth = 2.dp
                                 )
-                                Spacer(Modifier.width(8.dp))
+                            } else {
+                                Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
                             }
+                            Spacer(Modifier.width(8.dp))
                             Text(
                                 if (isSubmittingOrder) "Guardando pedido…" else "Guardar pedido",
                                 fontWeight = FontWeight.Bold

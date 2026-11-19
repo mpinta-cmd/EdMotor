@@ -1,42 +1,48 @@
 package com.example.edmotor.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material.icons.outlined.ShoppingBag
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.model.Vehicle
-import java.text.NumberFormat
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @Composable
 fun WorkshopGarageScreen(
@@ -55,160 +61,92 @@ fun WorkshopGarageScreen(
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(if (showPurchasesInitially) 1 else 0) }
     var expandedClientId by rememberSaveable { mutableStateOf<Int?>(null) }
-    val showingClients = selectedTab == 0
+    val colors = MaterialTheme.colorScheme
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "$profileName · Propietario",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+        GarageHeader(profileName = "$profileName · Propietario", onLogout = onLogout)
+        GarageTabs(
+            firstLabel = "Clientes (${clients.size})",
+            firstIcon = Icons.Outlined.PersonOutline,
+            secondLabel = "Compras (${orders.size})",
+            secondIcon = Icons.Outlined.ShoppingBag,
+            firstSelected = selectedTab == 0,
+            onSelect = { selectedTab = it }
+        )
+
+        if (selectedTab == 0) {
+            if (clients.isEmpty()) {
+                GarageEmptyState(
+                    Icons.Outlined.PersonOutline,
+                    "Todavía no hay clientes registrados",
+                    "Cuando una persona cree su cuenta, aparecerá en esta sección."
                 )
-                Text("Mi garaje", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-            }
-            OutlinedButton(onClick = onLogout, shape = RoundedCornerShape(12.dp)) {
-                Text("Cerrar sesión")
-            }
-        }
-
-        TabRow(selectedTabIndex = if (showingClients) 0 else 1) {
-            Tab(selected = showingClients, onClick = { selectedTab = 0 }, text = { Text("Clientes (${clients.size})") })
-            Tab(selected = !showingClients, onClick = { selectedTab = 1 }, text = { Text("Compras (${orders.size})") })
-        }
-
-        when (selectedTab) {
-            0 -> {
-                if (clients.isEmpty()) {
-                    EmptyWorkshopMessage(
-                        "Todavía no hay clientes registrados",
-                        "Cuando una persona cree su cuenta, aparecerá en esta sección."
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(clients, key = { "client_${it.id}" }) { client ->
-                            val clientVehicles = vehicles.filter { it.ownerUserId == client.id }
-                            val clientOrders = orders.filter { it.order.clientUserId == client.id }
-                            val expanded = expandedClientId == client.id
-
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(18.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(1.dp)
-                            ) {
-                                Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(client.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("Vehículos: ${clientVehicles.size}")
-                                        Text("Pedidos: ${clientOrders.size}")
-                                    }
-                                    Button(
-                                        onClick = { expandedClientId = if (expanded) null else client.id },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(if (expanded) "Ocultar historial del cliente" else "Ver vehículos e historial de compras")
-                                    }
-
-                                    if (expanded) {
-                                        Text(
-                                            "VEHÍCULOS DEL CLIENTE",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        if (clientVehicles.isEmpty()) {
-                                            Text("Este cliente todavía no registra vehículos.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        } else {
-                                            clientVehicles.forEach { vehicle ->
-                                                Card(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                                    shape = RoundedCornerShape(13.dp)
-                                                ) {
-                                                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                        Text("${vehicle.brand} ${vehicle.model}", fontWeight = FontWeight.Bold)
-                                                        Text(
-                                                            "${vehicle.year} · ${vehicle.plate.ifBlank { "Sin placa" }} · ${vehicle.mileage.ifBlank { "Sin kilometraje" }}",
-                                                            style = MaterialTheme.typography.bodySmall
-                                                        )
-                                                        OutlinedButton(onClick = { onVehicleClick(vehicle.id) }) {
-                                                            Text("Abrir historial de mantenimiento")
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        Text(
-                                            "HISTORIAL DE COMPRAS",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        if (clientOrders.isEmpty()) {
-                                            Text("Este cliente todavía no tiene pedidos.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        } else {
-                                            clientOrders.forEach { order ->
-                                                WorkshopOrderCard(order = order, showClient = false)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(clients, key = { it.id }) { client ->
+                        val expanded = expandedClientId == client.id
+                        WorkshopClientCard(
+                            client = client,
+                            vehicles = vehicles.filter { it.ownerUserId == client.id },
+                            orders = orders.filter { it.order.clientUserId == client.id },
+                            expanded = expanded,
+                            onToggle = { expandedClientId = if (expanded) null else client.id },
+                            onVehicleClick = onVehicleClick
+                        )
                     }
                 }
             }
-
-            else -> {
-                if (isProcessing) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else {
+            if (isProcessing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+            if (message != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isError) colors.errorContainer else colors.primaryContainer,
+                    contentColor = if (isError) colors.onErrorContainer else colors.onPrimaryContainer
+                ) {
+                    Text(message, modifier = Modifier.padding(12.dp), fontWeight = FontWeight.SemiBold)
                 }
-                if (message != null) {
-                    Text(
-                        text = message,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                if (orders.isEmpty()) {
-                    EmptyWorkshopMessage(
-                        "Todavía no hay compras registradas",
-                        "Aquí aparecen los pedidos que envíen tus clientes."
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(orders, key = { it.order.id }) { order ->
-                            WorkshopOrderCard(order = order, showClient = true) {
-                                if (order.order.status == OrderStatus.PENDING) {
+            }
+            if (orders.isEmpty()) {
+                GarageEmptyState(
+                    Icons.Outlined.ShoppingBag,
+                    "Todavía no hay compras registradas",
+                    "Aquí aparecen los pedidos que envíen tus clientes."
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(orders, key = { it.order.id }) { order ->
+                        GarageOrderCard(orderWithItems = order, showClient = true) {
+                            if (order.order.status == OrderStatus.PENDING) {
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     Button(
                                         onClick = { onConfirm(order.order.id) },
                                         enabled = !isProcessing,
-                                        modifier = Modifier.fillMaxWidth()
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
+                                        Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
                                         Text("Aceptar pedido")
                                     }
                                     OutlinedButton(
                                         onClick = { onReject(order.order.id) },
                                         enabled = !isProcessing,
-                                        modifier = Modifier.fillMaxWidth()
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
+                                        Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
                                         Text("Rechazar pedido")
                                     }
                                 }
@@ -222,82 +160,77 @@ fun WorkshopGarageScreen(
 }
 
 @Composable
-private fun WorkshopOrderCard(
-    order: OrderWithItems,
-    showClient: Boolean,
-    actions: @Composable () -> Unit = {}
+private fun WorkshopClientCard(
+    client: UserEntity,
+    vehicles: List<Vehicle>,
+    orders: List<OrderWithItems>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onVehicleClick: (Int) -> Unit
 ) {
-    val currency = NumberFormat.getNumberInstance(Locale("es", "CO"))
-    val dateFormat = SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO"))
-    val status = when (order.order.status) {
-        OrderStatus.PENDING -> "PENDIENTE" to MaterialTheme.colorScheme.tertiary
-        OrderStatus.CONFIRMED -> "CONFIRMADO" to MaterialTheme.colorScheme.primary
-        OrderStatus.REJECTED -> "RECHAZADO" to MaterialTheme.colorScheme.error
-        else -> order.order.status to MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    Card(
+    val colors = MaterialTheme.colorScheme
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        shape = RoundedCornerShape(22.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
     ) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Pedido #${order.order.id}", fontWeight = FontWeight.ExtraBold)
-                Surface(color = status.second.copy(alpha = 0.12f), shape = RoundedCornerShape(50)) {
-                    Text(
-                        status.first,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                        color = status.second,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-            if (showClient) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                GarageIconTile(Icons.Outlined.PersonOutline)
                 Text(
-                    "Cliente: ${order.order.clientName}",
-                    fontWeight = FontWeight.SemiBold
+                    client.displayName,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
                 )
             }
-            Text(
-                dateFormat.format(Date(order.order.createdAtMillis)),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            order.items.forEach { item ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.weight(1f)) {
-                        Text(item.productName, fontWeight = FontWeight.Medium)
-                        Text(
-                            "${item.quantity} × $${currency.format(item.unitPriceCop)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                GarageDetailLabel("Vehículos: ${vehicles.size}")
+                GarageDetailLabel("Pedidos: ${orders.size}")
+            }
+            OutlinedButton(
+                onClick = onToggle,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    if (expanded) "Ocultar historial del cliente" else "Ver vehículos e historial de compras",
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            if (expanded) {
+                HorizontalDivider(color = colors.outline)
+                Text("Vehículos del cliente", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                if (vehicles.isEmpty()) {
+                    Text("Este cliente todavía no registra vehículos.", color = colors.onSurfaceVariant)
+                } else {
+                    vehicles.forEach { vehicle ->
+                        GarageVehicleCard(
+                            vehicle = vehicle,
+                            historyLabel = "Abrir historial de mantenimiento",
+                            onOpenHistory = { onVehicleClick(vehicle.id) }
                         )
                     }
-                    Text("$${currency.format(item.subtotalCop)}")
+                }
+                Text("Historial de compras", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                if (orders.isEmpty()) {
+                    Text("Este cliente todavía no tiene pedidos.", color = colors.onSurfaceVariant)
+                } else {
+                    orders.forEach { order -> GarageOrderCard(orderWithItems = order) }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Total", fontWeight = FontWeight.Bold)
-                Text(
-                    "$${currency.format(order.order.totalCop)}",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
-            actions()
         }
-    }
-}
-
-@Composable
-private fun EmptyWorkshopMessage(title: String, description: String) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(28.dp),
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

@@ -1,35 +1,58 @@
 package com.example.edmotor.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Logout
+import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.ShoppingBag
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.model.OrderStatus
@@ -52,167 +75,397 @@ fun ClientGarageScreen(
 ) {
     var showAddVehicle by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableStateOf(0) }
-    val currency = remember { NumberFormat.getNumberInstance(Locale("es", "CO")) }
-    val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO")) }
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    profileName,
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text("Mi garaje", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-                Text(
-                    "Consulta tus vehículos, mantenimientos y compras.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            OutlinedButton(onClick = onLogout, shape = RoundedCornerShape(12.dp)) {
-                Text("Cerrar sesión")
-            }
-        }
-
-        TabRow(selectedTabIndex = selectedTab) {
-            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Mis vehículos") })
-            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Mis compras") })
-        }
+        GarageHeader(profileName = profileName, onLogout = onLogout)
+        GarageTabs(
+            firstLabel = "Mis vehículos",
+            firstIcon = Icons.Outlined.DirectionsCar,
+            secondLabel = "Mis compras",
+            secondIcon = Icons.Outlined.ShoppingBag,
+            firstSelected = selectedTab == 0,
+            onSelect = { selectedTab = it }
+        )
 
         if (selectedTab == 0) {
-            Column(Modifier.fillMaxSize()) {
-                Button(
-                    onClick = { showAddVehicle = true },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    shape = RoundedCornerShape(14.dp)
-                ) { Text("+ Registrar mi vehículo") }
-
-                if (vehicles.isEmpty()) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Tu garaje está vacío", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text(
-                                "Registra tu automóvil. Cuando el taller realice un servicio, el historial aparecerá aquí.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(vehicles, key = { "vehicle_${it.id}" }) { vehicle ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth().clickable { onVehicleClick(vehicle.id) },
-                                shape = RoundedCornerShape(22.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                            ) {
-                                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("${vehicle.brand} ${vehicle.model}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                    Text("${vehicle.year} · ${vehicle.engine.ifBlank { "Motor sin registrar" }}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("Placa: ${vehicle.plate.ifBlank { "No registrada" }}")
-                                    Text("Kilometraje: ${vehicle.mileage.ifBlank { "No registrado" }}")
-                                    Text("Consultar historial de mantenimiento", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
-                }
+            Button(
+                onClick = { showAddVehicle = true },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Registrar mi vehículo")
             }
-        } else {
-            if (orders.isEmpty()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Text(
-                        "Aquí aparecen tu historial y los pedidos guardados en este dispositivo.",
-                        modifier = Modifier.padding(16.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            if (vehicles.isEmpty()) {
+                GarageEmptyState(
+                    Icons.Outlined.DirectionsCar,
+                    "Tu garaje está vacío",
+                    "Registra tu automóvil para consultar aquí sus mantenimientos."
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(orders, key = { it.order.id }) { orderWithItems ->
-                        val order = orderWithItems.order
-                        val (statusLabel, statusColor) = when (order.status) {
-                            OrderStatus.PENDING -> "PENDIENTE DE CONFIRMACIÓN" to MaterialTheme.colorScheme.tertiary
-                            OrderStatus.CONFIRMED -> "PEDIDO CONFIRMADO" to MaterialTheme.colorScheme.primary
-                            OrderStatus.REJECTED -> "PEDIDO RECHAZADO" to MaterialTheme.colorScheme.error
-                            else -> order.status to MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                        ) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Pedido #${order.id}", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                                    Surface(color = statusColor.copy(alpha = 0.12f), shape = RoundedCornerShape(50)) {
-                                        Text(
-                                            statusLabel,
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                                            color = statusColor,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                                Text(dateFormat.format(Date(order.createdAtMillis)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                orderWithItems.items.forEach { item ->
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text(item.productName, fontWeight = FontWeight.SemiBold)
-                                            Text("Cantidad: ${item.quantity}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Text("$${currency.format(item.subtotalCop)}", fontWeight = FontWeight.Medium)
-                                    }
-                                }
-                                Spacer(Modifier.height(2.dp))
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Total", fontWeight = FontWeight.Bold)
-                                    Text("$${currency.format(order.totalCop)}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
-                                }
-                                when (order.status) {
-                                    OrderStatus.PENDING -> Text("Pedido guardado en este dispositivo. Pendiente de revisión.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                                    OrderStatus.CONFIRMED -> Text("El taller confirmó tu pedido.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                                    OrderStatus.REJECTED -> Text("El taller rechazó este pedido. El inventario se conserva.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                                    else -> Unit
-                                }
-                            }
-                        }
+                    items(vehicles, key = { it.id }) { vehicle ->
+                        GarageVehicleCard(
+                            vehicle = vehicle,
+                            historyLabel = "Consultar historial de mantenimiento",
+                            wholeCardClickable = true,
+                            onOpenHistory = { onVehicleClick(vehicle.id) }
+                        )
                     }
+                }
+            }
+        } else if (orders.isEmpty()) {
+            GarageEmptyState(
+                Icons.Outlined.ShoppingBag,
+                "Todavía no tienes pedidos",
+                "Aquí puedes consultar el estado de los pedidos guardados en este dispositivo."
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(orders, key = { it.order.id }) { order ->
+                    GarageOrderCard(orderWithItems = order, customerFacing = true)
                 }
             }
         }
     }
 
     if (showAddVehicle) {
-        AddVehicleBottomSheet(
-            onDismiss = { showAddVehicle = false },
-            onVehicleAdded = onAddVehicle
+        AddVehicleBottomSheet(onDismiss = { showAddVehicle = false }, onVehicleAdded = onAddVehicle)
+    }
+}
+
+@Composable
+internal fun GarageHeader(profileName: String, onLogout: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 10.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = colors.primaryContainer,
+        contentColor = colors.onPrimaryContainer
+    ) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.align(Alignment.CenterVertically)
+            ) {
+                GarageIconTile(Icons.Outlined.DirectionsCar)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        "Mi garaje",
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        profileName,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            TextButton(
+                onClick = onLogout,
+                colors = ButtonDefaults.textButtonColors(contentColor = colors.onPrimaryContainer),
+                modifier = Modifier.align(Alignment.CenterVertically)
+            ) {
+                Icon(Icons.Outlined.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Cerrar sesión")
+            }
+        }
+    }
+}
+
+@Composable
+internal fun GarageTabs(
+    firstLabel: String,
+    firstIcon: ImageVector,
+    secondLabel: String,
+    secondIcon: ImageVector,
+    firstSelected: Boolean,
+    onSelect: (Int) -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = colors.surfaceVariant,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Row(
+            modifier = Modifier.selectableGroup().padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            listOf(firstLabel to firstIcon, secondLabel to secondIcon).forEachIndexed { index, (label, icon) ->
+                val selected = (index == 0) == firstSelected
+                val contentColor = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (selected) colors.primaryContainer else Color.Transparent)
+                        .selectable(selected = selected, role = Role.Tab, onClick = { onSelect(index) })
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = contentColor)
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        color = contentColor
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun GarageIconTile(icon: ImageVector) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = colors.surface,
+        contentColor = colors.primary,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.padding(10.dp).size(24.dp))
+    }
+}
+
+@Composable
+internal fun GarageEmptyState(icon: ImageVector, title: String, description: String) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        shape = RoundedCornerShape(20.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GarageIconTile(icon)
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(description, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+internal fun GarageVehicleCard(
+    vehicle: Vehicle,
+    historyLabel: String,
+    wholeCardClickable: Boolean = false,
+    onOpenHistory: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(20.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(shape)
+            .then(if (wholeCardClickable) Modifier.clickable(role = Role.Button, onClick = onOpenHistory) else Modifier),
+        shape = shape,
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                GarageIconTile(Icons.Outlined.DirectionsCar)
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        "${vehicle.brand} ${vehicle.model}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "${vehicle.year} · ${vehicle.engine.ifBlank { "Motor sin registrar" }}",
+                        color = colors.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                GarageDetailLabel("Placa: ${vehicle.plate.ifBlank { "No registrada" }}")
+                GarageDetailLabel("Kilometraje: ${vehicle.mileage.ifBlank { "No registrado" }}")
+            }
+            if (wholeCardClickable) {
+                HorizontalDivider(color = colors.outline)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(18.dp), tint = colors.primary)
+                    Text(
+                        historyLabel,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.primary
+                    )
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = colors.primary)
+                }
+            } else {
+                OutlinedButton(onClick = onOpenHistory, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                    Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(historyLabel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun GarageDetailLabel(label: String) {
+    val colors = MaterialTheme.colorScheme
+    Surface(shape = RoundedCornerShape(10.dp), color = colors.surfaceVariant, contentColor = colors.onSurfaceVariant) {
+        Text(label, modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+internal fun GarageOrderCard(
+    orderWithItems: OrderWithItems,
+    customerFacing: Boolean = false,
+    showClient: Boolean = false,
+    actions: @Composable () -> Unit = {}
+) {
+    val colors = MaterialTheme.colorScheme
+    val order = orderWithItems.order
+    val currency = remember { NumberFormat.getNumberInstance(Locale("es", "CO")) }
+    val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO")) }
+    val (status, containerColor, contentColor) = when (order.status) {
+        OrderStatus.PENDING -> Triple(
+            if (customerFacing) "PENDIENTE DE CONFIRMACIÓN" else "PENDIENTE",
+            colors.secondaryContainer,
+            colors.onSecondaryContainer
         )
+        OrderStatus.CONFIRMED -> Triple(
+            if (customerFacing) "PEDIDO CONFIRMADO" else "CONFIRMADO",
+            colors.primaryContainer,
+            colors.onPrimaryContainer
+        )
+        OrderStatus.REJECTED -> Triple(
+            if (customerFacing) "PEDIDO RECHAZADO" else "RECHAZADO",
+            colors.errorContainer,
+            colors.onErrorContainer
+        )
+        else -> Triple(order.status, colors.surfaceVariant, colors.onSurfaceVariant)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    GarageIconTile(Icons.Outlined.ReceiptLong)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "Pedido #${order.id}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            dateFormat.format(Date(order.createdAtMillis)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
+                }
+                Surface(
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                    color = containerColor,
+                    contentColor = contentColor,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        status,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            if (showClient) Text("Cliente: ${order.clientName}", fontWeight = FontWeight.SemiBold)
+            HorizontalDivider(color = colors.outline)
+            orderWithItems.items.forEach { item ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(item.productName, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (customerFacing) "Cantidad: ${item.quantity}"
+                            else "${item.quantity} × $${currency.format(item.unitPriceCop)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
+                    Text("$${currency.format(item.subtotalCop)}", fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceVariant,
+                contentColor = colors.onSurface
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Total", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "$${currency.format(order.totalCop)}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            if (customerFacing && order.status == OrderStatus.PENDING) {
+                Text(
+                    "Pedido guardado en este dispositivo. Pendiente de revisión.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
+            }
+            actions()
+        }
     }
 }

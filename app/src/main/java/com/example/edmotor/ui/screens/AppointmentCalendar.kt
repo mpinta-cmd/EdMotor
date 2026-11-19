@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -71,43 +72,57 @@ internal fun AppointmentMonthCalendar(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = colors.surface,
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, colors.outline)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { onSelectDay(moveMonth(monthStart, -1)) }) {
-                    Icon(Icons.Outlined.ChevronLeft, contentDescription = "Mes anterior")
-                }
-                Text(
-                    monthTitle,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-                IconButton(onClick = { onSelectDay(moveMonth(monthStart, 1)) }) {
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = "Mes siguiente")
-                }
-                IconButton(onClick = { onSelectDay(today) }) {
-                    Icon(Icons.Outlined.Today, contentDescription = "Ir a hoy")
-                }
-            }
-            Row(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                shape = RoundedCornerShape(14.dp),
+                color = colors.primaryContainer,
+                contentColor = colors.onPrimaryContainer
             ) {
-                weekdayLabels.forEach { label ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { onSelectDay(moveMonth(monthStart, -1)) }) {
+                        Icon(Icons.Outlined.ChevronLeft, contentDescription = "Mes anterior")
+                    }
                     Text(
-                        label,
-                        modifier = Modifier.weight(1f).padding(bottom = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
+                        monthTitle,
+                        modifier = Modifier.weight(1f).padding(vertical = 6.dp).semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )
+                    IconButton(onClick = { onSelectDay(moveMonth(monthStart, 1)) }) {
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = "Mes siguiente")
+                    }
+                    IconButton(onClick = { onSelectDay(today) }) {
+                        Icon(Icons.Outlined.Today, contentDescription = "Ir a hoy")
+                    }
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(9.dp),
+                color = colors.surfaceVariant,
+                contentColor = colors.onSurfaceVariant
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    weekdayLabels.forEach { label ->
+                        Text(
+                            label,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
             Column(
@@ -166,15 +181,17 @@ private fun AppointmentCalendarDay(
                 else -> "$count citas"
             }
         },
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(12.dp),
         color = when {
             selected -> colors.primary
             hasActiveAppointments -> colors.primaryContainer
+            count > 0 -> colors.surfaceVariant
             else -> colors.surface
         },
         contentColor = when {
             selected -> colors.onPrimary
             hasActiveAppointments -> colors.onPrimaryContainer
+            count > 0 -> colors.onSurfaceVariant
             else -> colors.onSurface
         },
         border = if (today && !selected) BorderStroke(1.dp, colors.primary) else null
@@ -187,7 +204,7 @@ private fun AppointmentCalendarDay(
             Text(
                 dayNumber,
                 modifier = Modifier.semantics { hideFromAccessibility() },
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected || today || hasActiveAppointments) FontWeight.Bold else FontWeight.Medium,
                 textAlign = TextAlign.Center
             )

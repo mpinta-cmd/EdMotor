@@ -1,8 +1,11 @@
 package com.example.edmotor.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -32,7 +35,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
@@ -47,6 +53,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.session.DemoOwnerProfile
 import com.example.edmotor.session.LocalCredentialValidation
+import com.example.edmotor.ui.components.EdMotorMark
+import com.example.edmotor.ui.theme.EdMotorHeroNavy
 
 private enum class CredentialMode { SIGN_IN, REGISTER_CLIENT, SETUP_OWNER }
 
@@ -129,31 +137,43 @@ fun CredentialAccessScreen(
                 .verticalScroll(scrollState)
                 .padding(horizontal = 22.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)
         ) {
+            Row(
+                modifier = Modifier
+                    .widthIn(max = 448.dp)
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(Brush.horizontalGradient(listOf(EdMotorHeroNavy, Color(0xFF214268))))
+                    .padding(horizontal = 20.dp, vertical = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                EdMotorMark(size = 48.dp)
+                Text(
+                    "EdMotor Tecnológica",
+                    modifier = Modifier.weight(1f).semantics { heading() },
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White
+                )
+            }
             Surface(
                 modifier = Modifier.widthIn(max = 448.dp).fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
+                shape = MaterialTheme.shapes.extraLarge,
                 color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 4.dp
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
-                        "EdMotor Tecnológica",
-                        modifier = Modifier.semantics { heading() },
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Text(
                         when (mode) {
                             CredentialMode.SIGN_IN -> "Accede a tu cuenta"
                             CredentialMode.REGISTER_CLIENT -> "Crear cuenta de cliente"
                             CredentialMode.SETUP_OWNER -> "Configura la cuenta del dueño"
                         },
+                        modifier = Modifier.semantics { heading() },
                         style = MaterialTheme.typography.titleLarge
                     )
                     Text(
