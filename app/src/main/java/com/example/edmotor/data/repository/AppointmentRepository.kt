@@ -8,10 +8,11 @@ import com.example.edmotor.data.local.AppointmentWorkEntity
 import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.UserEntity
 import com.example.edmotor.data.remote.MockApiConnection
+import com.example.edmotor.data.remote.MockAppointmentAvailability
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
-import com.example.edmotor.data.remote.findSubmittedAppointment
+import com.example.edmotor.data.remote.checkAppointmentAvailability
 import com.example.edmotor.data.remote.isDefinitiveMockAppointmentFailure
 import com.example.edmotor.data.remote.listAppointments
 import com.example.edmotor.data.remote.mockAppointmentFailureMessage
@@ -143,16 +144,18 @@ class AppointmentRepository(
     private suspend fun refreshCache(account: AppointmentAccount): AppointmentSyncState {
         val connection = mockApi ?: return AppointmentSyncState.NOT_CONFIGURED
         return try {
-            val user = activeUser(account)
-            val profileFilter = account.profileId.takeIf { account.role == UserRole.CLIENT }
-            val snapshot = connection.service.listAppointments(profileFilter)
-                .map { it.toCacheEntity(connection, account) }
-                .sortedWith(compareBy(AppointmentCacheEntity::scheduledAtMillis, AppointmentCacheEntity::id))
+            remoteWrites.withLock {
+                val user = activeUser(account)
+                val profileFilter = account.profileId.takeIf { account.role == UserRole.CLIENT }
+                val snapshot = connection.service.listAppointments(profileFilter)
+                    .map { it.toCacheEntity(connection, account) }
+                    .sortedWith(compareBy(AppointmentCacheEntity::scheduledAtMillis, AppointmentCacheEntity::id))
 
-            currentCoroutineContext().ensureActive()
-            requireActiveAccount(account, user)
-            appointmentDao.replaceCachedAppointments(account.cacheKey, account.role.name, snapshot)
-            AppointmentSyncState.UP_TO_DATE
+                currentCoroutineContext().ensureActive()
+                requireActiveAccount(account, user)
+                appointmentDao.replaceCachedAppointments(account.cacheKey, account.role.name, snapshot)
+                AppointmentSyncState.UP_TO_DATE
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -173,9 +176,10 @@ class AppointmentRepository(
             return AppointmentOperationResult.Error(message)
         }
         val now = System.currentTimeMillis()
-        if (scheduledAtMillis < now + APPOINTMENT_MINIMUM_NOTICE_MILLIS || !isValidAppointmentStart(scheduledAtMillis)) {
-            return AppointmentOperationResult.Error("Selecciona una fecha y hora con al menos 15 minutos de anticipación.")
-        }
+        val insufficientNotice = AppointmentOperationResult.Error(
+            "Selecciona una fecha y hora con al menos 15 minutos de anticipación."
+        )
+        if (!isValidAppointmentStart(scheduledAtMillis)) return insufficientNotice
         if (serviceType !in AppointmentServiceType.options) {
             return AppointmentOperationResult.Error("Selecciona un tipo de servicio.")
         }
@@ -183,13 +187,20 @@ class AppointmentRepository(
             return AppointmentOperationResult.Error("Selecciona un vehículo registrado en tu garaje.")
         }
 
+        val activeAppointment = AppointmentOperationResult.Error(
+            "Ya tienes una cita activa. Puedes gestionarla en la agenda antes de solicitar otra."
+        )
         localDatabase?.let { database ->
+            if (scheduledAtMillis < now + APPOINTMENT_MINIMUM_NOTICE_MILLIS) return insufficientNotice
             return performLocalOperation(database, account) { localClient ->
                 val registeredVehicle = database.vehicleDao().findById(vehicle.id)
                     ?.takeIf { it.ownerUserId == localClient.id }
                     ?: return@performLocalOperation AppointmentOperationResult.Error(
                         "Selecciona un vehículo registrado en tu garaje."
                     )
+                if (appointmentDao.hasActiveLocalAppointment(localClient.id, account.profileKey)) {
+                    return@performLocalOperation activeAppointment
+                }
                 val savedId = appointmentDao.insertLocalAppointment(
                     AppointmentEntity(
                         clientLocalUserId = localClient.id,
@@ -225,7 +236,7 @@ class AppointmentRepository(
             ?: return AppointmentOperationResult.Error("No fue posible guardar el vínculo con el vehículo.")
         return performRemoteOperation(
             account,
-            fallback = "No fue posible comprobar el envío. Actualiza las citas antes de volver a solicitarla."
+            fallback = "No fue posible comprobar la cita. Actualiza la agenda antes de volver a solicitarla."
         ) { connection, user ->
             check(user.id == client.id)
             if (database.vehicleDao().findById(vehicle.id)?.ownerUserId != user.id) {
@@ -237,11 +248,18 @@ class AppointmentRepository(
             val sendTime = System.currentTimeMillis()
             pendingSubmissions.keys.removeAll { it.scheduledAtMillis <= sendTime }
             val previous = pendingSubmissions[booking]
-            val recovered = previous?.let { it.appointment ?: connection.service.findSubmittedAppointment(it.request) }
+            if (previous == null && scheduledAtMillis < sendTime + APPOINTMENT_MINIMUM_NOTICE_MILLIS) {
+                return@performRemoteOperation insufficientNotice
+            }
+            val recovered = previous?.appointment ?: when (
+                val availability = connection.service.checkAppointmentAvailability(account.profileId, previous?.request)
+            ) {
+                MockAppointmentAvailability.Available -> null
+                MockAppointmentAvailability.HasActive -> return@performRemoteOperation activeAppointment
+                is MockAppointmentAvailability.PreviouslySubmitted -> availability.appointment
+            }
             if (recovered == null && scheduledAtMillis < System.currentTimeMillis() + APPOINTMENT_MINIMUM_NOTICE_MILLIS) {
-                return@performRemoteOperation AppointmentOperationResult.Error(
-                    "Selecciona una fecha y hora con al menos 15 minutos de anticipación."
-                )
+                return@performRemoteOperation insufficientNotice
             }
 
             val createdAt = maxOf(sendTime, lastRemoteCreationMillis + 1)
@@ -283,6 +301,7 @@ class AppointmentRepository(
                         }
                     )
                 )
+                appointmentDao.upsertCachedAppointment(submitted.toCacheEntity(connection, account))
                 requireActiveAccount(account, user)
             }
             pendingSubmissions.remove(booking)
@@ -471,15 +490,22 @@ class AppointmentRepository(
             if (account.role == UserRole.CLIENT && targetProfile != account.profileKey) {
                 return@performRemoteOperation unavailable
             }
-            applyAppointmentChange(
+            var latest = target
+            val result = applyAppointmentChange(
                 action, appointmentId, account.role, target.status, target.scheduledAtMillis, newStart
             ) { status, scheduledAtMillis, now ->
                 requireActiveAccount(account, active)
-                connection.service.submitAppointmentStatus(
+                latest = connection.service.submitAppointmentStatus(
                     target,
                     MockAppointmentStatusDto(status.takeIf { it != target.status }, now, scheduledAtMillis)
                 )
             }
+            if (result is AppointmentOperationResult.Success && account.role == UserRole.CLIENT) {
+                currentCoroutineContext().ensureActive()
+                requireActiveAccount(account, active)
+                appointmentDao.upsertCachedAppointment(latest.toCacheEntity(connection, account))
+            }
+            result
         }
     }
 

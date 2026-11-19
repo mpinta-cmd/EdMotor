@@ -11,14 +11,20 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.edmotor.data.local.UserEntity
+import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.UserRole
+import java.security.MessageDigest
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -29,6 +35,41 @@ private val Context.edMotorAccessDataStore by preferencesDataStore(
 )
 
 internal data class PendingDemoRegistration(val alias: String, val recovering: Boolean)
+
+internal data class PickupEvent private constructor(
+    val finishedAtMillis: Long,
+    val createdAtMillis: Long,
+    val appointmentId: Long
+) : Comparable<PickupEvent> {
+    override fun compareTo(other: PickupEvent): Int = compareValuesBy(
+        this, other, PickupEvent::finishedAtMillis, PickupEvent::createdAtMillis, PickupEvent::appointmentId
+    )
+
+    fun sameAppointment(other: PickupEvent): Boolean =
+        appointmentId == other.appointmentId && createdAtMillis == other.createdAtMillis
+
+    fun encode(): String = "$finishedAtMillis:$createdAtMillis:$appointmentId"
+
+    companion object {
+        fun from(appointment: Appointment): PickupEvent? {
+            val finishedAt = appointment.finishedAtMillis ?: return null
+            return create(finishedAt, appointment.createdAtMillis, appointment.id)
+        }
+
+        fun decode(encoded: String?): PickupEvent? {
+            val parts = encoded?.split(':', limit = 4) ?: return null
+            if (parts.size != 3) return null
+            val finishedAt = parts[0].toLongOrNull() ?: return null
+            val createdAt = parts[1].toLongOrNull() ?: return null
+            val id = parts[2].toLongOrNull() ?: return null
+            return create(finishedAt, createdAt, id)
+        }
+
+        private fun create(finishedAt: Long, createdAt: Long, id: Long): PickupEvent? =
+            if (id > 0 && createdAt > 0 && finishedAt >= createdAt) PickupEvent(finishedAt, createdAt, id)
+            else null
+    }
+}
 
 /** Recuerda la selección. Room sigue siendo la fuente del perfil. */
 class SessionManager internal constructor(private val dataStore: DataStore<Preferences>) {
@@ -97,6 +138,33 @@ class SessionManager internal constructor(private val dataStore: DataStore<Prefe
                 _currentUser.value = null
             }
         }
+    }
+
+    internal fun observePickupDismissal(clientAuthId: String): Flow<PickupEvent?> {
+        val key = pickupDismissalKey(clientAuthId)
+        return dataStore.data.map { PickupEvent.decode(it[key]) }.distinctUntilChanged()
+    }
+
+    internal suspend fun dismissPickup(expectedUser: UserEntity, event: PickupEvent) {
+        val clientAuthId = expectedUser.remoteAuthId?.takeIf { it.isNotBlank() } ?: return
+        if (expectedUser.role != UserRole.CLIENT.name) return
+        sessionMutex.withLock {
+            if (currentUser.value !== expectedUser) return@withLock
+            val key = pickupDismissalKey(clientAuthId)
+            dataStore.edit { preferences ->
+                val previous = PickupEvent.decode(preferences[key])
+                if (previous == null || (event > previous && !event.sameAppointment(previous))) {
+                    preferences[key] = event.encode()
+                }
+            }
+        }
+    }
+
+    private fun pickupDismissalKey(clientAuthId: String): Preferences.Key<String> {
+        // La identidad de MockAPI ya incluye el proyecto. No guardamos datos del vehículo ni del cliente.
+        val digest = MessageDigest.getInstance("SHA-256").digest(clientAuthId.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 0xff) }
+        return stringPreferencesKey("dismissed_pickup_v1:$digest")
     }
 
     internal suspend fun prepareDemoRegistration(projectKey: String, username: String): PendingDemoRegistration {

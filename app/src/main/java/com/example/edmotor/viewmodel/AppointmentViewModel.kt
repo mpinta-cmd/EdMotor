@@ -12,17 +12,24 @@ import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.session.PickupEvent
 import com.example.edmotor.session.SessionManager
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
@@ -67,6 +74,23 @@ class AppointmentViewModel(
         list.count { it.status == AppointmentStatus.PENDING }
     }.distinctUntilChanged()
 
+    val pickupNotice: Flow<Appointment?> = sessionManager.currentUser.flatMapLatest { user ->
+        val account = repository.accountFor(user)
+        if (account?.role != UserRole.CLIENT) {
+            flowOf(null)
+        } else {
+            combine(cachedSnapshots, sessionManager.observePickupDismissal(account.profileKey)) { cached, dismissed ->
+                if (sessionManager.currentUser.value === user) latestPickup(account, cached, dismissed)
+                else null
+            }.onStart { emit(null) }.retryWhen { error, _ ->
+                if (error !is IOException) return@retryWhen false
+                emit(null)
+                delay(1_000)
+                true
+            }
+        }
+    }.buffer(0).distinctUntilChanged()
+
     private val operation = MutableStateFlow(OperationState())
     private val visibleOperation = combine(currentAccount, operation) { _, state ->
         if (state.account == repository.accountFor(sessionManager.currentUser.value)) state else OperationState()
@@ -88,6 +112,35 @@ class AppointmentViewModel(
     }
 
     fun refreshAppointments() = repository.refreshAppointments()
+
+    fun dismissPickup(appointment: Appointment) {
+        val user = sessionManager.currentUser.value ?: return
+        val account = repository.accountFor(user)?.takeIf { it.role == UserRole.CLIENT } ?: return
+        if (appointment.clientAuthId != account.profileKey) return
+        val event = PickupEvent.from(appointment) ?: return
+
+        viewModelScope.launch {
+            if (sessionManager.currentUser.value !== user) return@launch
+            val latest = latestPickup(account, cachedSnapshots.value) ?: return@launch
+            if (PickupEvent.from(latest) != event) return@launch
+            try {
+                sessionManager.dismissPickup(user, event)
+            } catch (_: IOException) {
+                if (sessionManager.currentUser.value === user) {
+                    showMessage(account, "No se pudo guardar el cierre del aviso. Inténtalo de nuevo.", isError = true)
+                }
+            }
+        }
+    }
+
+    private fun latestPickup(
+        account: AppointmentAccount,
+        cached: ScopedSnapshot?,
+        dismissed: PickupEvent? = null
+    ): Appointment? {
+        if (cached?.account != account) return null
+        return latestPickupNotice(cached.snapshot.appointments, account.profileKey, dismissed)
+    }
 
     fun createAppointment(vehicle: Vehicle, scheduledAtMillis: Long, serviceType: String) {
         val user = sessionManager.currentUser.value
@@ -197,4 +250,19 @@ class AppointmentViewModel(
         val message: String? = null,
         val isError: Boolean = false
     )
+}
+
+internal fun latestPickupNotice(
+    appointments: List<Appointment>,
+    clientAuthId: String,
+    dismissed: PickupEvent? = null
+): Appointment? {
+    val (appointment, event) = appointments.asSequence()
+        .filter { it.clientAuthId == clientAuthId }
+        .mapNotNull { appointment -> PickupEvent.from(appointment)?.let { appointment to it } }
+        .maxByOrNull { it.second } ?: return null
+
+    return appointment.takeUnless {
+        dismissed != null && (event <= dismissed || event.sameAppointment(dismissed))
+    }
 }

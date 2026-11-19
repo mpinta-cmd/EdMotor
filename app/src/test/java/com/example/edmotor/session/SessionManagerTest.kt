@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -151,6 +152,51 @@ class SessionManagerTest {
             val newAttempt = session.prepareDemoRegistration(project, "cliente_1")
             assertFalse(newAttempt.recovering)
             assertNotEquals(originalAlias, newAttempt.alias)
+        }
+    }
+
+    @Test
+    fun pickupDismissalSurvivesSignOutAndRecreationAndStaysInItsAccount() = runBlocking {
+        val file = File(scratch.root, "pickup.preferences_pb")
+        val clientKey = "mockapi:${"2".repeat(24)}:17"
+        val otherClientKey = "mockapi:${"2".repeat(24)}:18"
+        val otherProjectKey = "mockapi:${"3".repeat(24)}:17"
+        val client = demoClient().copy(remoteAuthId = clientKey)
+        val otherClient = demoClient().copy(id = 19, remoteAuthId = otherClientKey)
+        val otherProject = demoClient().copy(id = 20, remoteAuthId = otherProjectKey)
+        val owner = demoOwner()
+        val oldEvent = checkNotNull(PickupEvent.decode("200:100:1"))
+        val dismissedEvent = checkNotNull(PickupEvent.decode("300:110:2"))
+        val staleSessionEvent = checkNotNull(PickupEvent.decode("400:120:3"))
+
+        withFreshStore(file) { session ->
+            session.selectProfile(client, credentialedDemo = true)
+            val activeClient = checkNotNull(session.currentUser.value)
+            assertNull(session.observePickupDismissal(clientKey).first())
+            session.dismissPickup(activeClient, dismissedEvent)
+            session.dismissPickup(activeClient, oldEvent)
+
+            session.selectProfile(otherClient, credentialedDemo = true)
+            session.dismissPickup(activeClient, staleSessionEvent)
+            assertNull(session.observePickupDismissal(otherClientKey).first())
+
+            session.selectProfile(otherProject, credentialedDemo = true)
+            val otherActive = checkNotNull(session.currentUser.value)
+            assertNull(session.observePickupDismissal(otherProjectKey).first())
+            session.dismissPickup(otherActive, oldEvent)
+
+            session.selectProfile(owner, credentialedDemo = true)
+            session.dismissPickup(checkNotNull(session.currentUser.value), staleSessionEvent)
+            assertNull(session.observePickupDismissal(checkNotNull(owner.remoteAuthId)).first())
+            session.clearSession()
+        }
+
+        withFreshStore(file) { session ->
+            assertNull(session.currentUser.value)
+            session.selectProfile(client, credentialedDemo = true)
+            assertEquals(dismissedEvent, session.observePickupDismissal(clientKey).first())
+            assertNull(session.observePickupDismissal(otherClientKey).first())
+            assertEquals(oldEvent, session.observePickupDismissal(otherProjectKey).first())
         }
     }
 

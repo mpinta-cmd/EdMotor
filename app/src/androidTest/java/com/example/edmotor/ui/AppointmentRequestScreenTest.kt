@@ -1,6 +1,7 @@
 package com.example.edmotor.ui
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -30,6 +31,7 @@ import com.example.edmotor.model.AppointmentServiceType
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.model.appointmentDateUtcMillis
 import com.example.edmotor.ui.screens.AppointmentsScreen
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -201,7 +203,7 @@ class AppointmentRequestScreenTest {
     }
 
     @Test
-    fun clientCanOpenAgendaRescheduleAndCancel() {
+    fun clientStartsInCalendarAndCanRescheduleAndCancel() {
         val original = sampleAppointment(AppointmentStatus.CONFIRMED)
         var appointment by mutableStateOf(original)
 
@@ -232,8 +234,10 @@ class AppointmentRequestScreenTest {
             }
         }
 
-        compose.onNodeWithText("Ver citas agendadas").performClick()
         compose.onNodeWithText("Calendario").assertIsSelected()
+        compose.onNodeWithText("Solicitar").assertDoesNotExist()
+        compose.onNodeWithText("Tu cita activa").assertExists()
+        assertAutomaticDay(original.scheduledAtMillis)
         appointmentList().performScrollToKey(original.id)
         compose.onNodeWithText("Reagendar").performScrollTo().performClick()
         compose.onNodeWithText("Hora: 10:00").performClick()
@@ -244,12 +248,87 @@ class AppointmentRequestScreenTest {
             assertEquals(AppointmentStatus.PENDING, appointment.status)
         }
 
-        compose.onNodeWithText("Solicitar").performClick().assertIsSelected()
+        compose.onNodeWithText("Solicitar").assertDoesNotExist()
+        compose.onNodeWithText("Horario: ${formatDateTime(original.scheduledAtMillis - 2 * 60 * 60_000L)}").assertExists()
         appointmentList().performScrollToKey(original.id)
         compose.onNodeWithText("Cancelar cita").performScrollTo().performClick()
         compose.onNodeWithText("Confirmar cancelación").assertIsEnabled().performClick()
+        compose.onNodeWithText("Solicitar").assertIsSelected()
+        appointmentList().performScrollToKey(original.id)
         compose.onNodeWithText("Cancelada").assertExists()
         compose.onNodeWithText("Reagendar").assertDoesNotExist()
+    }
+
+    @Test
+    fun bookingFormReturnsOnlyWhenAllActiveAppointmentsReachTerminalStatus() {
+        val earlier = sampleAppointment(AppointmentStatus.PENDING).copy(
+            scheduledAtMillis = System.currentTimeMillis() - 24 * 60 * 60_000L
+        )
+        val later = sampleAppointment(AppointmentStatus.CONFIRMED).copy(id = 42L)
+        var appointments by mutableStateOf(emptyList<Appointment>())
+        var syncState by mutableStateOf(AppointmentSyncState.LOADING)
+
+        compose.setContent {
+            MaterialTheme { RenderClientAppointments(appointments, syncState) }
+        }
+
+        compose.onNodeWithText("Solicitar").assertDoesNotExist()
+        compose.onNodeWithText("Solicitar cita").assertDoesNotExist()
+        compose.runOnIdle { syncState = AppointmentSyncState.UP_TO_DATE }
+        compose.onNodeWithText("Solicitar").assertIsSelected()
+        appointmentList().performScrollToKey("request")
+        compose.onNodeWithText("Solicitar cita").assertExists()
+
+        compose.runOnIdle { appointments = listOf(later, earlier) }
+        compose.onNodeWithText("Calendario").assertIsSelected()
+        compose.onNodeWithText("Solicitar").assertDoesNotExist()
+        compose.onNodeWithText("Horario: ${formatDateTime(earlier.scheduledAtMillis)}").assertExists()
+        assertAutomaticDay(earlier.scheduledAtMillis)
+
+        compose.runOnIdle { appointments = listOf(later, earlier.copy(status = AppointmentStatus.CANCELLED)) }
+        compose.onNodeWithText("Solicitar").assertDoesNotExist()
+        assertAutomaticDay(later.scheduledAtMillis)
+        compose.runOnIdle { appointments = appointments.map { it.copy(status = AppointmentStatus.REJECTED) } }
+        compose.onNodeWithText("Solicitar").assertIsSelected()
+        appointmentList().performScrollToKey(later.id)
+        compose.onAllNodesWithText("Rechazada").onFirst().assertExists()
+    }
+
+    @Test
+    fun completedDayFromGarageRetainsSelectionWhenActiveAppointmentLoads() {
+        val active = sampleAppointment(AppointmentStatus.CONFIRMED)
+        val completed = active.copy(
+            id = 42L,
+            status = AppointmentStatus.COMPLETED,
+            scheduledAtMillis = active.scheduledAtMillis - 8 * 24 * 60 * 60_000L
+        )
+        var requestedDay by mutableStateOf<Long?>(appointmentDateUtcMillis(completed.scheduledAtMillis))
+        var appointments by mutableStateOf(emptyList<Appointment>())
+        var syncState by mutableStateOf(AppointmentSyncState.LOADING)
+        var consumed = 0
+        compose.setContent {
+            MaterialTheme {
+                RenderClientAppointments(appointments, syncState, requestedDay) {
+                    consumed++
+                    requestedDay = null
+                }
+            }
+        }
+
+        assertAutomaticDay(completed.scheduledAtMillis)
+        compose.runOnIdle {
+            assertEquals(1, consumed)
+            appointments = listOf(active, completed)
+            syncState = AppointmentSyncState.UP_TO_DATE
+        }
+        compose.onNodeWithText("Solicitar").assertDoesNotExist()
+        assertAutomaticDay(completed.scheduledAtMillis)
+        appointmentList().performScrollToKey(completed.id)
+        compose.onNodeWithText("Cita terminada").assertExists()
+
+        appointmentList().performScrollToKey("activeAppointment")
+        compose.onNodeWithText("Ver día de la cita").performScrollTo().performClick()
+        assertAutomaticDay(active.scheduledAtMillis)
     }
 
     @Test
@@ -380,6 +459,42 @@ class AppointmentRequestScreenTest {
     }
 
     private fun appointmentList() = compose.onNode(hasScrollToIndexAction())
+
+    @Composable
+    private fun RenderClientAppointments(
+        appointments: List<Appointment>,
+        syncState: AppointmentSyncState,
+        requestedDay: Long? = null,
+        onDayHandled: () -> Unit = {}
+    ) {
+        AppointmentsScreen(
+            isWorkshop = false,
+            appointments = appointments,
+            syncState = syncState,
+            vehicles = listOf(Vehicle(1, "Marca", "Modelo", 2021, "Motor", ownerUserId = 1)),
+            isProcessing = false,
+            message = null,
+            isError = false,
+            onCreateAppointment = { _, _, _ -> },
+            onAccept = {},
+            onReject = {},
+            onCancel = {},
+            onReschedule = { _, _ -> },
+            onClearMessage = {},
+            onRefresh = {},
+            requestedCalendarDay = requestedDay,
+            onCalendarDayHandled = onDayHandled
+        )
+    }
+
+    private fun assertAutomaticDay(millis: Long) {
+        appointmentList().performScrollToKey("calendar")
+        val day = SimpleDateFormat("d 'de' MMMM 'de' yyyy", Locale("es", "CO")).format(Date(millis))
+        compose.onNodeWithContentDescription(day).performScrollTo().assertIsSelected()
+    }
+
+    private fun formatDateTime(millis: Long): String =
+        SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO")).format(Date(millis))
 
     private fun selectDay(millis: Long, count: String) {
         val date = SimpleDateFormat("d 'de' MMMM 'de' yyyy", Locale("es", "CO")).format(Date(millis))

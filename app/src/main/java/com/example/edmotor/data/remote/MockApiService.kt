@@ -82,7 +82,10 @@ data class MockAppointmentStatusDto(
     val scheduledAtMillis: Long? = null
 )
 
-internal suspend fun MockApiService.listAppointments(profileId: String? = null): List<MockAppointmentDto> {
+internal suspend fun MockApiService.listAppointments(
+    profileId: String? = null,
+    requireComplete: Boolean = false
+): List<MockAppointmentDto> {
     val rows = try {
         getAppointments(profileId)
     } catch (error: HttpException) {
@@ -99,15 +102,53 @@ internal suspend fun MockApiService.listAppointments(profileId: String? = null):
         return emptyList()
     }
 
-    return rows.mapNotNull(JsonElement::toMockAppointment)
+    return rows.mapNotNull { element ->
+        val appointment = element.toMockAppointment()
+        if (requireComplete && appointment == null) {
+            val owner = element.appointmentOwner()
+            check(profileId != null && owner != null && owner != profileId)
+        }
+        appointment
+    }
         .groupBy { it.id }
         .values
-        .mapNotNull { matches -> matches.distinct().singleOrNull() }
+        .mapNotNull { matches ->
+            val appointment = matches.distinct().singleOrNull()
+            if (requireComplete && (profileId == null || matches.any { it.profileId == profileId })) {
+                checkNotNull(appointment)
+            }
+            appointment
+        }
         .filter { profileId == null || it.profileId == profileId }
 }
 
+internal sealed interface MockAppointmentAvailability {
+    data object Available : MockAppointmentAvailability
+    data object HasActive : MockAppointmentAvailability
+    data class PreviouslySubmitted(val appointment: MockAppointmentDto) : MockAppointmentAvailability
+}
+
+internal suspend fun MockApiService.checkAppointmentAvailability(
+    profileId: String,
+    previousRequest: MockAppointmentCreateDto? = null
+): MockAppointmentAvailability {
+    require(appointmentProfileId.matches(profileId))
+    require(previousRequest == null || previousRequest.profileId == profileId)
+    val appointments = listAppointments(profileId, requireComplete = true)
+    val recovered = previousRequest?.let(appointments::findSubmission)
+    return when {
+        recovered != null -> MockAppointmentAvailability.PreviouslySubmitted(recovered)
+        appointments.any { AppointmentStatus.isActive(it.status) } -> MockAppointmentAvailability.HasActive
+        else -> MockAppointmentAvailability.Available
+    }
+}
+
 internal suspend fun MockApiService.findSubmittedAppointment(request: MockAppointmentCreateDto): MockAppointmentDto? {
-    val matches = listAppointments(request.profileId).filter { it.matchesSubmission(request) }
+    return listAppointments(request.profileId).findSubmission(request)
+}
+
+private fun List<MockAppointmentDto>.findSubmission(request: MockAppointmentCreateDto): MockAppointmentDto? {
+    val matches = filter { it.matchesSubmission(request) }
     check(matches.size <= 1)
     return matches.singleOrNull()
 }
@@ -172,6 +213,12 @@ private val appointmentStatuses = setOf(
     AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.REJECTED,
     AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED
 )
+
+private fun JsonElement.appointmentOwner(): String? {
+    val profile = takeIf { it.isJsonObject }?.asJsonObject?.get("profileId")
+    return profile?.takeIf { it.isJsonPrimitive && !it.asJsonPrimitive.isBoolean }
+        ?.asString?.takeIf(appointmentProfileId::matches)
+}
 
 private fun JsonElement.toMockAppointment(): MockAppointmentDto? {
     if (!isJsonObject) return null

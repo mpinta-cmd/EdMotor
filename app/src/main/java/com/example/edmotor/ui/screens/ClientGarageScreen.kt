@@ -17,11 +17,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.History
@@ -38,6 +40,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,13 +51,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.edmotor.model.Appointment
+import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
 import com.example.edmotor.model.Vehicle
@@ -71,10 +78,21 @@ fun ClientGarageScreen(
     orders: List<OrderWithItems>,
     onAddVehicle: (String, String, Int, String, String, String, String, (Result<Long>) -> Unit) -> Unit,
     onVehicleClick: (Int) -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    pickupNotice: Appointment? = null,
+    onViewPickup: (Appointment) -> Unit = {},
+    onDismissPickup: (Appointment) -> Unit = {}
 ) {
     var showAddVehicle by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    val vehicleListState = rememberLazyListState()
+    val ordersListState = rememberLazyListState()
+    val listState = if (selectedTab == 0) vehicleListState else ordersListState
+    val finishedAt = pickupNotice?.takeIf { it.status == AppointmentStatus.COMPLETED }
+        ?.finishedAtMillis?.takeIf { it > 0L }
+    LaunchedEffect(listState, pickupNotice?.id, pickupNotice?.createdAtMillis, finishedAt) {
+        if (finishedAt != null) listState.scrollToItem(0)
+    }
 
     Column(Modifier.fillMaxSize()) {
         GarageHeader(profileName = profileName, onLogout = onLogout)
@@ -87,28 +105,43 @@ fun ClientGarageScreen(
             onSelect = { selectedTab = it }
         )
 
-        if (selectedTab == 0) {
-            Button(
-                onClick = { showAddVehicle = true },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Registrar mi vehículo")
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (pickupNotice != null && finishedAt != null) {
+                item(key = "pickup") {
+                    GaragePickupNotice(
+                        finishedAtMillis = finishedAt,
+                        onView = { onViewPickup(pickupNotice) },
+                        onDismiss = { onDismissPickup(pickupNotice) }
+                    )
+                }
             }
-            if (vehicles.isEmpty()) {
-                GarageEmptyState(
-                    Icons.Outlined.DirectionsCar,
-                    "Tu garaje está vacío",
-                    "Registra tu automóvil para consultar aquí sus mantenimientos."
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+            if (selectedTab == 0) {
+                item(key = "register") {
+                    Button(
+                        onClick = { showAddVehicle = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Registrar mi vehículo")
+                    }
+                }
+                if (vehicles.isEmpty()) {
+                    item(key = "empty") {
+                        GarageEmptyState(
+                            Icons.Outlined.DirectionsCar,
+                            "Tu garaje está vacío",
+                            "Registra tu automóvil para consultar aquí sus mantenimientos.",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                } else {
                     items(vehicles, key = { it.id }) { vehicle ->
                         GarageVehicleCard(
                             vehicle = vehicle,
@@ -118,19 +151,16 @@ fun ClientGarageScreen(
                         )
                     }
                 }
-            }
-        } else if (orders.isEmpty()) {
-            GarageEmptyState(
-                Icons.Outlined.ShoppingBag,
-                "Todavía no tienes pedidos",
-                "Aquí puedes consultar el estado de los pedidos guardados en este dispositivo."
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            } else if (orders.isEmpty()) {
+                item(key = "empty") {
+                    GarageEmptyState(
+                        Icons.Outlined.ShoppingBag,
+                        "Todavía no tienes pedidos",
+                        "Aquí puedes consultar el estado de los pedidos guardados en este dispositivo.",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
                 items(orders, key = { it.order.id }) { order ->
                     GarageOrderCard(orderWithItems = order, customerFacing = true)
                 }
@@ -140,6 +170,53 @@ fun ClientGarageScreen(
 
     if (showAddVehicle) {
         AddVehicleBottomSheet(onDismiss = { showAddVehicle = false }, onVehicleAdded = onAddVehicle)
+    }
+}
+
+@Composable
+private fun GaragePickupNotice(
+    finishedAtMillis: Long,
+    onView: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = colors.secondaryContainer,
+        contentColor = colors.onSecondaryContainer
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(24.dp))
+                Column(
+                    modifier = Modifier.weight(1f).semantics(mergeDescendants = true) {
+                        liveRegion = LiveRegionMode.Polite
+                    },
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text("Listo para recoger", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("EdMotor terminó el servicio. Puedes pasar por tu vehículo.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Terminada el ${formatAppointmentDateTime(finishedAtMillis)}",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Button(onClick = onView, shape = RoundedCornerShape(12.dp)) { Text("Ver cita") }
+                TextButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.textButtonColors(contentColor = colors.onSecondaryContainer)
+                ) { Text("Entendido") }
+            }
+        }
     }
 }
 
@@ -254,10 +331,15 @@ internal fun GarageIconTile(icon: ImageVector) {
 }
 
 @Composable
-internal fun GarageEmptyState(icon: ImageVector, title: String, description: String) {
+internal fun GarageEmptyState(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    modifier: Modifier = Modifier.fillMaxWidth().padding(16.dp)
+) {
     val colors = MaterialTheme.colorScheme
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(20.dp),
         color = colors.surface,
         border = BorderStroke(1.dp, colors.outline)

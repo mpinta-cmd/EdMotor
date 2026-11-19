@@ -51,15 +51,21 @@ class LocalAppointmentsTest {
             val other = insertProfile(database, "clientb", "local-account:aa3d8659-7763-4f4b-8675-31e9082db250", UserRole.CLIENT)
             val workshop = insertProfile(database, "owner", "local-account:owner", UserRole.WORKSHOP)
             val firstVehicle = insertVehicle(database, client.id, "Modelo A")
+            val alternateVehicle = insertVehicle(database, client.id, "Modelo Alterno")
             val secondVehicle = insertVehicle(database, other.id, "Modelo B")
             val start = System.currentTimeMillis() + 24 * 60 * 60_000L
             val service = AppointmentServiceType.options.first()
 
             session.selectProfile(client)
-            assertTrue(repository.createAppointment(client, firstVehicle, start, service) is AppointmentOperationResult.Success)
+            val submissions = awaitAll(
+                async { repository.createAppointment(client, firstVehicle, start, service) },
+                async { repository.createAppointment(client, alternateVehicle, start + 15 * 60_000L, service) }
+            )
+            assertEquals(1, submissions.count { it is AppointmentOperationResult.Success })
+            val denied = submissions.single { it is AppointmentOperationResult.Error } as AppointmentOperationResult.Error
+            assertTrue(denied.message.contains("cita activa"))
             val clientAccount = requireNotNull(repository.accountFor(client))
             val first = withTimeout(5_000L) { repository.observeAppointments(clientAccount).first().appointments.single() }
-            assertEquals("Modelo A", first.vehicleModel)
             assertEquals(AppointmentStatus.PENDING, first.status)
             assertTrue(repository.acceptAppointment(client, first.id) is AppointmentOperationResult.Error)
 
@@ -97,12 +103,28 @@ class LocalAppointmentsTest {
             assertEquals(AppointmentStatus.CONFIRMED, updatedBooking.status)
             assertEquals(workshopStart, updatedBooking.scheduledAtMillis)
 
+            val expired = System.currentTimeMillis() - 60_000L
+            assertEquals(1, dao.updateLocalAppointment(
+                appointmentId = first.id,
+                previousStatus = AppointmentStatus.CONFIRMED,
+                status = AppointmentStatus.CONFIRMED,
+                scheduledAtMillis = expired,
+                updatedAtMillis = System.currentTimeMillis()
+            ))
+            val expiredAppointment = requireNotNull(dao.findLocalAppointment(first.id))
+            val legacyDuplicate = dao.insertLocalAppointment(expiredAppointment.copy(id = 0))
+
             session.selectProfile(client)
+            assertTrue(repository.createAppointment(client, firstVehicle, workshopStart, service) is AppointmentOperationResult.Error)
+            assertTrue(repository.cancelAppointment(client, legacyDuplicate) is AppointmentOperationResult.Success)
+            assertTrue(repository.createAppointment(client, firstVehicle, workshopStart, service) is AppointmentOperationResult.Error)
             val soon = System.currentTimeMillis() + 5 * 60_000L
             assertTrue(repository.rescheduleAppointment(client, first.id, soon) is AppointmentOperationResult.Error)
             val clientStart = start + 90 * 60_000L
             assertTrue(repository.rescheduleAppointment(client, first.id, clientStart) is AppointmentOperationResult.Success)
-            val rescheduled = withTimeout(5_000L) { repository.observeAppointments(clientAccount).first().appointments.single() }
+            val rescheduled = withTimeout(5_000L) {
+                repository.observeAppointments(clientAccount).first().appointments.single { it.id == first.id }
+            }
             assertEquals(AppointmentStatus.PENDING, rescheduled.status)
             assertEquals(clientStart, rescheduled.scheduledAtMillis)
             assertEquals(first.createdAtMillis, rescheduled.createdAtMillis)
@@ -157,6 +179,13 @@ class LocalAppointmentsTest {
             assertEquals(closedAt, dao.findLocalAppointment(next.id)?.updatedAtMillis)
             assertEquals(work, database.appointmentWorkDao().findById(work.id))
             assertTrue(repository.cancelAppointment(workshop, next.id) is AppointmentOperationResult.Error)
+
+            session.selectProfile(client)
+            assertTrue(repository.createAppointment(client, alternateVehicle, workshopStart, service) is AppointmentOperationResult.Success)
+            val active = withTimeout(5_000L) {
+                repository.observeAppointments(clientAccount).first().appointments.single { AppointmentStatus.isActive(it.status) }
+            }
+            assertEquals(alternateVehicle.model, active.vehicleModel)
         } finally {
             storeJob.cancelAndJoin()
             database.close()

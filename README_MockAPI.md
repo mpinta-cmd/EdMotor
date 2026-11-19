@@ -57,11 +57,11 @@ Sincroniza Gradle y ejecuta **EdMotor Automotriz**. Como alternativa, puedes com
 ## Ver cómo cambia el JSON
 
 1. En **EdMotor Automotriz**, toca **Crear cuenta de cliente** y completa tu nombre para mostrar, nombre de usuario y contraseña. Con MockAPI configurado, encontrarás un alias generado para la nueva cuenta en el JSON de `profiles` con rol `CLIENT`. El nombre y las credenciales de la cuenta se guardan en el teléfono.
-2. Registra un vehículo ficticio en **Mi Garaje**. Abre **Citas**, selecciona ese vehículo y solicita una revisión futura. La app escribe el registro en `appointments` con estado `PENDING`.
+2. Registra un vehículo ficticio en **Mi Garaje**. Abre **Citas**, selecciona ese vehículo y solicita una revisión futura. La app verifica la agenda del cliente y escribe una solicitud `PENDING` si el perfil está libre. El calendario muestra el día y la hora de la cita. Una cita pendiente o confirmada ocupa el turno de ese cliente hasta que termine, se cancele o se rechace.
 3. En el navegador, abre tu URL base seguida de `appointments`. Encontrarás la cita en JSON junto a su `id` y `profileId`.
 4. Cierra sesión en **Mi Garaje**, entra como **EdMotor** y abre **Citas → Solicitudes**. Ajusta la fecha y hora si hace falta y confirma la cita. En el mismo registro del JSON verás `scheduledAtMillis` con el horario y `status` con el valor `CONFIRMED`.
 5. En **Citas → Calendario**, elige un día para ver sus citas. También puedes entrar con **Ver citas agendadas**. Al reagendar, elige una de las mismas franjas disponibles al solicitar una cita. Si lo hace el cliente, el registro vuelve a `PENDING`. Cancelar guarda el estado `CANCELLED` en el mismo registro.
-6. Como dueño, abre la ficha de una cita confirmada y pulsa **Terminar cita**. El JSON muestra el estado `COMPLETED` y la hora real de cierre en `updatedAtMillis`. Completa **Registrar mantenimiento**. Al consultar la cita como cliente, verás **Listo para recoger** y el informe de mantenimiento guardado en Room en esa instalación.
+6. Como dueño, abre la ficha de una cita confirmada y pulsa **Terminar cita**. El JSON muestra el estado `COMPLETED` y la hora real de cierre en `updatedAtMillis`. Completa **Registrar mantenimiento**. Al entrar en **Mi Garaje** como cliente, el aviso **Listo para recoger** permite abrir la cita. El informe de mantenimiento se guarda en Room en esa instalación.
 
 Los pedidos nuevos y el inventario se comprueban desde **App Inspection → Database Inspector → edmotor_database**. Las citas guardan una copia local tras una lectura correcta. La creación y los cambios de estado se envían a MockAPI con conexión.
 

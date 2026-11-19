@@ -2,9 +2,11 @@ package com.example.edmotor
 
 import com.example.edmotor.data.remote.MockApiConnection
 import com.example.edmotor.data.remote.MockApiService
+import com.example.edmotor.data.remote.MockAppointmentAvailability
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
 import com.example.edmotor.data.remote.MockProfileCreateDto
+import com.example.edmotor.data.remote.checkAppointmentAvailability
 import com.example.edmotor.data.remote.createMockApiService
 import com.example.edmotor.data.remote.listAppointments
 import com.example.edmotor.data.remote.mockAppointmentFailureMessage
@@ -144,7 +146,7 @@ class MockApiContractTest {
             }
         ) { newApi ->
             val api = newApi()
-            assertTrue(api.listAppointments("3").isEmpty())
+            assertEquals(MockAppointmentAvailability.Available, api.checkAppointmentAvailability("3"))
             val created = api.submitAppointment(MockAppointmentCreateDto(
                 profileId = "3",
                 serviceType = "Revisión general",
@@ -172,6 +174,80 @@ class MockApiContractTest {
     }
 
     @Test
+    fun pendingAndConfirmedAppointmentsBlockAnotherBookingForThatProfile() {
+        for (status in listOf("PENDING", "CONFIRMED")) {
+            val routes = ConcurrentLinkedQueue<String>()
+            val appointment = EXISTING_APPOINTMENT.replace("PENDING", status)
+            withAppointmentEndpoint(respond = { route, _ ->
+                routes.add(route)
+                when (route) {
+                    "GET /api/v1/appointments?profileId=1" -> 200 to "[$appointment]"
+                    else -> 500 to "\"Unexpected route\""
+                }
+            }) { newApi ->
+                assertEquals(
+                    status,
+                    MockAppointmentAvailability.HasActive,
+                    newApi().checkAppointmentAvailability("1")
+                )
+            }
+            assertEquals(listOf("GET /api/v1/appointments?profileId=1"), routes.toList())
+        }
+    }
+
+    @Test
+    fun closedAppointmentsAndActiveAppointmentsOfAnotherProfileAllowANewBooking() {
+        val routes = ConcurrentLinkedQueue<String>()
+        val closed = listOf("COMPLETED", "CANCELLED", "REJECTED").mapIndexed { index, status ->
+            applyUpdate(EXISTING_APPOINTMENT, """{"id":"${7 + index}","status":"$status"}""")
+        }
+        val otherClient = applyUpdate(EXISTING_APPOINTMENT, """{"id":"10","profileId":"10","status":"CONFIRMED"}""")
+        val rows = (closed + otherClient).joinToString(prefix = "[", postfix = "]")
+        withAppointmentEndpoint(respond = { route, body ->
+            routes.add(route)
+            when (route) {
+                "GET /api/v1/appointments?profileId=1" -> 200 to rows
+                "POST /api/v1/appointments" -> 201 to applyUpdate(body, """{"id":"11"}""")
+                else -> 500 to "\"Unexpected route\""
+            }
+        }) { newApi ->
+            val api = newApi()
+            assertEquals(MockAppointmentAvailability.Available, api.checkAppointmentAvailability("1"))
+            val now = 1_790_000_001_000L
+            val created = api.submitAppointment(REQUEST.copy(createdAtMillis = now, updatedAtMillis = now))
+            assertEquals("11", created.id)
+            assertEquals("1", created.profileId)
+            assertEquals("PENDING", created.status)
+        }
+        assertEquals(listOf("GET /api/v1/appointments?profileId=1", "POST /api/v1/appointments"), routes.toList())
+    }
+
+    @Test
+    fun failedAvailabilityReadCannotClearAProfileForBooking() {
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(respond = { route, _ ->
+            routes.add(route)
+            503 to "\"Temporarily unavailable\""
+        }) { newApi ->
+            val failure = runCatching { newApi().checkAppointmentAvailability("1") }.exceptionOrNull()
+            assertEquals(503, (failure as? HttpException)?.code())
+        }
+        assertEquals(listOf("GET /api/v1/appointments?profileId=1"), routes.toList())
+    }
+
+    @Test
+    fun malformedActiveAppointmentCannotClearItsProfileForBooking() {
+        val routes = ConcurrentLinkedQueue<String>()
+        withAppointmentEndpoint(respond = { route, _ ->
+            routes.add(route)
+            200 to """[{"id":"7","profileId":"1","status":"PENDING"}]"""
+        }) { newApi ->
+            assertTrue(runCatching { newApi().checkAppointmentAvailability("1") }.isFailure)
+        }
+        assertEquals(listOf("GET /api/v1/appointments?profileId=1"), routes.toList())
+    }
+
+    @Test
     fun ambiguousPostReconcilesExactAttemptWithoutRetryingTheWrite() {
         val routes = ConcurrentLinkedQueue<String>()
         val otherAttempt = EXISTING_APPOINTMENT.replace("1790000000000", "1790000000001")
@@ -186,8 +262,18 @@ class MockApiContractTest {
                     else -> 500 to "\"Unexpected route\""
                 }
             }
-        ) { newApi -> assertEquals("8", newApi().submitAppointment(REQUEST).id) }
-        assertEquals(listOf("POST /api/v1/appointments", "GET /api/v1/appointments?profileId=1"), routes.toList())
+        ) { newApi ->
+            val submitted = newApi().submitAppointment(REQUEST)
+            assertEquals("8", submitted.id)
+            assertEquals(
+                MockAppointmentAvailability.PreviouslySubmitted(submitted),
+                newApi().checkAppointmentAvailability("1", previousRequest = REQUEST)
+            )
+        }
+        assertEquals(
+            listOf("POST /api/v1/appointments", "GET /api/v1/appointments?profileId=1", "GET /api/v1/appointments?profileId=1"),
+            routes.toList()
+        )
     }
 
     @Test

@@ -90,7 +90,9 @@ fun AppointmentsScreen(
     appointmentWork: List<AppointmentWorkWithMaintenance> = emptyList(),
     onFinish: (Appointment) -> Unit = {},
     onRegisterMaintenance: (Appointment) -> Unit = {},
-    onViewMaintenance: ((Int) -> Unit)? = null
+    onViewMaintenance: ((Int) -> Unit)? = null,
+    requestedCalendarDay: Long? = null,
+    onCalendarDayHandled: () -> Unit = {}
 ) {
     var showCalendar by rememberSaveable(isWorkshop) { mutableStateOf(false) }
     var rescheduleId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -98,10 +100,9 @@ fun AppointmentsScreen(
     var pendingFinish by remember(isWorkshop) { mutableStateOf<Appointment?>(null) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val today = remember(nowMillis) { appointmentDateUtcMillis(nowMillis) }
-    var selectedDay by rememberSaveable(isWorkshop) { mutableLongStateOf(today) }
+    var selectedDay by rememberSaveable(isWorkshop) { mutableLongStateOf(requestedCalendarDay ?: today) }
     val requestListState = rememberLazyListState()
     val calendarListState = rememberLazyListState()
-    val listState = if (showCalendar) calendarListState else requestListState
     val tabStateHolder = rememberSaveableStateHolder()
     val coroutineScope = rememberCoroutineScope()
     val isConfigured = syncState != AppointmentSyncState.NOT_CONFIGURED
@@ -110,6 +111,13 @@ fun AppointmentsScreen(
     val orderedAppointments = remember(appointments) {
         appointments.sortedWith(compareBy({ it.scheduledAtMillis }, { it.id }))
     }
+    val activeAppointment = if (isWorkshop) null else orderedAppointments.firstOrNull { it.canBeChanged() }
+    val calendarOnly = !isWorkshop && (activeAppointment != null || syncState == AppointmentSyncState.LOADING)
+    val calendarVisible = calendarOnly || showCalendar || requestedCalendarDay != null
+    val listState = if (calendarVisible) calendarListState else requestListState
+    val activeTime = activeAppointment?.let { it.identity() to it.scheduledAtMillis }
+    var lastActiveTime by remember(isWorkshop) { mutableStateOf<Pair<Triple<String, Long, Long>, Long>?>(null) }
+    var awaitingActiveAfterCalendarLink by remember(isWorkshop) { mutableStateOf(false) }
     val appointmentsByDay = remember(orderedAppointments) {
         orderedAppointments.groupBy { appointmentDateUtcMillis(it.scheduledAtMillis) }
     }
@@ -139,7 +147,31 @@ fun AppointmentsScreen(
     LaunchedEffect(message) {
         if (!message.isNullOrBlank()) listState.scrollToItem(0)
     }
-    BackHandler(enabled = showCalendar) { showCalendar = false }
+    LaunchedEffect(requestedCalendarDay, activeTime) {
+        if (requestedCalendarDay != null) {
+            selectedDay = requestedCalendarDay
+            showCalendar = true
+            lastActiveTime = activeTime
+            awaitingActiveAfterCalendarLink = !isWorkshop && activeTime == null
+            calendarListState.scrollToItem(0)
+            onCalendarDayHandled()
+        } else if (activeTime != lastActiveTime) {
+            lastActiveTime = activeTime
+            if (activeAppointment != null) {
+                // An explicit history link can arrive before the client's appointments load.
+                if (!awaitingActiveAfterCalendarLink) {
+                    selectedDay = appointmentDateUtcMillis(activeAppointment.scheduledAtMillis)
+                    showCalendar = false
+                    calendarListState.scrollToItem(0)
+                }
+                awaitingActiveAfterCalendarLink = false
+            }
+        }
+    }
+    BackHandler(enabled = showCalendar && !calendarOnly) {
+        awaitingActiveAfterCalendarLink = false
+        showCalendar = false
+    }
 
     val appointmentContent: @Composable (Appointment) -> Unit = { appointment ->
         val report = workByAppointment[appointment.identity()]?.let { (work, maintenance) ->
@@ -151,7 +183,7 @@ fun AppointmentsScreen(
         AppointmentCard(
             appointment = appointment,
             isWorkshop = isWorkshop,
-            showsReview = isWorkshop && !showCalendar,
+            showsReview = isWorkshop && !calendarVisible,
             canManage = canManage,
             maintenance = report,
             onAccept = { onAccept(appointment.id) },
@@ -166,12 +198,21 @@ fun AppointmentsScreen(
 
     Column(modifier = Modifier.fillMaxSize().background(colors.background)) {
         AppointmentHeader(
-            requestLabel = if (isWorkshop) "Solicitudes" else "Solicitar",
-            showCalendar = showCalendar,
-            onSelect = { showCalendar = it }
+            requestLabel = when {
+                isWorkshop -> "Solicitudes"
+                calendarOnly -> null
+                else -> "Solicitar"
+            },
+            showCalendar = calendarVisible,
+            onSelect = { calendar ->
+                if (!calendarOnly) {
+                    if (!calendar) awaitingActiveAfterCalendarLink = false
+                    showCalendar = calendar
+                }
+            }
         )
 
-        tabStateHolder.SaveableStateProvider(showCalendar) {
+        tabStateHolder.SaveableStateProvider(calendarVisible) {
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 state = listState,
@@ -185,7 +226,20 @@ fun AppointmentsScreen(
                     AppointmentSyncNotice(syncState, isWorkshop, appointments.isNotEmpty(), isProcessing, onRefresh)
                 }
 
-                if (isConfigured && showCalendar) {
+                if (isConfigured && calendarVisible) {
+                    if (activeAppointment != null) {
+                        item(key = "activeAppointment") {
+                            val activeDay = appointmentDateUtcMillis(activeAppointment.scheduledAtMillis)
+                            ActiveAppointmentSummary(
+                                appointment = activeAppointment,
+                                showsItsDay = selectedDay == activeDay,
+                                onShowItsDay = {
+                                    selectedDay = activeDay
+                                    showCalendar = false
+                                }
+                            )
+                        }
+                    }
                     item(key = "calendar") {
                         AppointmentMonthCalendar(
                             selectedDay = selectedDay,
@@ -355,7 +409,7 @@ fun AppointmentsScreen(
 }
 
 @Composable
-private fun AppointmentHeader(requestLabel: String, showCalendar: Boolean, onSelect: (Boolean) -> Unit) {
+private fun AppointmentHeader(requestLabel: String?, showCalendar: Boolean, onSelect: (Boolean) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val tabShape = RoundedCornerShape(12.dp)
     Column(
@@ -387,8 +441,7 @@ private fun AppointmentHeader(requestLabel: String, showCalendar: Boolean, onSel
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                listOf(requestLabel, "Calendario").forEachIndexed { index, label ->
-                    val isCalendar = index == 1
+                listOfNotNull(requestLabel?.let { false to it }, true to "Calendario").forEach { (isCalendar, label) ->
                     val selected = showCalendar == isCalendar
                     Tab(
                         selected = selected,
@@ -407,6 +460,34 @@ private fun AppointmentHeader(requestLabel: String, showCalendar: Boolean, onSel
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveAppointmentSummary(appointment: Appointment, showsItsDay: Boolean, onShowItsDay: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = colors.primaryContainer,
+        contentColor = colors.onPrimaryContainer
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "Tu cita activa",
+                modifier = Modifier.semantics { heading() },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text("Horario: ${formatAppointmentDateTime(appointment.scheduledAtMillis)}", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (appointment.status == AppointmentStatus.PENDING) "Pendiente de confirmación" else "Confirmada por EdMotor",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (!showsItsDay) {
+                TextButton(onClick = onShowItsDay) { Text("Ver día de la cita") }
             }
         }
     }

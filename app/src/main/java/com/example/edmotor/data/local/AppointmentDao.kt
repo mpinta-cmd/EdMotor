@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -26,6 +27,18 @@ abstract class AppointmentDao {
 
     @Query("SELECT * FROM appointments WHERE id = :appointmentId LIMIT 1")
     abstract suspend fun findLocalAppointment(appointmentId: Long): AppointmentEntity?
+
+    @Query(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM appointments
+            WHERE clientLocalUserId = :clientLocalUserId
+              AND clientAuthId = :clientAuthId
+              AND status IN ('PENDING', 'CONFIRMED')
+        )
+        """
+    )
+    abstract suspend fun hasActiveLocalAppointment(clientLocalUserId: Int, clientAuthId: String): Boolean
 
     @Query(
         """
@@ -55,6 +68,9 @@ abstract class AppointmentDao {
         accountAuthId: String,
         accountRole: String
     ): Flow<List<AppointmentCacheEntity>>
+
+    @Upsert
+    abstract suspend fun upsertCachedAppointment(appointment: AppointmentCacheEntity)
 
     @Query(
         """

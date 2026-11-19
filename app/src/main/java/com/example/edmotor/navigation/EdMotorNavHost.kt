@@ -43,6 +43,7 @@ import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.model.appointmentDateUtcMillis
 
 import com.example.edmotor.ui.screens.CartScreen
 import com.example.edmotor.ui.screens.ClientGarageScreen
@@ -63,6 +64,7 @@ import com.example.edmotor.viewmodel.OrderViewModel
 import com.example.edmotor.viewmodel.AppointmentViewModel
 
 private const val APPOINTMENT_WORK_ID = "appointmentWorkId"
+private const val APPOINTMENT_CALENDAR_DAY = "appointmentCalendarDay"
 
 /**
  * Navegación principal de EdMotor.
@@ -482,13 +484,24 @@ fun EdMotorNavHost(
                         showPurchasesInitially = route == Routes.ORDER_MANAGEMENT
                     )
                 } else if (route == Routes.PROFILE) {
+                    val pickupNotice by appointmentViewModel.pickupNotice
+                        .collectAsStateWithLifecycle(initialValue = null)
                     ClientGarageScreen(
                         profileName = currentUserName,
                         vehicles = vehicleList,
                         orders = orders,
                         onAddVehicle = appViewModel::addVehicle,
                         onVehicleClick = openHistory,
-                        onLogout = onLogout
+                        onLogout = onLogout,
+                        pickupNotice = pickupNotice,
+                        onViewPickup = { appointment ->
+                            navController.navigate(Routes.APPOINTMENTS) { launchSingleTop = true }
+                            navController.currentBackStackEntry?.savedStateHandle?.set(
+                                APPOINTMENT_CALENDAR_DAY,
+                                appointmentDateUtcMillis(appointment.scheduledAtMillis)
+                            )
+                        },
+                        onDismissPickup = { appointmentViewModel.dismissPickup(it) }
                     )
                 } else {
                     AccessDeniedScreen(
@@ -812,6 +825,9 @@ fun EdMotorNavHost(
         // =================================================
 
         composable(Routes.APPOINTMENTS) { entry ->
+            val requestedCalendarDay by entry.savedStateHandle
+                .getStateFlow<Long?>(APPOINTMENT_CALENDAR_DAY, null)
+                .collectAsStateWithLifecycle()
             var pendingWorkId by rememberSaveable { mutableStateOf<Long?>(null) }
             val selectedWork = appointmentWork.firstOrNull { it.work.id == pendingWorkId }?.work
             val clientId = selectedWork?.let { work ->
@@ -860,7 +876,9 @@ fun EdMotorNavHost(
                 onRegisterMaintenance = startAppointmentMaintenance,
                 onViewMaintenance = { vehicleId ->
                     navController.navigate(Routes.maintenanceHistory(vehicleId)) { launchSingleTop = true }
-                }
+                },
+                requestedCalendarDay = requestedCalendarDay,
+                onCalendarDayHandled = { entry.savedStateHandle.set<Long?>(APPOINTMENT_CALENDAR_DAY, null) }
             )
 
             if (isWorkshop && selectedWork != null && linkedVehicle == null) {
