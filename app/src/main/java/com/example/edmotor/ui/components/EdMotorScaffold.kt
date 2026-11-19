@@ -160,7 +160,6 @@ fun EdMotorScaffold(
             ) {
                 EdMotorBottomBar(
                     currentRoute = currentRoute,
-                    cartCount = cartCount,
                     pendingOrderCount = pendingOrderCount,
                     pendingAppointmentCount = pendingAppointmentCount,
                     onNavigate = onNavigate

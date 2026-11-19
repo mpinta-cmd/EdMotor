@@ -2,66 +2,63 @@ package com.example.edmotor.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.CalendarMonth
-
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.edmotor.navigation.Routes
-import com.example.edmotor.ui.theme.AzulNitro
 
-private data class EdMotorTab(
-    val route: String,
-    val label: String,
-    val icon: ImageVector
-)
+private data class EdMotorTab(val route: String, val label: String, val icon: ImageVector)
 
 private val tabs = listOf(
     EdMotorTab(Routes.HOME, "Inicio", Icons.Outlined.Home),
@@ -70,256 +67,176 @@ private val tabs = listOf(
     EdMotorTab(Routes.APPOINTMENTS, "Citas", Icons.Outlined.CalendarMonth)
 )
 
-/**
- * Barra premium inspirada en la referencia: fondo blanco, bordes redondos,
- * una hendidura en la parte superior que sigue a la pestaña seleccionada,
- * y un punto azul que acompaña ese movimiento.
- *
- * Conserva exactamente la firma que usa EdMotorApp.kt.
- */
+private val iconSize = 24.dp
+private val tabHorizontalPadding = 4.dp
+private val badgeGap = 4.dp
+private val badgeHorizontalPadding = 5.dp
+private val badgeVerticalPadding = 2.dp
+private val dockPadding = 6.dp
+private val tabGap = 3.dp
+private const val maxBadgeDisplay = "99+"
+
 @Composable
 fun EdMotorBottomBar(
     currentRoute: String?,
-    cartCount: Int,
     pendingOrderCount: Int = 0,
     pendingAppointmentCount: Int = 0,
     onNavigate: (String) -> Unit
 ) {
-    val activeIndex = tabs.indexOfFirst { it.route == currentRoute }
-        .let { if (it >= 0) it else 0 }
+    val activeRoute = if (currentRoute == Routes.ORDER_MANAGEMENT) Routes.PROFILE else currentRoute
+    val activeIndex = tabs.indexOfFirst { it.route == activeRoute }
+    val colors = MaterialTheme.colorScheme
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp)
+    val badgeStyle = labelStyle.copy(fontWeight = FontWeight.Bold)
+    val density = LocalDensity.current
+    val iconLaneHeight = maxOf(28.dp, with(density) { badgeStyle.lineHeight.toDp() } + badgeVerticalPadding * 2)
+    val tabsState = rememberLazyListState(initialFirstVisibleItemIndex = activeIndex.coerceAtLeast(0))
 
-    // Movimiento suave del recorte en la parte superior del menú.
-    val notchPosition by animateFloatAsState(
-        targetValue = (activeIndex + 0.5f) / tabs.size,
-        animationSpec = tween(durationMillis = 340),
-        label = "notchPosition"
-    )
+    LaunchedEffect(activeIndex) {
+        if (activeIndex >= 0) {
+            val layout = tabsState.layoutInfo
+            val isFullyVisible = layout.visibleItemsInfo.any { item ->
+                item.index == activeIndex && item.offset >= layout.viewportStartOffset &&
+                        item.offset + item.size <= layout.viewportEndOffset
+            }
+            if (!isFullyVisible) tabsState.animateScrollToItem(activeIndex)
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .background(colors.background)
             .navigationBarsPadding()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(start = 15.dp, end = 15.dp, top = 5.dp, bottom = 9.dp)
+            .padding(horizontal = 12.dp)
+            .padding(top = 5.dp, bottom = 8.dp),
+        contentAlignment = Alignment.Center
     ) {
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp)
+        Surface(
+            modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(),
+            color = colors.surface,
+            shape = RoundedCornerShape(26.dp),
+            border = BorderStroke(1.dp, colors.outline),
+            shadowElevation = 5.dp
         ) {
-            val notchShape = remember(notchPosition) {
-                MovingNotchShape(notchPosition)
-            }
+            BoxWithConstraints(Modifier.padding(dockPadding)) {
+                val minTabWidth = maxOf(48.dp, (maxWidth - tabGap * (tabs.size - 1)) / tabs.size)
 
-            // 4 columnas del mismo ancho, para que los iconos queden alineados.
-            val tabWidth = maxWidth / tabs.size
-            val dotOffset by animateDpAsState(
-                targetValue = tabWidth * (activeIndex + 0.5f) - 5.dp,
-                animationSpec = tween(durationMillis = 340),
-                label = "dotOffset"
-            )
-
-            // Cápsula BLANCA con hendidura en la parte superior.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(84.dp)
-                    .shadow(10.dp, notchShape, clip = false)
-                    .background(Color.White, notchShape)
-                    .border(0.7.dp, Color(0xFFE8EDF4), notchShape)
-            )
-
-            // 4 botones contenidos dentro de la cápsula (sin expandir su altura).
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(84.dp)
-                    .padding(top = 19.dp, bottom = 5.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                tabs.forEach {tab ->
-                    val badgeCount = when (tab.route) {
-                        Routes.PROFILE -> pendingOrderCount
-                        Routes.APPOINTMENTS -> pendingAppointmentCount
-                        else -> 0
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().selectableGroup(),
+                    state = tabsState,
+                    horizontalArrangement = Arrangement.spacedBy(tabGap),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items(tabs, key = { it.route }) { tab ->
+                        val count = when (tab.route) {
+                            Routes.PROFILE -> pendingOrderCount
+                            Routes.APPOINTMENTS -> pendingAppointmentCount
+                            else -> 0
+                        }
+                        EdMotorTabButton(
+                            tab = tab,
+                            selected = tab.route == activeRoute,
+                            count = count,
+                            labelStyle = labelStyle,
+                            badgeStyle = badgeStyle,
+                            iconLaneHeight = iconLaneHeight,
+                            modifier = Modifier.widthIn(min = minTabWidth).width(IntrinsicSize.Max),
+                            onClick = { if (tab.route != currentRoute) onNavigate(tab.route) }
+                        )
                     }
-                    EdMotorTabButton(
-                        tab = tab,
-                        selected = tab.route == currentRoute,
-                        badgeCount = badgeCount,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        onClick = { onNavigate(tab.route) }
-                    )
                 }
             }
-
-            // Punto azul ubicado dentro de la hendidura, como en tu imagen.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(x = dotOffset, y = 20.dp)
-                    .size(10.dp)
-                    .background(AzulNitro, CircleShape)
-                    .border(1.5.dp, Color.White, CircleShape)
-            )
         }
     }
 }
-
 
 @Composable
 private fun EdMotorTabButton(
     tab: EdMotorTab,
     selected: Boolean,
-    badgeCount: Int,
-    modifier: Modifier = Modifier,
+    count: Int,
+    labelStyle: TextStyle,
+    badgeStyle: TextStyle,
+    iconLaneHeight: Dp,
+    modifier: Modifier,
     onClick: () -> Unit
 ) {
-    val touch = remember { MutableInteractionSource() }
-    val pressed by touch.collectIsPressedAsState()
-    val haptic = LocalHapticFeedback.current
-
+    val colors = MaterialTheme.colorScheme
+    val tileColor by animateColorAsState(
+        if (selected) colors.primaryContainer else Color.Transparent,
+        label = "tabFill"
+    )
     val contentColor by animateColorAsState(
-        targetValue = if (selected) AzulNitro else Color(0xFF424A55),
-        animationSpec = tween(durationMillis = 210),
-        label = "tabContentColor"
+        if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+        label = "tabContent"
+    )
+    val indicatorWidth by animateDpAsState(
+        if (selected) 16.dp else 0.dp,
+        label = "tabIndicator"
     )
 
-    val iconScale by animateFloatAsState(
-        targetValue = when {
-            pressed -> 0.90f
-            selected -> 1.08f
-            else -> 1f
-        },
-        animationSpec = tween(durationMillis = 170),
-        label = "tabIconScale"
-    )
-
-    Box(
-        modifier = modifier.clickable(
-            interactionSource = touch,
-            indication = null,
-            role = Role.Tab,
-            onClickLabel = "Abrir ${tab.label}"
-        ) {
-            haptic.performHapticFeedback(
-                HapticFeedbackType.TextHandleMove
-            )
-            if (!selected) onClick()
-        },
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box {
-                Icon(
-                    imageVector = tab.icon,
-                    contentDescription = null,
-                    tint = contentColor,
-                    modifier = Modifier
-                        .size(25.dp)
-                        .scale(iconScale)
-                )
-                if (badgeCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .offset(x = 9.dp, y = (-7).dp)
-                            .size(17.dp)
-                            .background(Color(0xFFE53935), CircleShape)
-                            .border(1.dp, Color.White, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = if (badgeCount > 99) "99+" else badgeCount.toString(),
-                            color = Color.White,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1
-                        )
+    Column(
+        modifier = modifier
+            .heightIn(min = 62.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(tileColor)
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
+            .semantics {
+                if (count > 0) {
+                    stateDescription = when {
+                        tab.route == Routes.PROFILE && count == 1 -> "1 pedido pendiente"
+                        tab.route == Routes.PROFILE -> "$count pedidos pendientes"
+                        count == 1 -> "1 cita pendiente"
+                        else -> "$count citas pendientes"
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(5.dp))
-
-            Text(
-                text = tab.label,
-                color = contentColor,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                fontSize = 10.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-
-/**
- * Shape de cápsula con una hendidura pequeña y redondeada en el borde superior.
- * La posición se anima cuando cambia currentRoute.
- */
-private class MovingNotchShape(
-    private val position: Float
-) : Shape {
-
-    override fun createOutline(
-        size: Size,
-        layoutDirection: LayoutDirection,
-        density: Density
-    ): Outline {
-        with(density) {
-            val width = size.width
-            val height = size.height
-            val corner = 27.dp.toPx().coerceAtMost(height / 2)
-            val notchHalf = 26.dp.toPx()
-            val notchDepth = 15.dp.toPx()
-
-            val center = (width * position).coerceIn(
-                corner + 5.dp.toPx(),
-                width - corner - 5.dp.toPx()
-            )
-
-            // Recortamos los extremos de la hendidura junto a las esquinas.
-            val left = (center - notchHalf).coerceAtLeast(corner)
-            val right = (center + notchHalf).coerceAtMost(width - corner)
-            val leftSpan = center - left
-            val rightSpan = right - center
-
-            val path = Path().apply {
-                moveTo(0f, corner)
-                quadraticBezierTo(0f, 0f, corner, 0f)
-                lineTo(left, 0f)
-
-                cubicTo(
-                    left + leftSpan * 0.44f, 0f,
-                    center - leftSpan * 0.44f, notchDepth,
-                    center, notchDepth
-                )
-                cubicTo(
-                    center + rightSpan * 0.44f, notchDepth,
-                    right - rightSpan * 0.44f, 0f,
-                    right, 0f
-                )
-
-                lineTo(width - corner, 0f)
-                quadraticBezierTo(width, 0f, width, corner)
-                lineTo(width, height - corner)
-                quadraticBezierTo(width, height, width - corner, height)
-                lineTo(corner, height)
-                quadraticBezierTo(0f, height, 0f, height - corner)
-                close()
+            .padding(horizontal = tabHorizontalPadding, vertical = 5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Row(
+            modifier = Modifier.heightIn(min = iconLaneHeight),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(tab.icon, contentDescription = null, modifier = Modifier.size(iconSize), tint = contentColor)
+            if (count > 0) {
+                Spacer(Modifier.width(badgeGap))
+                Box(
+                    modifier = Modifier
+                        .background(colors.secondaryContainer, CircleShape)
+                        .defaultMinSize(minWidth = 19.dp)
+                        .padding(horizontal = badgeHorizontalPadding, vertical = badgeVerticalPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    BasicText(
+                        text = if (count > 99) maxBadgeDisplay else count.toString(),
+                        style = badgeStyle.copy(color = colors.onSecondaryContainer),
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.semantics { hideFromAccessibility() }
+                    )
+                }
             }
-
-            return Outline.Generic(path)
         }
+
+        Text(
+            text = tab.label,
+            style = labelStyle,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = contentColor,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(3.dp))
+        Box(
+            Modifier
+                .size(width = indicatorWidth, height = 2.dp)
+                .background(colors.primary, CircleShape)
+        )
     }
 }
