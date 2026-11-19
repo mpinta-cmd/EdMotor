@@ -177,22 +177,35 @@ interface ProductDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
+
     // ==========================================
-    // CONTROL DEL INVENTARIO
+    // CONTROL DE INVENTARIO PARA PEDIDOS
     // ==========================================
 
-    @Query("""
+    /**
+     * Descuenta existencias solamente cuando hay
+     * unidades suficientes.
+     *
+     * Retorna:
+     * 1 = descuento realizado.
+     * 0 = producto inexistente o stock insuficiente.
+     */
+    @Query(
+        """
         UPDATE products
-        SET stock = :newStock,
-            updatedAtMillis = :updatedAt
+        SET stock = stock - :quantity,
+            updatedAtMillis = :updatedAtMillis
         WHERE id = :productId
-        AND :newStock >= 0
-    """)
-    suspend fun updateStock(
+          AND :quantity > 0
+          AND stock >= :quantity
+        """
+    )
+    suspend fun decreaseStockIfAvailable(
         productId: Int,
-        newStock: Int,
-        updatedAt: Long = System.currentTimeMillis()
+        quantity: Int,
+        updatedAtMillis: Long
     ): Int
+
 
     // ==========================================
     // CONTROL DE CANTIDADES DISPONIBLES

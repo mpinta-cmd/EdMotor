@@ -70,13 +70,13 @@ class AppContainer(context: Context) {
     val productsRepository: ProductRepository
         get() = productRepository
 
+
     private val orderRepository = OrderRepository(
         database = database,
-        cartDao = database.cartDao(),
-        productDao = database.productDao(),
-        supabase = supabaseClient,
-        sessionManager = sessionManager
+        orderDao = database.orderDao(),
+        productDao = database.productDao()
     )
+
 
     private val appointmentRepository = AppointmentRepository(
         supabase = supabaseClient,
