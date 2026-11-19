@@ -91,7 +91,7 @@ class AppointmentViewModel(
         val user = sessionManager.currentUser.value
         val account = repository.accountFor(user)
         if (user == null || account == null || account.role != UserRole.CLIENT) {
-            showMessage(account, "Selecciona un perfil de cliente de MockAPI para solicitar citas de prueba.", isError = true)
+            showMessage(account, "Selecciona un perfil de cliente en línea para solicitar una cita.", isError = true)
             return
         }
         execute(account) { repository.createAppointment(user, vehicle, scheduledAtMillis, serviceType) }
@@ -109,7 +109,7 @@ class AppointmentViewModel(
         val user = sessionManager.currentUser.value
         val account = repository.accountFor(user)
         if (user == null || account == null || account.role != UserRole.WORKSHOP) {
-            showMessage(account, "Selecciona un perfil de taller de MockAPI para administrar citas de prueba.", isError = true)
+            showMessage(account, "Selecciona un perfil de dueño en línea para administrar las citas.", isError = true)
             return
         }
         execute(account) { request(user) }

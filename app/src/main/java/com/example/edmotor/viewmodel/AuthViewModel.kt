@@ -54,7 +54,7 @@ class AuthViewModel(
                     it.copy(
                         profiles = repository.localProfiles + remoteProfiles,
                         message = if (remoteProfiles.isEmpty()) {
-                            "MockAPI no tiene perfiles de demostración disponibles."
+                            "No hay perfiles disponibles en línea."
                         } else {
                             null
                         }

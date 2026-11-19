@@ -151,21 +151,21 @@ fun AppointmentsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = if (isWorkshop) "AGENDA DE PRUEBA DEL TALLER" else "CITAS DE PRUEBA",
+            text = if (isWorkshop) "AGENDA DEL TALLER" else "CITAS",
             color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = if (isWorkshop) "Solicitudes de servicio" else "Solicita una cita de prueba",
+            text = if (isWorkshop) "Solicitudes de servicio" else "Solicita una cita",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.ExtraBold
         )
         Text(
             text = if (isWorkshop) {
-                "Consulta las solicitudes de demostración por día y horario."
+                "Consulta las solicitudes por día y horario."
             } else {
-                "Elige un vehículo de prueba, el día, la hora y el tipo de servicio. Los detalles del vehículo quedan en este dispositivo."
+                "Elige un vehículo, el día, la hora y el tipo de servicio. Los detalles del vehículo quedan en este dispositivo."
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
@@ -204,7 +204,7 @@ fun AppointmentsScreen(
 
         if (syncState == AppointmentSyncState.NOT_CONFIGURED) {
             Text(
-                "Las citas de prueba necesitan MockAPI configurado y un perfil seleccionado de MockAPI. El garaje, el catálogo y los pedidos siguen disponibles en este dispositivo.",
+                "Para gestionar citas, configura MockAPI y selecciona un perfil en línea. El garaje, el catálogo y los pedidos están disponibles en este dispositivo.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -295,7 +295,7 @@ fun AppointmentsScreen(
 
                             if (vehicles.isEmpty()) {
                                 Text(
-                                    "Registra un vehículo ficticio en Mi Garaje para solicitar una cita de prueba.",
+                                    "Registra un vehículo en Mi Garaje para solicitar una cita.",
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -382,7 +382,7 @@ fun AppointmentsScreen(
                                     )
                                     Spacer(Modifier.padding(4.dp))
                                 }
-                                Text("Solicitar cita de prueba")
+                                Text("Solicitar cita")
                             }
                         }
                     }

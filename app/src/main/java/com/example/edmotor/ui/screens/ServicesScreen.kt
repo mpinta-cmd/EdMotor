@@ -196,12 +196,12 @@ fun ServicesScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Prueba cómo agendar una cita",
+                        text = "Agenda una cita",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = "Con un perfil de MockAPI puedes elegir un vehículo ficticio, un servicio y un horario de prueba.",
+                        text = "Con un perfil en línea puedes elegir un vehículo, un servicio y un horario.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -266,7 +266,7 @@ fun ServicesScreen(
                         onOpenAppointments()
                     }
                 ) {
-                    Text("Abrir citas de prueba")
+                    Text("Abrir citas")
                 }
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),

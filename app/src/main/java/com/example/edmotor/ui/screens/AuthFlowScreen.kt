@@ -30,9 +30,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.edmotor.R
 import com.example.edmotor.model.DemoProfile
 import com.example.edmotor.model.UserRole
 
@@ -70,18 +72,18 @@ fun AuthFlowScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                "ED MOTOR",
+                                stringResource(R.string.app_name),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                "Selecciona un perfil de prueba",
+                                "Selecciona un perfil",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                "Puedes explorar EdMotor como cliente o taller. Elige un perfil de MockAPI para probar las citas en línea. Usa datos ficticios para esta demostración.",
+                                "Elige el perfil con el que quieres continuar. Los perfiles en línea permiten gestionar citas.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -99,7 +101,7 @@ fun AuthFlowScreen(
                 }
 
                 item {
-                    Text("MockAPI", style = MaterialTheme.typography.titleMedium)
+                    Text("Perfiles en línea", style = MaterialTheme.typography.titleMedium)
                 }
                 items(remoteProfiles, key = { it.key }) { profile ->
                     DemoProfileCard(profile, selectedKey == profile.key, !isSelecting) {
@@ -122,7 +124,7 @@ fun AuthFlowScreen(
                         }
                         else -> Row(verticalAlignment = Alignment.CenterVertically) {
                             if (remoteProfiles.isEmpty() && message == null) {
-                                Text("No hay perfiles de prueba en MockAPI.", modifier = Modifier.weight(1f))
+                                Text("No hay perfiles disponibles en línea.", modifier = Modifier.weight(1f))
                             }
                             TextButton(onClick = onRetry, enabled = !isSelecting) { Text("Actualizar perfiles") }
                         }
@@ -176,7 +178,7 @@ private fun DemoProfileCard(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(profile.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (profile.role == UserRole.WORKSHOP) "Taller" else "Cliente",
+                    if (profile.role == UserRole.WORKSHOP) "Dueño" else "Cliente",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )

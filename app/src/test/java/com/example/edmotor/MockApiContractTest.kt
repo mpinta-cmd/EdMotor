@@ -46,7 +46,7 @@ class MockApiContractTest {
             val body = exchange.requestBody.bufferedReader().use { it.readText() }
             requests.add(Request(route, body))
             val response = when (route) {
-                "GET /api/v1/profiles" -> """[{"id":"1","displayName":"Cliente Demo","role":"CLIENT"}]"""
+                "GET /api/v1/profiles" -> """[{"id":"1","displayName":"Cliente","role":"CLIENT"}]"""
                 "GET /api/v1/appointments?profileId=1" -> "[$appointment]"
                 "GET /api/v1/appointments/7", "POST /api/v1/appointments" -> appointment
                 "PUT /api/v1/appointments/7" -> appointment.replace("PENDING", "CONFIRMED")

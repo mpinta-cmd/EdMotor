@@ -19,8 +19,8 @@ class UserRepository(
     val mockApiConfigured: Boolean = mockApi != null
 
     val localProfiles = listOf(
-        DemoProfile(LOCAL_CLIENT_KEY, "Cliente de demostración", UserRole.CLIENT),
-        DemoProfile("local-demo:workshop", "Taller de demostración", UserRole.WORKSHOP)
+        DemoProfile(LOCAL_CLIENT_KEY, "Cliente", UserRole.CLIENT),
+        DemoProfile("local-demo:workshop", "EdMotor", UserRole.WORKSHOP)
     )
 
     fun observeClients(): Flow<List<UserEntity>> = userDao.observeClients().map { users ->
@@ -43,7 +43,7 @@ class UserRepository(
         } else {
             mockApi?.profileKey(remoteId) == profile.key
         }
-        require(valid) { "Este perfil no pertenece a la demostración activa." }
+        require(valid) { "Selecciona un perfil disponible para continuar." }
 
         return database.withTransaction {
             val existing = userDao.findByRemoteAuthId(profile.key)

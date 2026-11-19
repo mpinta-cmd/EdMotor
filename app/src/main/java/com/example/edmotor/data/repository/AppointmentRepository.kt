@@ -112,14 +112,14 @@ class AppointmentRepository(
     ): AppointmentOperationResult {
         val account = accountFor(client)
         if (account == null || account.role != UserRole.CLIENT) {
-            return AppointmentOperationResult.Error("Selecciona un perfil de cliente de MockAPI para solicitar citas de prueba.")
+            return AppointmentOperationResult.Error("Selecciona un perfil de cliente en línea para solicitar una cita.")
         }
         val now = System.currentTimeMillis()
         if (scheduledAtMillis < now + MINIMUM_NOTICE_MS || !isValidStart(scheduledAtMillis)) {
             return AppointmentOperationResult.Error("Selecciona una fecha y hora con al menos 15 minutos de anticipación.")
         }
         if (serviceType !in AppointmentServiceType.options) {
-            return AppointmentOperationResult.Error("Selecciona un servicio de demostración.")
+            return AppointmentOperationResult.Error("Selecciona un tipo de servicio.")
         }
         if (vehicle.id <= 0 || vehicle.ownerUserId != client.id) {
             return AppointmentOperationResult.Error("Selecciona un vehículo registrado en tu garaje.")
@@ -132,9 +132,9 @@ class AppointmentRepository(
             val body = MockAppointmentCreateDto(
                 profileId = account.profileId,
                 serviceType = serviceType,
-                vehicleBrand = DEMO_VEHICLE_BRAND,
-                vehicleModel = DEMO_VEHICLE_MODEL,
-                vehicleYear = DEMO_VEHICLE_YEAR,
+                vehicleBrand = SHARED_VEHICLE_BRAND,
+                vehicleModel = SHARED_VEHICLE_MODEL,
+                vehicleYear = SHARED_VEHICLE_YEAR,
                 scheduledAtMillis = scheduledAtMillis,
                 status = AppointmentStatus.PENDING,
                 createdAtMillis = now,
@@ -143,7 +143,7 @@ class AppointmentRepository(
             val created = connection.service.createAppointment(body)
             check(appointmentId(created.id) != null && created.profileId == account.profileId)
             check(created.status == AppointmentStatus.PENDING && created.scheduledAtMillis == scheduledAtMillis)
-            AppointmentOperationResult.Success("Solicitud de demostración enviada.")
+            AppointmentOperationResult.Success("Solicitud de cita enviada.")
         }
     }
 
@@ -160,7 +160,7 @@ class AppointmentRepository(
     ): AppointmentOperationResult {
         val account = accountFor(workshop)
         if (account == null || account.role != UserRole.WORKSHOP) {
-            return AppointmentOperationResult.Error("Selecciona un perfil de taller de MockAPI para administrar citas de prueba.")
+            return AppointmentOperationResult.Error("Selecciona un perfil de dueño en línea para administrar las citas.")
         }
         if (appointmentId <= 0L) return AppointmentOperationResult.Error("La cita no es válida.")
 
@@ -187,7 +187,7 @@ class AppointmentRepository(
                         appointment.scheduledAtMillis + APPOINTMENT_DURATION_MS > start
                 }
                 if (overlaps) {
-                    return@performRemoteOperation AppointmentOperationResult.Error("Ese horario ya está ocupado en la agenda de prueba.")
+                    return@performRemoteOperation AppointmentOperationResult.Error("Ese horario ya está ocupado en la agenda.")
                 }
             }
 
@@ -198,9 +198,9 @@ class AppointmentRepository(
             )
             check(updated.id == id && updated.status == newStatus)
             val message = if (newStatus == AppointmentStatus.CONFIRMED) {
-                "Cita de prueba #$id confirmada."
+                "Cita #$id confirmada."
             } else {
-                "Cita de prueba #$id rechazada."
+                "Cita #$id rechazada."
             }
             AppointmentOperationResult.Success(message)
         }
@@ -245,15 +245,15 @@ class AppointmentRepository(
             accountRole = account.role.name,
             id = remoteId,
             clientAuthId = ownerKey,
-            clientName = "Cliente demo $profileId",
-            clientUsername = "demo-$profileId",
+            clientName = "Cliente #$profileId",
+            clientUsername = "cliente-$profileId",
             clientPhone = null,
-            vehicleBrand = DEMO_VEHICLE_BRAND,
-            vehicleModel = DEMO_VEHICLE_MODEL,
-            vehicleYear = DEMO_VEHICLE_YEAR,
+            vehicleBrand = SHARED_VEHICLE_BRAND,
+            vehicleModel = SHARED_VEHICLE_MODEL,
+            vehicleYear = SHARED_VEHICLE_YEAR,
             vehiclePlate = "",
             scheduledAtMillis = scheduledAtMillis,
-            description = serviceType.takeIf { it in AppointmentServiceType.options } ?: "Servicio de demostración",
+            description = serviceType.takeIf { it in AppointmentServiceType.options } ?: "Servicio general",
             status = status,
             createdAtMillis = createdAtMillis,
             updatedAtMillis = updatedAtMillis
@@ -263,7 +263,7 @@ class AppointmentRepository(
     private fun AppointmentCacheEntity.toModel() = Appointment(
         id = id,
         clientAuthId = clientAuthId,
-        clientName = clientName,
+        clientName = clientName.replace("Cliente demo ", "Cliente #"),
         clientUsername = clientUsername,
         clientPhone = clientPhone,
         vehicleBrand = vehicleBrand,
@@ -271,7 +271,7 @@ class AppointmentRepository(
         vehicleYear = vehicleYear,
         vehiclePlate = vehiclePlate,
         scheduledAtMillis = scheduledAtMillis,
-        description = description,
+        description = description.takeIf { it in AppointmentServiceType.options } ?: "Servicio general",
         status = status,
         createdAtMillis = createdAtMillis,
         updatedAtMillis = updatedAtMillis
@@ -286,8 +286,8 @@ class AppointmentRepository(
         const val POLL_INTERVAL_MS = 30_000L
         const val MINIMUM_NOTICE_MS = 15 * 60_000L
         const val APPOINTMENT_DURATION_MS = 60 * 60_000L
-        const val DEMO_VEHICLE_BRAND = "Demostración"
-        const val DEMO_VEHICLE_MODEL = "Vehículo de prueba"
-        const val DEMO_VEHICLE_YEAR = 2020
+        const val SHARED_VEHICLE_BRAND = "Vehículo"
+        const val SHARED_VEHICLE_MODEL = "registrado"
+        const val SHARED_VEHICLE_YEAR = 0
     }
 }
