@@ -65,21 +65,41 @@ abstract class EdMotorDatabase : RoomDatabase() {
     companion object {
 
         private const val DATABASE_NAME = "edmotor_database"
+        private const val PRIVATE_DATABASE_NAME = "edmotor_local_accounts"
 
-        private val databases = mutableMapOf<String, EdMotorDatabase>()
+        @Volatile
+        private var INSTANCE: EdMotorDatabase? = null
 
-        @Synchronized
-        fun getDatabase(context: Context, projectKey: String? = null): EdMotorDatabase {
-            val name = projectKey?.let { "${DATABASE_NAME}_$it" } ?: DATABASE_NAME
-            return databases.getOrPut(name) {
-                Room.databaseBuilder(
-                    context.applicationContext,
-                    EdMotorDatabase::class.java,
-                    name
-                )
-                    .addMigrations(*EdMotorMigrations.ALL)
-                    .build()
+        /**
+         * Obtiene la única instancia de EdMotorDatabase.
+         */
+        fun getDatabase(context: Context, privateMode: Boolean): EdMotorDatabase {
+
+            return INSTANCE ?: synchronized(this) {
+
+                INSTANCE ?: buildDatabase(context, privateMode).also {
+                    INSTANCE = it
+                }
             }
+        }
+
+        /**
+         * Construcción centralizada de Room.
+         */
+        private fun buildDatabase(
+            context: Context,
+            privateMode: Boolean
+        ): EdMotorDatabase {
+
+            return Room.databaseBuilder(
+                context.applicationContext,
+                EdMotorDatabase::class.java,
+                if (privateMode) PRIVATE_DATABASE_NAME else DATABASE_NAME
+            )
+                .addMigrations(
+                    *EdMotorMigrations.ALL
+                )
+                .build()
         }
     }
 }

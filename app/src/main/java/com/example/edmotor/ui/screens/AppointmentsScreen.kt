@@ -57,6 +57,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.example.edmotor.BuildConfig
 import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentServiceType
 import com.example.edmotor.model.AppointmentStatus
@@ -84,6 +85,7 @@ fun AppointmentsScreen(
     onClearMessage: () -> Unit,
     onRefresh: () -> Unit
 ) {
+    val isDeviceAgenda = BuildConfig.EDMOTOR_PRIVATE_MODE
     val dateFormatter = remember {
         SimpleDateFormat("EEEE, dd 'de' MMMM yyyy", Locale("es", "CO")).apply {
             timeZone = TimeZone.getTimeZone("UTC")
@@ -162,10 +164,11 @@ fun AppointmentsScreen(
             fontWeight = FontWeight.ExtraBold
         )
         Text(
-            text = if (isWorkshop) {
-                "Consulta las solicitudes por día y horario."
-            } else {
-                "Elige un vehículo, el día, la hora y el tipo de servicio. Los detalles del vehículo quedan en este dispositivo."
+            text = when {
+                isDeviceAgenda && isWorkshop -> "Consulta las solicitudes guardadas en este dispositivo por día y horario."
+                isDeviceAgenda -> "Elige un vehículo, el día, la hora y el tipo de servicio. La solicitud se guardará en este dispositivo."
+                isWorkshop -> "Consulta las solicitudes por día y horario."
+                else -> "Elige un vehículo, el día, la hora y el tipo de servicio. Los detalles del vehículo quedan en este dispositivo."
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
@@ -204,7 +207,8 @@ fun AppointmentsScreen(
 
         if (syncState == AppointmentSyncState.NOT_CONFIGURED) {
             Text(
-                "Para gestionar citas, entra con un perfil conectado a la agenda. El garaje, el catálogo y los pedidos están disponibles en este dispositivo.",
+                if (isDeviceAgenda) "Inicia sesión para consultar las citas de este dispositivo."
+                else "Para gestionar citas, entra con un perfil conectado a la agenda. El garaje, el catálogo y los pedidos están disponibles en este dispositivo.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -213,13 +217,17 @@ fun AppointmentsScreen(
         } else if (syncState == AppointmentSyncState.UNAVAILABLE) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (appointments.isEmpty()) "No se pudo consultar la agenda." else "Los datos de la agenda pueden estar desactualizados.",
+                    when {
+                        isDeviceAgenda -> "No se pudieron consultar las citas de este dispositivo."
+                        appointments.isEmpty() -> "No se pudo consultar la agenda."
+                        else -> "Los datos de la agenda pueden estar desactualizados."
+                    },
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = onRefresh) { Text("Reintentar") }
+                if (!isDeviceAgenda) TextButton(onClick = onRefresh) { Text("Reintentar") }
             }
-        } else {
+        } else if (!isDeviceAgenda) {
             TextButton(onClick = onRefresh, enabled = !isProcessing) { Text("Actualizar citas") }
         }
 

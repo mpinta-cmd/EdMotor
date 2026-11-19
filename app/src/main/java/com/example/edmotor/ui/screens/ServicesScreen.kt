@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.edmotor.BuildConfig
 import com.example.edmotor.ui.theme.AzulNitro
 import com.example.edmotor.ui.theme.GrisCarbon
 
@@ -201,7 +202,11 @@ fun ServicesScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = "Con un perfil en línea puedes elegir un vehículo, un servicio y un horario.",
+                        text = if (BuildConfig.EDMOTOR_PRIVATE_MODE) {
+                            "Elige un vehículo, un servicio y un horario."
+                        } else {
+                            "Con un perfil en línea puedes elegir un vehículo, un servicio y un horario."
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )

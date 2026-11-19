@@ -7,19 +7,9 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-fun edMotorSetting(name: String) = providers.gradleProperty(name)
-    .orElse(providers.environmentVariable(name))
+val mockApiUrl = providers.gradleProperty("EDMOTOR_MOCKAPI_URL")
+    .orElse(providers.environmentVariable("EDMOTOR_MOCKAPI_URL"))
     .orElse("")
-
-val mockApiUrl = edMotorSetting("EDMOTOR_MOCKAPI_URL")
-val supabaseUrl = edMotorSetting("EDMOTOR_SUPABASE_URL").map { value ->
-    val url = value.trim()
-    url.takeIf { it.matches(Regex("https://[A-Za-z0-9][A-Za-z0-9-]{0,62}\\.supabase\\.co(?::443)?/?")) }.orEmpty()
-}
-val supabasePublishableKey = edMotorSetting("EDMOTOR_SUPABASE_PUBLISHABLE_KEY").map { value ->
-    val key = value.trim()
-    key.takeIf { it.matches(Regex("sb_publishable_[A-Za-z0-9_-]{8,256}")) }.orEmpty()
-}
 
 // ==========================================
 // CONFIGURACIÓN ANDROID
@@ -47,8 +37,6 @@ android {
 
         manifestPlaceholders["edMotorAllowBackup"] = "true"
         buildConfigField("String", "EDMOTOR_MOCKAPI_URL", "\"\"")
-        buildConfigField("String", "EDMOTOR_SUPABASE_URL", "\"\"")
-        buildConfigField("String", "EDMOTOR_SUPABASE_PUBLISHABLE_KEY", "\"\"")
 
         testInstrumentationRunner =
             "androidx.test.runner.AndroidJUnitRunner"
@@ -56,20 +44,18 @@ android {
 
     flavorDimensions += "access"
     productFlavors {
-        create("private") {
-            dimension = "access"
-            applicationIdSuffix = ".secure"
-            isDefault = true
-            manifestPlaceholders["edMotorAllowBackup"] = "false"
-            buildConfigField("boolean", "EDMOTOR_PRIVATE_MODE", "true")
-            buildConfigField("String", "EDMOTOR_SUPABASE_URL", JsonOutput.toJson(supabaseUrl.get()))
-            buildConfigField("String", "EDMOTOR_SUPABASE_PUBLISHABLE_KEY", JsonOutput.toJson(supabasePublishableKey.get()))
-        }
         create("demo") {
             dimension = "access"
             applicationIdSuffix = ".mockapi"
+            isDefault = true
             buildConfigField("boolean", "EDMOTOR_PRIVATE_MODE", "false")
             buildConfigField("String", "EDMOTOR_MOCKAPI_URL", JsonOutput.toJson(mockApiUrl.get()))
+        }
+        create("private") {
+            dimension = "access"
+            applicationIdSuffix = ".secure"
+            manifestPlaceholders["edMotorAllowBackup"] = "false"
+            buildConfigField("boolean", "EDMOTOR_PRIVATE_MODE", "true")
         }
     }
 

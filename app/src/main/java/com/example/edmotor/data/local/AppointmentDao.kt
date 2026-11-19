@@ -10,6 +10,44 @@ import kotlinx.coroutines.flow.Flow
 abstract class AppointmentDao {
     @Query(
         """
+        SELECT appointments.* FROM appointments
+        WHERE EXISTS (
+            SELECT 1 FROM users
+            WHERE id = :viewerId AND remoteAuthId = :viewerKey AND role = :viewerRole
+        )
+        AND (:viewerRole = 'WORKSHOP' OR (clientLocalUserId = :viewerId AND clientAuthId = :viewerKey))
+        ORDER BY scheduledAtMillis, id
+        """
+    )
+    abstract fun observeLocalAppointments(viewerId: Int, viewerKey: String, viewerRole: String): Flow<List<AppointmentEntity>>
+
+    @Insert
+    abstract suspend fun insertLocalAppointment(appointment: AppointmentEntity): Long
+
+    @Query("SELECT * FROM appointments WHERE id = :appointmentId LIMIT 1")
+    abstract suspend fun findLocalAppointment(appointmentId: Long): AppointmentEntity?
+
+    @Query(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM appointments
+            WHERE status = 'CONFIRMED' AND scheduledAtMillis > :earliestStart AND scheduledAtMillis < :latestStart
+        )
+        """
+    )
+    abstract suspend fun hasConfirmedOverlap(earliestStart: Long, latestStart: Long): Boolean
+
+    @Query(
+        """
+        UPDATE appointments
+        SET status = :status, updatedAtMillis = :updatedAtMillis
+        WHERE id = :appointmentId AND status = 'PENDING'
+        """
+    )
+    abstract suspend fun updatePendingLocalAppointment(appointmentId: Long, status: String, updatedAtMillis: Long): Int
+
+    @Query(
+        """
         SELECT * FROM appointment_cache
         WHERE accountAuthId = :accountAuthId AND accountRole = :accountRole
         ORDER BY scheduledAtMillis, id

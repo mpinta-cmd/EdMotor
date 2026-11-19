@@ -4,270 +4,93 @@ import androidx.room.withTransaction
 import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.UserDao
 import com.example.edmotor.data.local.UserEntity
-import com.example.edmotor.data.remote.PrivateAuthHttpException
-import com.example.edmotor.data.remote.PrivateCredentialValidation
-import com.example.edmotor.data.remote.PrivateCredentials
-import com.example.edmotor.data.remote.PrivateSignupConfigurationException
-import com.example.edmotor.data.remote.SupabaseConnection
-import com.example.edmotor.data.remote.VerifiedPrivateProfile
-import com.example.edmotor.session.PrivateSessionStore
-import com.example.edmotor.session.SavedPrivateSession
+import com.example.edmotor.model.UserRole
+import com.example.edmotor.session.LocalAccountIdentity
+import com.example.edmotor.session.LocalCredentialValidation
+import com.example.edmotor.session.LocalPasswordHasher
 import com.example.edmotor.session.SessionManager
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
-class PrivateAccessException(message: String, val canRetryRestore: Boolean = false) : Exception(message)
+class PrivateAccessException(message: String) : Exception(message)
 
 class PrivateAuthRepository(
     private val database: EdMotorDatabase,
     private val userDao: UserDao,
-    private val connection: SupabaseConnection?,
-    private val secureStore: PrivateSessionStore,
     private val sessionManager: SessionManager
 ) {
-    val isConfigured: Boolean get() = connection != null
+    suspend fun isOwnerConfigured(): Boolean = userDao.countWorkshopAccounts() != 0 ||
+        userDao.findByRemoteAuthId(LocalAccountIdentity.OWNER_KEY) != null
 
-    private val sessionMutex = Mutex()
-    private var active: SavedPrivateSession? = null
-    private var mustVerifyRefreshedRole = false
-
-    suspend fun signIn(username: String, password: String): UserEntity = sessionMutex.withLock {
-        val server = configuredConnection()
-        PrivateCredentialValidation.loginError(username, password)?.let { throw PrivateAccessException(it) }
-        val normalizedUsername = PrivateCredentialValidation.normalizeUsername(username)
-        try {
-            val credentials = server.signIn(normalizedUsername, password)
-            val profile = server.fetchProfile(credentials)
-            if (profile.username != normalizedUsername) throw PrivateAuthHttpException(403)
-            activate(server, credentials, profile)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: PrivateAuthHttpException) {
-            throw PrivateAccessException(
-                when (error.status) {
-                    400, 401, 403, 422 -> "El usuario o la contraseña no son válidos, o el correo aún no está confirmado."
-                    429 -> "Demasiados intentos. Espera un momento y vuelve a intentarlo."
-                    else -> "No se pudo comprobar el acceso privado. Intenta de nuevo."
-                }
-            )
-        } catch (_: Exception) {
-            throw PrivateAccessException("No se pudo abrir la sesión privada. Comprueba tu conexión e inténtalo de nuevo.")
-        }
+    suspend fun restore(): UserEntity? = sessionManager.restoreProfile { key ->
+        if (!LocalAccountIdentity.isKey(key)) return@restoreProfile null
+        userDao.findByRemoteAuthId(key)?.takeIf(::isLocalAccount)?.withoutCredentials()
     }
 
-    suspend fun registerClient(username: String, displayName: String, email: String, password: String) {
-        val server = configuredConnection()
-        PrivateCredentialValidation.registrationError(username, displayName, email, password)?.let {
-            throw PrivateAccessException(it)
+    suspend fun signIn(username: String, password: String): UserEntity {
+        LocalCredentialValidation.loginError(username, password)?.let { throw PrivateAccessException(it) }
+        val canonicalName = LocalCredentialValidation.normalizeUsername(username)
+        val account = userDao.findByUsername(canonicalName)?.takeIf(::isLocalAccount)
+        val verified = withContext(Dispatchers.Default) {
+            LocalPasswordHasher.verify(password, account?.passwordHash, account?.salt)
         }
-        try {
-            server.registerClient(
-                PrivateCredentialValidation.normalizeUsername(username),
-                displayName.trim(),
-                email.trim(),
-                password
-            )
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: PrivateSignupConfigurationException) {
-            throw PrivateAccessException("El proyecto debe exigir la confirmación por correo antes de permitir registros.")
-        } catch (error: PrivateAuthHttpException) {
-            val message = if (error.status == 429) {
-                "Espera antes de solicitar otro código por correo."
-            } else {
-                "No se pudo iniciar el registro. Comprueba los datos o busca el código si ya lo solicitaste."
-            }
-            throw PrivateAccessException(message)
-        } catch (_: Exception) {
-            throw PrivateAccessException("No se pudo comprobar el registro. Revisa si recibiste un código antes de repetirlo.")
-        }
+        return account?.takeIf { verified }
+            ?: throw PrivateAccessException("El usuario o la contraseña no son válidos.")
     }
 
-    suspend fun verifyEmail(email: String, code: String) {
-        val server = configuredConnection()
-        PrivateCredentialValidation.verificationError(email, code)?.let { throw PrivateAccessException(it) }
-        try {
-            server.verifyEmail(email.trim(), code.trim())
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: PrivateAuthHttpException) {
-            throw PrivateAccessException(
-                when (error.status) {
-                    400, 401, 403, 422 -> "El código no es válido o venció. Comprueba el correo y el código."
-                    429 -> "Demasiados intentos. Espera un momento antes de intentarlo de nuevo."
-                    else -> "No se pudo comprobar el código. Intenta de nuevo."
-                }
-            )
-        } catch (_: Exception) {
-            throw PrivateAccessException("No se pudo comprobar el código. Revisa tu conexión e inténtalo de nuevo.")
-        }
+    suspend fun registerClient(username: String, displayName: String, password: String): UserEntity =
+        createAccount(username, displayName, password, UserRole.CLIENT)
+
+    suspend fun createOwner(username: String, password: String): UserEntity =
+        createAccount(username, "EdMotor", password, UserRole.WORKSHOP)
+
+    suspend fun rememberVerifiedProfile(user: UserEntity): UserEntity {
+        require(isLocalAccount(user))
+        val profile = user.withoutCredentials()
+        sessionManager.selectProfile(profile)
+        return profile
     }
-
-    suspend fun restore(): UserEntity? = sessionMutex.withLock {
-        val server = connection ?: return@withLock null
-        val stored = try {
-            secureStore.load()
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            throw PrivateAccessException("No se pudo leer la sesión guardada. Intenta de nuevo.", canRetryRestore = true)
-        } ?: return@withLock null
-        if (stored.projectKey != server.projectKey) {
-            discardSession()
-            return@withLock null
-        }
-
-        try {
-            val oldCredentials = stored.credentials
-            var credentials = if (oldCredentials.expiresSoon()) {
-                refreshAndSave(server, oldCredentials)
-            } else {
-                oldCredentials
-            }
-            val profile = try {
-                server.fetchProfile(credentials)
-            } catch (error: PrivateAuthHttpException) {
-                if (error.status != 401 || credentials !== oldCredentials) throw error
-                credentials = refreshAndSave(server, credentials)
-                server.fetchProfile(credentials)
-            }
-            activate(server, credentials, profile)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: PrivateAuthHttpException) {
-            if (error.isRejectedSession()) {
-                discardSession()
-                throw PrivateAccessException("La sesión guardada ya no es válida. Inicia sesión nuevamente.")
-            }
-            throw connectionRequired()
-        } catch (_: Exception) {
-            throw connectionRequired()
-        }
-    }
-
-    suspend fun accessToken(expectedProfileKey: String, rejectedToken: String? = null): String =
-        sessionMutex.withLock {
-            val server = configuredConnection()
-            val session = active ?: throw PrivateAccessException("Inicia sesión para realizar esta operación.")
-            var credentials = session.credentials
-            val user = sessionManager.currentUser.value
-                ?: throw PrivateAccessException("Inicia sesión para realizar esta operación.")
-            if (server.profileId(expectedProfileKey) != credentials.userId ||
-                user.remoteAuthId != expectedProfileKey
-            ) throw PrivateAccessException("La cuenta activa cambió. Vuelve a abrir esta pantalla.")
-
-            try {
-                if (credentials.expiresSoon() || rejectedToken == credentials.accessToken) {
-                    credentials = refreshAndSave(server, credentials)
-                    active = SavedPrivateSession(server.projectKey, credentials)
-                    mustVerifyRefreshedRole = true
-                }
-                if (mustVerifyRefreshedRole) {
-                    val profile = server.fetchProfile(credentials)
-                    if (profile.role.name != user.role) throw PrivateAuthHttpException(403)
-                    mustVerifyRefreshedRole = false
-                }
-                credentials.accessToken
-            } catch (error: PrivateAuthHttpException) {
-                if (error.isRejectedSession()) expireSession()
-                throw PrivateAccessException("No se pudo renovar la sesión privada. Comprueba tu conexión o vuelve a entrar.")
-            }
-        }
 
     suspend fun logout() {
-        val server = connection
-        val previous = sessionMutex.withLock {
-            val session = active
-            discardSession()
-            session
-        }
-        if (server != null && previous != null) {
-            try {
-                withTimeoutOrNull(3_000L) { server.revoke(previous.credentials) }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                // La sesión del dispositivo ya se eliminó, incluso si se cerró sin conexión.
-            }
-        }
+        sessionManager.clearSession()
     }
 
-    private suspend fun activate(
-        server: SupabaseConnection,
-        credentials: PrivateCredentials,
-        profile: VerifiedPrivateProfile
+    private suspend fun createAccount(
+        username: String,
+        displayName: String,
+        password: String,
+        role: UserRole
     ): UserEntity {
-        if (profile.id != credentials.userId) throw PrivateAuthHttpException(403)
-        val key = server.profileKey(profile.id)
-        val user = database.withTransaction {
-            val prior = userDao.findByRemoteAuthId(key)
-            val row = if (prior == null) {
-                UserEntity(
-                    username = key,
-                    displayName = profile.displayName,
-                    passwordHash = "",
-                    salt = "",
-                    role = profile.role.name,
-                    remoteAuthId = key
-                )
-            } else {
-                prior.copy(displayName = profile.displayName, role = profile.role.name)
+        LocalCredentialValidation.registrationError(username, displayName, password)?.let {
+            throw PrivateAccessException(it)
+        }
+        val normalized = LocalCredentialValidation.normalizeUsername(username)
+        val isOwner = role == UserRole.WORKSHOP
+        val key = if (isOwner) LocalAccountIdentity.OWNER_KEY else LocalAccountIdentity.createClientKey()
+        val passwordRecord = withContext(Dispatchers.Default) { LocalPasswordHasher.create(password) }
+        return database.withTransaction {
+            if (isOwner && isOwnerConfigured()) {
+                throw PrivateAccessException("El propietario ya está configurado en esta instalación.")
             }
-            if (prior == null) row.copy(id = Math.toIntExact(userDao.insert(row)))
-            else {
-                if (row != prior) userDao.update(row)
-                row
+            if (userDao.findByUsername(normalized) != null) {
+                throw PrivateAccessException("No se pudo crear la cuenta con ese usuario. Elige otro nombre de usuario.")
             }
-        }
-        withContext(NonCancellable) {
-            val verified = SavedPrivateSession(server.projectKey, credentials)
-            secureStore.save(verified)
-            active = verified
-            mustVerifyRefreshedRole = false
-            sessionManager.publishPrivateProfile(user)
-        }
-        return user
-    }
-
-    private suspend fun refreshAndSave(server: SupabaseConnection, current: PrivateCredentials): PrivateCredentials =
-        withContext(NonCancellable) {
-            val updated = server.refresh(current)
-            secureStore.save(SavedPrivateSession(server.projectKey, updated))
-            updated
-        }
-
-    private suspend fun discardSession() {
-        withContext(NonCancellable) {
-            secureStore.clear()
-            clearActiveProfile()
+            val row = UserEntity(
+                username = normalized,
+                displayName = displayName.trim(),
+                passwordHash = passwordRecord.hash,
+                salt = passwordRecord.salt,
+                role = role.name,
+                remoteAuthId = key
+            )
+            row.copy(id = Math.toIntExact(userDao.insert(row)))
         }
     }
 
-    private suspend fun expireSession() {
-        withContext(NonCancellable) {
-            clearActiveProfile()
-            secureStore.clear()
-        }
-    }
+    private fun isLocalAccount(user: UserEntity): Boolean = user.id > 0 &&
+        LocalAccountIdentity.matchesRole(user.remoteAuthId, user.role) &&
+        LocalCredentialValidation.isStoredUsername(user.username) &&
+        LocalPasswordHasher.isRecognized(user.passwordHash, user.salt)
 
-    private suspend fun clearActiveProfile() {
-        active = null
-        mustVerifyRefreshedRole = false
-        sessionManager.publishPrivateProfile(null)
-    }
-
-    private fun configuredConnection(): SupabaseConnection = connection
-        ?: throw PrivateAccessException("Configura el acceso privado de EdMotor para continuar.")
-
-    private fun connectionRequired() = PrivateAccessException(
-        "Conéctate a internet para verificar la sesión privada y vuelve a intentarlo.",
-        canRetryRestore = true
-    )
-
-    private fun PrivateAuthHttpException.isRejectedSession(): Boolean =
-        status == 400 || status == 401 || status == 403 || status == 422
+    private fun UserEntity.withoutCredentials(): UserEntity = copy(passwordHash = "", salt = "")
 }

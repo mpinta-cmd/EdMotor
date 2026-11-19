@@ -122,11 +122,10 @@ fun EdMotorApp(
                     message = privateAccess.message,
                     isError = privateAccess.isError,
                     canRetry = privateAccess.canRetry,
-                    isConfigured = privateAccess.isConfigured,
-                    verificationEmail = privateAccess.verificationEmail,
+                    ownerConfigured = privateAccess.ownerConfigured,
                     onSignIn = authViewModel::signInPrivate,
                     onRegisterClient = authViewModel::registerPrivateClient,
-                    onVerifyEmail = authViewModel::verifyPrivateEmail,
+                    onSetupOwner = authViewModel::createPrivateOwner,
                     onClearMessage = authViewModel::clearPrivateMessage,
                     onRetry = authViewModel::retryPrivateRestore
                 )

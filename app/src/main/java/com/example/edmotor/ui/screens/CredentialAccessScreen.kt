@@ -1,5 +1,6 @@
 package com.example.edmotor.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,9 +51,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import com.example.edmotor.data.remote.PrivateCredentialValidation
+import com.example.edmotor.session.LocalCredentialValidation
 
-private enum class CredentialMode { SIGN_IN, REGISTER, VERIFY_EMAIL }
+private enum class CredentialMode { SIGN_IN, REGISTER_CLIENT, SETUP_OWNER }
 
 @Composable
 fun CredentialAccessScreen(
@@ -60,67 +61,37 @@ fun CredentialAccessScreen(
     message: String?,
     isError: Boolean,
     canRetry: Boolean,
-    isConfigured: Boolean,
-    verificationEmail: String?,
+    ownerConfigured: Boolean?,
     onSignIn: (username: String, password: String) -> Unit,
-    onRegisterClient: (username: String, displayName: String, email: String, password: String) -> Unit,
-    onVerifyEmail: (email: String, code: String) -> Unit,
+    onRegisterClient: (username: String, displayName: String, password: String) -> Unit,
+    onSetupOwner: (username: String, password: String) -> Unit,
     onClearMessage: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var mode by rememberSaveable { mutableStateOf(CredentialMode.SIGN_IN) }
+    var requestedMode by rememberSaveable { mutableStateOf(CredentialMode.SIGN_IN) }
     var displayName by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
     var passwordInput by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var verificationCode by remember { mutableStateOf("") }
     var validationMessage by remember { mutableStateOf<String?>(null) }
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
+    val canSetupOwner = ownerConfigured == false
+    val mode = if (requestedMode == CredentialMode.SETUP_OWNER && !canSetupOwner) {
+        CredentialMode.SIGN_IN
+    } else requestedMode
     val cleanUsername = username.trim()
     val cleanName = displayName.trim()
-    val cleanEmail = email.trim()
-    val isRegistering = mode == CredentialMode.REGISTER
-    val isVerifying = mode == CredentialMode.VERIFY_EMAIL
-    val canEdit = isConfigured && !isSubmitting
-    val canSubmit = canEdit && when (mode) {
-        CredentialMode.SIGN_IN -> cleanUsername.isNotEmpty() && passwordInput.isNotEmpty()
-        CredentialMode.REGISTER -> cleanName.isNotEmpty() && cleanUsername.isNotEmpty() &&
-            cleanEmail.isNotEmpty() && passwordInput.isNotEmpty()
-        CredentialMode.VERIFY_EMAIL -> cleanEmail.isNotEmpty() && verificationCode.length == 6
-    }
+    val canEdit = ownerConfigured != null && !isSubmitting
+    val canSubmit = canEdit && cleanUsername.isNotEmpty() && passwordInput.isNotEmpty() &&
+        (mode != CredentialMode.REGISTER_CLIENT || cleanName.isNotEmpty())
 
-    LaunchedEffect(verificationEmail) {
-        if (verificationEmail != null) {
-            focusManager.clearFocus()
-            email = verificationEmail
-            displayName = ""
-            passwordInput = ""
-            passwordVisible = false
-            verificationCode = ""
-            mode = CredentialMode.VERIFY_EMAIL
-        }
-    }
-    LaunchedEffect(verificationEmail, message, isError) {
-        if (!isError && !message.isNullOrBlank()) {
-            if (isRegistering && verificationEmail != null) {
-                email = verificationEmail
-                displayName = ""
-                mode = CredentialMode.VERIFY_EMAIL
-            } else if (isVerifying && verificationEmail == null) {
-                email = ""
-                verificationCode = ""
-                mode = CredentialMode.SIGN_IN
-            }
-        }
-    }
     LaunchedEffect(mode) { scrollState.scrollTo(0) }
 
     fun clearFeedback() {
         validationMessage = null
-        if (!canRetry && isConfigured) onClearMessage()
+        if (!canRetry) onClearMessage()
     }
 
     fun selectMode(nextMode: CredentialMode) {
@@ -128,32 +99,31 @@ fun CredentialAccessScreen(
         clearFeedback()
         passwordInput = ""
         passwordVisible = false
-        verificationCode = ""
-        mode = nextMode
+        requestedMode = nextMode
     }
 
     fun submit() {
         if (!canSubmit) return
         validationMessage = when (mode) {
-            CredentialMode.SIGN_IN -> PrivateCredentialValidation.loginError(cleanUsername, passwordInput)
-            CredentialMode.REGISTER -> PrivateCredentialValidation.registrationError(
-                cleanUsername, cleanName, cleanEmail, passwordInput
-            )
-            CredentialMode.VERIFY_EMAIL -> PrivateCredentialValidation.verificationError(cleanEmail, verificationCode)
+            CredentialMode.SIGN_IN -> LocalCredentialValidation.loginError(cleanUsername, passwordInput)
+            CredentialMode.REGISTER_CLIENT -> LocalCredentialValidation.registrationError(cleanUsername, cleanName, passwordInput)
+            CredentialMode.SETUP_OWNER -> LocalCredentialValidation.ownerError(cleanUsername, passwordInput)
         }
         if (validationMessage != null) return
 
         focusManager.clearFocus()
         val submittedPassword = passwordInput
-        val submittedCode = verificationCode
         passwordInput = ""
         passwordVisible = false
-        verificationCode = ""
         when (mode) {
             CredentialMode.SIGN_IN -> onSignIn(cleanUsername, submittedPassword)
-            CredentialMode.REGISTER -> onRegisterClient(cleanUsername, cleanName, cleanEmail, submittedPassword)
-            CredentialMode.VERIFY_EMAIL -> onVerifyEmail(cleanEmail, submittedCode)
+            CredentialMode.REGISTER_CLIENT -> onRegisterClient(cleanUsername, cleanName, submittedPassword)
+            CredentialMode.SETUP_OWNER -> onSetupOwner(cleanUsername, submittedPassword)
         }
+    }
+
+    BackHandler(enabled = mode != CredentialMode.SIGN_IN) {
+        if (canEdit) selectMode(CredentialMode.SIGN_IN)
     }
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -187,27 +157,35 @@ fun CredentialAccessScreen(
                     Text(
                         when (mode) {
                             CredentialMode.SIGN_IN -> "Accede a tu cuenta"
-                            CredentialMode.REGISTER -> "Crear cuenta de cliente"
-                            CredentialMode.VERIFY_EMAIL -> "Confirma tu correo"
+                            CredentialMode.REGISTER_CLIENT -> "Crear cuenta de cliente"
+                            CredentialMode.SETUP_OWNER -> "Configura la cuenta del dueño"
                         },
                         style = MaterialTheme.typography.titleLarge
                     )
-                    val status = validationMessage ?: message ?: "Configura Supabase para habilitar el acceso privado."
-                        .takeIf { !isConfigured }
+                    Text(
+                        if (mode == CredentialMode.SETUP_OWNER) {
+                            "La cuenta de EdMotor permite administrar el inventario, los pedidos y el mantenimiento."
+                        } else {
+                            "Las cuentas se guardan en este dispositivo."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val status = validationMessage ?: message
                     if (!status.isNullOrBlank()) {
                         Text(
                             status,
                             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                            color = if (validationMessage != null || isError || !isConfigured) {
+                            color = if (isError || validationMessage != null) {
                                 MaterialTheme.colorScheme.error
                             } else MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
                     if (canRetry) {
-                        TextButton(onClick = onRetry, enabled = !isSubmitting) { Text("Reintentar conexión") }
+                        TextButton(onClick = onRetry, enabled = !isSubmitting) { Text("Reintentar") }
                     }
-                    if (isRegistering) {
+                    if (mode == CredentialMode.REGISTER_CLIENT) {
                         OutlinedTextField(
                             value = displayName,
                             onValueChange = {
@@ -226,88 +204,50 @@ fun CredentialAccessScreen(
                             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
                         )
                     }
-                    if (!isVerifying) {
-                        OutlinedTextField(
-                            value = username,
-                            onValueChange = {
-                                username = it
-                                clearFeedback()
-                            },
-                            label = { Text("Nombre de usuario") },
-                            supportingText = if (isRegistering) {
-                                { Text("Usa de 3 a 20 minúsculas, números o guiones bajos.") }
-                            } else null,
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = canEdit,
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
-                            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
-                        )
-                    }
-                    if (isRegistering || isVerifying) {
-                        OutlinedTextField(
-                            value = email,
-                            onValueChange = {
-                                email = it
-                                clearFeedback()
-                            },
-                            label = { Text("Correo electrónico") },
-                            supportingText = if (isRegistering) {
-                                { Text("Recibirás un código para confirmar tu cuenta.") }
-                            } else null,
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = canEdit,
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(
-                                autoCorrectEnabled = false,
-                                keyboardType = KeyboardType.Email,
-                                imeAction = ImeAction.Next
-                            ),
-                            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
-                        )
-                    }
-                    if (isVerifying) {
-                        OutlinedTextField(
-                            value = verificationCode,
-                            onValueChange = {
-                                verificationCode = it.filter { digit -> digit in '0'..'9' }.take(6)
-                                clearFeedback()
-                            },
-                            label = { Text("Código de 6 dígitos") },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = canEdit,
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { submit() })
-                        )
-                    } else {
-                        OutlinedTextField(
-                            value = passwordInput,
-                            onValueChange = {
-                                passwordInput = it
-                                clearFeedback()
-                            },
-                            label = { Text("Contraseña") },
-                            supportingText = if (isRegistering) { { Text("Usa al menos 8 caracteres.") } } else null,
-                            modifier = Modifier.fillMaxWidth().semantics { password() },
-                            enabled = canEdit,
-                            singleLine = true,
-                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { submit() }),
-                            trailingIcon = {
-                                IconButton(
-                                    onClick = { passwordVisible = !passwordVisible },
-                                    enabled = canEdit
-                                ) {
-                                    Icon(
-                                        imageVector = if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                        contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña"
-                                    )
-                                }
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = {
+                            username = it
+                            clearFeedback()
+                        },
+                        label = { Text("Nombre de usuario") },
+                        supportingText = if (mode != CredentialMode.SIGN_IN) {
+                            { Text("Usa de 3 a 20 minúsculas, números o guiones bajos.") }
+                        } else null,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = canEdit,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
+                        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
+                    )
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = {
+                            passwordInput = it
+                            clearFeedback()
+                        },
+                        label = { Text("Contraseña") },
+                        supportingText = if (mode != CredentialMode.SIGN_IN) {
+                            { Text("Usa al menos 8 caracteres.") }
+                        } else null,
+                        modifier = Modifier.fillMaxWidth().semantics { password() },
+                        enabled = canEdit,
+                        singleLine = true,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        trailingIcon = {
+                            IconButton(
+                                onClick = { passwordVisible = !passwordVisible },
+                                enabled = canEdit
+                            ) {
+                                Icon(
+                                    imageVector = if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña"
+                                )
                             }
-                        )
-                    }
+                        }
+                    )
                     Button(
                         onClick = ::submit,
                         enabled = canSubmit,
@@ -323,29 +263,31 @@ fun CredentialAccessScreen(
                         Text(
                             when (mode) {
                                 CredentialMode.SIGN_IN -> if (isSubmitting) "Iniciando sesión…" else "Iniciar sesión"
-                                CredentialMode.REGISTER -> if (isSubmitting) "Creando cuenta…" else "Crear cuenta"
-                                CredentialMode.VERIFY_EMAIL -> if (isSubmitting) "Confirmando…" else "Confirmar correo"
+                                CredentialMode.REGISTER_CLIENT -> if (isSubmitting) "Creando cuenta…" else "Crear cuenta"
+                                CredentialMode.SETUP_OWNER -> if (isSubmitting) "Guardando cuenta…" else "Crear cuenta del dueño"
                             },
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    TextButton(
-                        onClick = {
-                            selectMode(if (mode == CredentialMode.SIGN_IN) CredentialMode.REGISTER else CredentialMode.SIGN_IN)
-                        },
-                        enabled = canEdit,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (mode == CredentialMode.SIGN_IN) "Crear cuenta de cliente" else "Volver al inicio de sesión")
-                    }
                     if (mode == CredentialMode.SIGN_IN) {
                         TextButton(
-                            onClick = { selectMode(CredentialMode.VERIFY_EMAIL) },
+                            onClick = { selectMode(CredentialMode.REGISTER_CLIENT) },
                             enabled = canEdit,
                             modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Confirmar correo")
+                        ) { Text("Crear cuenta de cliente") }
+                        if (canSetupOwner) {
+                            TextButton(
+                                onClick = { selectMode(CredentialMode.SETUP_OWNER) },
+                                enabled = canEdit,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Configurar cuenta del dueño") }
                         }
+                    } else {
+                        TextButton(
+                            onClick = { selectMode(CredentialMode.SIGN_IN) },
+                            enabled = canEdit,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Volver al inicio de sesión") }
                     }
                 }
             }

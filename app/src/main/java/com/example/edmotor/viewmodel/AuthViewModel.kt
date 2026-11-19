@@ -8,6 +8,7 @@ import com.example.edmotor.data.repository.PrivateAccessException
 import com.example.edmotor.data.repository.PrivateAuthRepository
 import com.example.edmotor.data.repository.UserRepository
 import com.example.edmotor.model.DemoProfile
+import com.example.edmotor.model.UserRole
 import com.example.edmotor.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -34,12 +35,11 @@ data class ProfileSelectionState(
 )
 
 data class PrivateAccessState(
-    val isConfigured: Boolean,
+    val ownerConfigured: Boolean? = null,
     val isSubmitting: Boolean = false,
     val canRetry: Boolean = false,
     val isError: Boolean = false,
-    val message: String? = null,
-    val verificationEmail: String? = null
+    val message: String? = null
 )
 
 class AuthViewModel(
@@ -56,7 +56,7 @@ class AuthViewModel(
     )
     val profileSelection: StateFlow<ProfileSelectionState> = _profileSelection.asStateFlow()
 
-    private val _privateAccess = MutableStateFlow(PrivateAccessState(isConfigured = privateAuth?.isConfigured == true))
+    private val _privateAccess = MutableStateFlow(PrivateAccessState())
     val privateAccess: StateFlow<PrivateAccessState> = _privateAccess.asStateFlow()
 
     private val _logoutError = MutableStateFlow<String?>(null)
@@ -66,21 +66,7 @@ class AuthViewModel(
     private var logoutInProgress = false
 
     init {
-        if (privateMode) {
-            restorePrivateSession()
-            viewModelScope.launch {
-                sessionManager.currentUser.collect { user ->
-                    if (user == null && _authState.value is AuthState.SignedIn && !logoutInProgress) {
-                        _authState.value = AuthState.SignedOut
-                        _privateAccess.update {
-                            it.copy(message = "La sesión privada venció. Inicia sesión nuevamente.", isError = true)
-                        }
-                    }
-                }
-            }
-        } else {
-            restoreDemoSession()
-        }
+        if (privateMode) restorePrivateSession() else restoreDemoSession()
     }
 
     private fun restoreDemoSession() {
@@ -107,7 +93,8 @@ class AuthViewModel(
 
     private fun restorePrivateSession() {
         val credentials = privateAuth
-        if (credentials == null || !credentials.isConfigured) {
+        if (credentials == null) {
+            _privateAccess.update { it.copy(message = "El acceso local no está disponible.", isError = true) }
             _authState.value = AuthState.SignedOut
             return
         }
@@ -115,81 +102,79 @@ class AuthViewModel(
         _privateAccess.update { it.copy(canRetry = false, message = null, isError = false) }
         viewModelScope.launch {
             val remembered = try {
+                val ownerConfigured = credentials.isOwnerConfigured()
+                _privateAccess.update { it.copy(ownerConfigured = ownerConfigured) }
                 credentials.restore()
             } catch (error: CancellationException) {
                 throw error
-            } catch (error: PrivateAccessException) {
-                _privateAccess.update {
-                    it.copy(message = error.message, canRetry = error.canRetryRestore, isError = true)
-                }
-                null
             } catch (_: Exception) {
                 _privateAccess.update {
                     it.copy(
-                        message = "No se pudo recuperar la sesión privada. Vuelve a comprobar tu conexión.",
+                        message = "No se pudo recuperar el acceso local. Intenta de nuevo.",
                         canRetry = true,
                         isError = true
                     )
                 }
                 null
             }
-            val active = remembered?.takeIf { it.remoteAuthId == sessionManager.currentUser.value?.remoteAuthId }
-            _authState.value = active?.let { AuthState.SignedIn(it) } ?: AuthState.SignedOut
+            _authState.value = remembered?.let { AuthState.SignedIn(it) } ?: AuthState.SignedOut
         }
     }
 
     fun signInPrivate(username: String, password: String) {
-        submitPrivateAction { auth ->
-            val user = auth.signIn(username, password)
-            if (user.remoteAuthId != sessionManager.currentUser.value?.remoteAuthId) {
-                throw PrivateAccessException("La sesión privada venció. Inicia sesión nuevamente.")
-            }
-            _privateAccess.update { it.copy(canRetry = false, verificationEmail = null) }
-            _authState.value = AuthState.SignedIn(user)
-        }
+        openPrivateProfile { auth -> auth.signIn(username, password) }
     }
 
-    fun registerPrivateClient(username: String, displayName: String, email: String, password: String) {
-        submitPrivateAction { auth ->
-            auth.registerClient(username, displayName, email, password)
-            _privateAccess.update {
-                it.copy(
-                    verificationEmail = email.trim(),
-                    message = "Revisa tu correo e ingresa el código de 6 dígitos para confirmar tu cuenta.",
-                    isError = false
-                )
-            }
-        }
+    fun registerPrivateClient(username: String, displayName: String, password: String) {
+        openPrivateProfile(creating = true) { auth -> auth.registerClient(username, displayName, password) }
     }
 
-    fun verifyPrivateEmail(email: String, code: String) {
-        submitPrivateAction { auth ->
-            auth.verifyEmail(email, code)
-            _privateAccess.update {
-                it.copy(
-                    verificationEmail = null,
-                    message = "Correo confirmado. Inicia sesión con tu usuario y contraseña.",
-                    isError = false
-                )
-            }
-        }
+    fun createPrivateOwner(username: String, password: String) {
+        if (_privateAccess.value.ownerConfigured != false) return
+        openPrivateProfile(creating = true, creatingOwner = true) { auth -> auth.createOwner(username, password) }
     }
 
-    private fun submitPrivateAction(action: suspend (PrivateAuthRepository) -> Unit) {
+    private fun openPrivateProfile(
+        creating: Boolean = false,
+        creatingOwner: Boolean = false,
+        resolveProfile: suspend (PrivateAuthRepository) -> UserEntity
+    ) {
         val credentials = privateAuth ?: return
-        if (!privateMode || !credentials.isConfigured || logoutInProgress ||
-            _authState.value != AuthState.SignedOut || _privateAccess.value.isSubmitting
+        if (!privateMode || logoutInProgress || _authState.value != AuthState.SignedOut ||
+            _privateAccess.value.isSubmitting
         ) return
+
         _privateAccess.update { it.copy(isSubmitting = true, message = null, isError = false) }
         viewModelScope.launch {
+            var accountCreated = false
             try {
-                action(credentials)
+                val user = resolveProfile(credentials)
+                accountCreated = creating
+                if (user.role == UserRole.WORKSHOP.name) {
+                    _privateAccess.update { it.copy(ownerConfigured = true) }
+                }
+                val profile = credentials.rememberVerifiedProfile(user)
+                _privateAccess.update { it.copy(canRetry = false) }
+                _authState.value = AuthState.SignedIn(profile)
             } catch (error: CancellationException) {
                 throw error
-            } catch (error: PrivateAccessException) {
-                _privateAccess.update { it.copy(message = error.message, isError = true) }
-            } catch (_: Exception) {
-                _privateAccess.update { it.copy(message = "No se pudo completar el acceso privado.", isError = true) }
+            } catch (error: Exception) {
+                val message = when {
+                    accountCreated -> "La cuenta quedó guardada. Inicia sesión con tu usuario y contraseña."
+                    error is PrivateAccessException -> error.message
+                    else -> "No se pudo completar el acceso local. Intenta de nuevo."
+                }
+                if (creatingOwner && !accountCreated) {
+                    try {
+                        val ownerConfigured = credentials.isOwnerConfigured()
+                        _privateAccess.update { it.copy(ownerConfigured = ownerConfigured) }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        _privateAccess.update { it.copy(ownerConfigured = null, canRetry = true) }
+                    }
+                }
+                _privateAccess.update { it.copy(message = message, isError = true) }
             } finally {
                 _privateAccess.update { it.copy(isSubmitting = false) }
             }
@@ -197,9 +182,7 @@ class AuthViewModel(
     }
 
     fun clearPrivateMessage() {
-        _privateAccess.update {
-            if (it.canRetry || !it.isConfigured) it else it.copy(message = null, isError = false)
-        }
+        _privateAccess.update { if (it.canRetry) it else it.copy(message = null, isError = false) }
     }
 
     fun reloadProfiles() = loadProfiles(clearMessage = true)
@@ -318,7 +301,7 @@ class AuthViewModel(
             try {
                 if (privateMode) {
                     checkNotNull(privateAuth).logout()
-                    _privateAccess.update { PrivateAccessState(isConfigured = it.isConfigured) }
+                    _privateAccess.update { PrivateAccessState(ownerConfigured = it.ownerConfigured) }
                 } else {
                     sessionManager.clearSession()
                 }
@@ -330,14 +313,7 @@ class AuthViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                if (privateMode && sessionManager.currentUser.value == null) {
-                    _authState.value = AuthState.SignedOut
-                    _privateAccess.update {
-                        it.copy(message = "La sesión privada terminó. Inicia sesión nuevamente.", isError = true)
-                    }
-                } else {
-                    _logoutError.value = "No se pudo cerrar la sesión guardada. Intenta de nuevo."
-                }
+                _logoutError.value = "No se pudo cerrar la sesión guardada. Intenta de nuevo."
             } finally {
                 logoutInProgress = false
             }
