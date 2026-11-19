@@ -12,7 +12,7 @@ Abre el proyecto en Android Studio y sincroniza Gradle. Para compilar y ejecutar
 .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest
 ```
 
-El APK de depuración se genera en `app/build/outputs/apk/debug/`. El APK versionado en `app/release/` es de una versión anterior. Los perfiles locales **Cliente** y **EdMotor** permiten probar el garaje, carrito, inventario y pedidos aunque todavía no tengas un proyecto MockAPI. En esta rama, las citas remotas requieren un perfil que venga de MockAPI.
+El APK de depuración se genera en `app/build/outputs/apk/debug/`. Los perfiles locales **Cliente** y **EdMotor** permiten probar el garaje, carrito, inventario y pedidos aunque todavía no tengas un proyecto MockAPI. En esta rama, las citas remotas requieren un perfil que venga de MockAPI.
 
 ## Crear los recursos en MockAPI
 

@@ -12,8 +12,6 @@ object Routes {
     const val SERVICES = "Servicios"
     const val PROFILE = "Mi Garaje"
     const val APPOINTMENTS = "Citas"
-    @Deprecated("La pestaña Diagnóstico fue reemplazada por Citas.")
-    const val DIAGNOSTIC = APPOINTMENTS
 
     // ==========================================
     // PRODUCTOS

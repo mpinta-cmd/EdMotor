@@ -131,7 +131,6 @@ dependencies {
     implementation(libs.androidx.room.runtime)
 
     implementation(libs.androidx.room.ktx)
-    implementation(libs.transport.api)
 
     // MOCKAPI REST
     implementation(libs.retrofit)
