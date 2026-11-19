@@ -1,6 +1,6 @@
 # EdMotor Automotriz con Room y MockAPI
 
-EdMotor Automotriz sigue el patrón de TaskFlow Master. Room guarda vehículos, favoritos, carrito, repuestos, pedidos y mantenimientos del dispositivo. Retrofit carga perfiles de demostración y envía las citas al proyecto MockAPI. En el navegador puedes ver esos recursos en JSON.
+EdMotor Automotriz sigue el patrón de TaskFlow Master. Room guarda vehículos, favoritos, carrito, repuestos, pedidos, mantenimientos y los perfiles usados en el dispositivo. Retrofit carga y crea perfiles de práctica y envía las citas al proyecto MockAPI. En el navegador puedes ver esos recursos en JSON.
 
 La app se instala como **EdMotor Automotriz** con el identificador `com.example.edmotor.mockapi`. Android le asigna su propia base de datos. Para consultar los datos de una instalación anterior de EdMotor, abre la app original. Usa datos de práctica en el proyecto de MockAPI. El selector de perfiles funciona sin contraseña y sus roles simulan el flujo de cliente y dueño. MockAPI no aplica reglas de autorización sobre esas acciones.
 
@@ -12,7 +12,7 @@ Abre el proyecto en Android Studio y sincroniza Gradle. Para compilar y ejecutar
 .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest
 ```
 
-El APK de depuración se genera en `app/build/outputs/apk/debug/`. Los perfiles locales **Cliente** y **EdMotor** permiten probar el garaje, carrito, inventario y pedidos aunque todavía no tengas un proyecto MockAPI. En esta rama, las citas remotas requieren un perfil que venga de MockAPI.
+El APK de depuración se genera en `app/build/outputs/apk/debug/`. Puedes probar el garaje, carrito, inventario y pedidos con el perfil local **EdMotor** y los perfiles de cliente creados en el dispositivo aunque todavía no tengas un proyecto MockAPI. Las citas remotas requieren un perfil de MockAPI.
 
 ## Crear los recursos en MockAPI
 
@@ -25,20 +25,18 @@ Con **New resource**, crea estos dos recursos con los nombres exactos. MockAPI a
 | `profiles` | `displayName`, `role` | |
 | `appointments` | `profileId`, `serviceType`, `vehicleBrand`, `vehicleModel`, `status` | `vehicleYear`, `scheduledAtMillis`, `createdAtMillis`, `updatedAtMillis` |
 
-Deja `appointments` vacío. En `profiles`, crea dos registros ficticios. Usa **Cliente** con rol `CLIENT` y **EdMotor** con rol `WORKSHOP`. Si el editor del sitio te permite pegar una lista JSON, puedes usar este ejemplo.
+En un proyecto nuevo, deja `appointments` vacío y agrega en `profiles` el perfil **EdMotor** con rol `WORKSHOP`. Los perfiles de cliente se crean desde la app. Si el editor del sitio te permite pegar una lista JSON, puedes usar este ejemplo.
 
 ```json
 [
-  { "id": "1", "displayName": "Cliente", "role": "CLIENT" },
-  { "id": "2", "displayName": "EdMotor", "role": "WORKSHOP" }
+  { "id": "1", "displayName": "EdMotor", "role": "WORKSHOP" }
 ]
 ```
 
-También puedes agregarlos una vez desde PowerShell, mientras `profiles` está vacío. Sustituye el dominio de ejemplo por el de tu proyecto.
+También puedes agregar el perfil una vez desde PowerShell, mientras `profiles` está vacío. Sustituye el dominio de ejemplo por el de tu proyecto. Si ya tienes el perfil **EdMotor**, conserva su registro y los datos existentes.
 
 ```powershell
 $api = 'https://tu-proyecto.mockapi.io/api/v1'
-Invoke-RestMethod -Uri "$api/profiles" -Method Post -ContentType 'application/json' -Body (@{ displayName = 'Cliente'; role = 'CLIENT' } | ConvertTo-Json -Compress)
 Invoke-RestMethod -Uri "$api/profiles" -Method Post -ContentType 'application/json' -Body (@{ displayName = 'EdMotor'; role = 'WORKSHOP' } | ConvertTo-Json -Compress)
 ```
 
@@ -58,9 +56,10 @@ Sincroniza Gradle y ejecuta **EdMotor Automotriz**. Como alternativa, puedes com
 
 ## Ver cómo cambia el JSON
 
-1. En el selector de EdMotor, elige el perfil **Cliente** que aparece bajo **MockAPI**. Registra un vehículo ficticio en **Mi garaje**.
-2. Abre **Citas**, selecciona ese vehículo y solicita una revisión futura. La app escribe el registro en `appointments` con estado `PENDING`.
+1. En **EdMotor Tecnológica**, entra por la opción de clientes y crea un perfil con un alias de práctica. Con MockAPI configurado, encontrarás el perfil nuevo en el JSON de `profiles` con rol `CLIENT`. También puedes elegir un cliente existente.
+2. Registra un vehículo ficticio en **Mi Garaje**. Abre **Citas**, selecciona ese vehículo y solicita una revisión futura. La app escribe el registro en `appointments` con estado `PENDING`.
 3. En el navegador, abre tu URL base seguida de `appointments`. Encontrarás la cita en JSON junto a su `id` y `profileId`.
-4. Cierra el perfil actual, entra como **EdMotor** de MockAPI y acéptala. Recarga el endpoint. Verás que la misma cita tiene `status: "CONFIRMED"`.
+4. Cierra sesión en **Mi Garaje**, entra como propietario **EdMotor** y confirma la cita. Recarga el endpoint. Verás que la misma cita tiene `status: "CONFIRMED"`.
+5. Cierra la app sin cerrar sesión y vuelve a abrirla. Se abrirá el inicio del mismo perfil. Puedes repetir el proceso con un cliente para comprobar ambos accesos.
 
 Los pedidos nuevos y el inventario se comprueban desde **App Inspection → Database Inspector → edmotor_database**. Las citas guardan una copia local tras una lectura correcta. La creación y los cambios de estado se envían a MockAPI con conexión.

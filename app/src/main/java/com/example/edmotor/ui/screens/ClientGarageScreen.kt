@@ -30,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.OrderWithItems
@@ -42,6 +43,7 @@ import java.util.Locale
 
 @Composable
 fun ClientGarageScreen(
+    profileName: String,
     vehicles: List<Vehicle>,
     orders: List<OrderWithItems>,
     onAddVehicle: (String, String, Int, String, String, String, String, (Result<Long>) -> Unit) -> Unit,
@@ -56,14 +58,16 @@ fun ClientGarageScreen(
     Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "ED MOTOR / ESPACIO PERSONAL",
+                    profileName,
                     color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text("Mi garaje", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text(
@@ -72,7 +76,9 @@ fun ClientGarageScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            OutlinedButton(onClick = onLogout, shape = RoundedCornerShape(12.dp)) { Text("Salir") }
+            OutlinedButton(onClick = onLogout, shape = RoundedCornerShape(12.dp)) {
+                Text("Cerrar sesión")
+            }
         }
 
         TabRow(selectedTabIndex = selectedTab) {

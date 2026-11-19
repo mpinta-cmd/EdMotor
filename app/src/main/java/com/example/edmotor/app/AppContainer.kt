@@ -26,7 +26,7 @@ class AppContainer(context: Context) {
         context.applicationContext
     )
 
-    val sessionManager = SessionManager()
+    val sessionManager = SessionManager(context.applicationContext)
 
     private val mockApi = MockApiConnection.fromBaseUrl(BuildConfig.EDMOTOR_MOCKAPI_URL)
 

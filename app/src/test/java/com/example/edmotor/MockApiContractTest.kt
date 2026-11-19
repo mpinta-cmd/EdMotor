@@ -4,6 +4,7 @@ import com.example.edmotor.data.remote.MockApiConnection
 import com.example.edmotor.data.remote.MockApiService
 import com.example.edmotor.data.remote.MockAppointmentCreateDto
 import com.example.edmotor.data.remote.MockAppointmentStatusDto
+import com.example.edmotor.data.remote.MockProfileCreateDto
 import com.google.gson.JsonParser
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
@@ -36,7 +37,7 @@ class MockApiContractTest {
     }
 
     @Test
-    fun retrofitListsProfilesCreatesAndUpdatesAnAppointment() {
+    fun retrofitCreatesAClientProfileAndUpdatesAnAppointment() {
         data class Request(val route: String, val body: String)
         val requests = ConcurrentLinkedQueue<Request>()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -47,6 +48,7 @@ class MockApiContractTest {
             requests.add(Request(route, body))
             val response = when (route) {
                 "GET /api/v1/profiles" -> """[{"id":"1","displayName":"Cliente","role":"CLIENT"}]"""
+                "POST /api/v1/profiles" -> """{"id":"3","displayName":"Cliente nuevo","role":"CLIENT"}"""
                 "GET /api/v1/appointments?profileId=1" -> "[$appointment]"
                 "GET /api/v1/appointments/7", "POST /api/v1/appointments" -> appointment
                 "PUT /api/v1/appointments/7" -> appointment.replace("PENDING", "CONFIRMED")
@@ -68,6 +70,10 @@ class MockApiContractTest {
 
             runBlocking {
                 assertEquals("CLIENT", api.getProfiles().single().role)
+                val profile = api.createProfile(MockProfileCreateDto("Cliente nuevo"))
+                assertEquals("3", profile.id)
+                assertEquals("Cliente nuevo", profile.displayName)
+                assertEquals("CLIENT", profile.role)
                 assertEquals("7", api.getAppointments("1").single().id)
                 val created = api.createAppointment(MockAppointmentCreateDto(
                     profileId = "1",
@@ -86,7 +92,16 @@ class MockApiContractTest {
                 ).status)
             }
 
-            val postBody = JsonParser.parseString(requests.single { it.route.startsWith("POST") }.body).asJsonObject
+            val profileBody = JsonParser.parseString(
+                requests.single { it.route == "POST /api/v1/profiles" }.body
+            ).asJsonObject
+            assertEquals(setOf("displayName", "role"), profileBody.keySet())
+            assertEquals("Cliente nuevo", profileBody.get("displayName").asString)
+            assertEquals("CLIENT", profileBody.get("role").asString)
+
+            val postBody = JsonParser.parseString(
+                requests.single { it.route == "POST /api/v1/appointments" }.body
+            ).asJsonObject
             assertEquals("1", postBody.get("profileId").asString)
             assertEquals(1_800_000_000_000L, postBody.get("scheduledAtMillis").asLong)
             assertEquals(setOf("profileId", "serviceType", "vehicleBrand", "vehicleModel", "vehicleYear",

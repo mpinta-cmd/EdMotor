@@ -4,6 +4,7 @@ EdMotor Automotriz es una aplicación Android para consultar repuestos, administ
 
 ## Funciones
 
+- **Acceso.** La pantalla EdMotor Tecnológica permite entrar como EdMotor para gestionar el taller o crear y elegir un perfil de cliente.
 - **Inicio.** Catálogo de repuestos con búsqueda, categorías, favoritos y detalle de producto.
 - **Carrito.** Guarda pedidos en el dispositivo. El dueño puede confirmarlos y descontar existencias desde la misma instalación.
 - **Mi Garaje.** Permite registrar vehículos y consultar su historial de mantenimiento. El dueño puede consultar clientes y vehículos, registrar mantenimientos y gestionar pedidos.
@@ -11,7 +12,9 @@ EdMotor Automotriz es una aplicación Android para consultar repuestos, administ
 
 ## Datos
 
-Room almacena el catálogo, el inventario, los favoritos, el carrito, los pedidos, los vehículos y el mantenimiento en la base SQLite `edmotor_database`. Retrofit conecta los perfiles y la agenda con MockAPI. La agenda conserva una copia local de la última sincronización.
+Room almacena el catálogo, el inventario, los favoritos, el carrito, los pedidos, los vehículos, el mantenimiento y los perfiles usados en la base SQLite `edmotor_database`. Retrofit conecta los perfiles y la agenda con MockAPI. La agenda conserva una copia local de la última sincronización.
+
+DataStore recuerda el perfil activo en el dispositivo. Al abrir la app, EdMotor recupera ese perfil desde Room y vuelve a su inicio. Para cambiar de perfil, abre **Mi Garaje** y cierra sesión.
 
 ## Abrir el proyecto
 

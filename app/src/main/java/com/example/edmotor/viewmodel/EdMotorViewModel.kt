@@ -16,20 +16,21 @@ import com.example.edmotor.model.Vehicle
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 
 private data class ActiveAccount(
     val userId: Int,
     val role: UserRole
 )
+
+private data class CartFeedback(val account: ActiveAccount, val message: String)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EdMotorViewModel(
@@ -59,12 +60,10 @@ class EdMotorViewModel(
         val next = ActiveAccount(userId, role)
 
         if (activeAccount.value != next) {
-
-            activeAccount.value = next
-
             _selectedCategory.value = null
-
             _searchQuery.value = ""
+            cartFeedback.value = null
+            activeAccount.value = next
         }
     }
 
@@ -76,7 +75,7 @@ class EdMotorViewModel(
 
         _searchQuery.value = ""
 
-        _cartMessage.value = null
+        cartFeedback.value = null
     }
 
     // ==========================================
@@ -120,19 +119,16 @@ class EdMotorViewModel(
     // FAVORITOS
     // ==========================================
 
-    val favoriteProductIds = activeAccount.flatMapLatest { account ->
-
-        if (account == null) {
-            flowOf(emptySet<Int>())
-        } else {
-            favoriteRepository.observeFavorites(account.userId).onStart { emit(emptySet()) }
+    fun observeFavorites(userId: Int, roleName: String): Flow<Set<Int>> =
+        observeForAccount(userId, roleName, emptySet()) { account ->
+            favoriteRepository.observeFavorites(account.userId).onEach { favorites ->
+                if (activeAccount.value == account && favorites.isEmpty() &&
+                    _selectedCategory.value == FAVORITES_CATEGORY
+                ) {
+                    _selectedCategory.value = null
+                }
+            }
         }
-
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
-        emptySet()
-    )
 
     fun toggleFavorite(productId: Int) {
 
@@ -174,31 +170,24 @@ class EdMotorViewModel(
     // CARRITO
     // ==========================================
 
-    val cartQuantity = activeAccount.flatMapLatest { account ->
-
-        if (account == null) {
-            flowOf(emptyMap<Int, Int>())
-        } else {
-            cartRepository.observeCart(account.userId).onStart { emit(emptyMap()) }
+    fun observeCart(userId: Int, roleName: String): Flow<Map<Int, Int>> =
+        observeForAccount(userId, roleName, emptyMap()) { account ->
+            cartRepository.observeCart(account.userId)
         }
-
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
-        emptyMap()
-    )
 
     // ==========================================
     // MENSAJES DEL CARRITO
     // ==========================================
 
-    private val _cartMessage =
-        MutableStateFlow<String?>(null)
+    private val cartFeedback = MutableStateFlow<CartFeedback?>(null)
 
-    val cartMessage = _cartMessage.asStateFlow()
+    fun observeCartMessage(userId: Int, roleName: String): Flow<String?> =
+        observeForAccount(userId, roleName, null) { account ->
+            cartFeedback.map { feedback -> feedback?.takeIf { it.account == account }?.message }
+        }
 
     fun clearCartMessage() {
-        _cartMessage.value = null
+        cartFeedback.value = null
     }
 
     // ==========================================
@@ -206,25 +195,14 @@ class EdMotorViewModel(
     // ==========================================
 
     fun increaseQuantity(productId: Int) {
-
-        val userId = activeAccount.value?.userId ?: return
+        val account = activeAccount.value ?: return
 
         viewModelScope.launch {
-
-            when (
-                val result = cartRepository.increaseQuantity(
-                    userId = userId,
-                    productId = productId
-                )
-            ) {
-
-                is CartOperationResult.Success -> {
-                    // Agregar al carrito es silencioso: no mostramos aviso inferior.
-                    _cartMessage.value = null
-                }
-
-                is CartOperationResult.Error -> {
-                    _cartMessage.value = result.message
+            val result = cartRepository.increaseQuantity(account.userId, productId)
+            if (activeAccount.value == account) {
+                cartFeedback.value = when (result) {
+                    is CartOperationResult.Success -> null
+                    is CartOperationResult.Error -> CartFeedback(account, result.message)
                 }
             }
         }
@@ -281,41 +259,21 @@ class EdMotorViewModel(
     // VEHÍCULOS
     // ==========================================
 
-    val vehicles = activeAccount.flatMapLatest { account ->
-
-        when {
-
-            account == null ->
-                flowOf(emptyList<Vehicle>())
-
-            account.role == UserRole.WORKSHOP ->
-                vehicleRepository.observeForWorkshop().onStart { emit(emptyList()) }
-
-            else ->
-                vehicleRepository.observeByOwner(account.userId).onStart { emit(emptyList()) }
+    fun observeVehicles(userId: Int, roleName: String): Flow<List<Vehicle>> =
+        observeForAccount(userId, roleName, emptyList()) { account ->
+            if (account.role == UserRole.WORKSHOP) vehicleRepository.observeForWorkshop()
+            else vehicleRepository.observeByOwner(account.userId)
         }
-
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
-        emptyList()
-    )
 
     // ==========================================
     // CLIENTES VISIBLES PARA EL DUEÑO
     // ==========================================
 
-    val clients = activeAccount.flatMapLatest { account ->
-        if (account?.role == UserRole.WORKSHOP) {
-            userRepository.observeClients().onStart { emit(emptyList()) }
-        } else {
-            flowOf(emptyList<UserEntity>())
+    fun observeClients(userId: Int, roleName: String): Flow<List<UserEntity>> =
+        observeForAccount(userId, roleName, emptyList()) { account ->
+            if (account.role == UserRole.WORKSHOP) userRepository.observeClients()
+            else flowOf(emptyList())
         }
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0),
-        emptyList()
-    )
 
     // ==========================================
     // REGISTRAR VEHÍCULO DEL CLIENTE
@@ -411,24 +369,15 @@ class EdMotorViewModel(
         }
     }
 
-    // ==========================================
-    // SINCRONIZAR FAVORITOS
-    // ==========================================
-
-    init {
-
-        viewModelScope.launch {
-
-            favoriteProductIds.collect { favorites ->
-
-                if (
-                    favorites.isEmpty() &&
-                    _selectedCategory.value == FAVORITES_CATEGORY
-                ) {
-
-                    _selectedCategory.value = null
-                }
-            }
-        }
+    private fun <T> observeForAccount(
+        userId: Int,
+        roleName: String,
+        emptyValue: T,
+        observe: (ActiveAccount) -> Flow<T>
+    ): Flow<T> {
+        val requested = ActiveAccount(userId, UserRole.from(roleName))
+        return activeAccount.flatMapLatest { active ->
+            if (active == requested) observe(requested) else flowOf(emptyValue)
+        }.map { value -> if (activeAccount.value == requested) value else emptyValue }
     }
 }

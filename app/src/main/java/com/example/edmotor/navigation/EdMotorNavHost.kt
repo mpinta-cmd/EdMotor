@@ -76,7 +76,9 @@ import com.example.edmotor.viewmodel.AppointmentViewModel
 fun EdMotorNavHost(
     navController: NavHostController,
     currentUserId: Int,
+    currentUserName: String,
     currentUserRole: String,
+    cartQuantity: Map<Int, Int>,
     appViewModel: EdMotorViewModel,
     maintenanceViewModel: MaintenanceViewModel,
     productViewModel: ProductViewModel,
@@ -97,17 +99,17 @@ fun EdMotorNavHost(
     val selectedCategory by appViewModel.selectedCategory
         .collectAsStateWithLifecycle()
 
-    val cartQuantity by appViewModel.cartQuantity
-        .collectAsStateWithLifecycle()
+    val cartMessage by remember(appViewModel, currentUserId, currentUserRole) {
+        appViewModel.observeCartMessage(currentUserId, currentUserRole)
+    }.collectAsStateWithLifecycle(initialValue = null)
 
-    val cartMessage by appViewModel.cartMessage
-        .collectAsStateWithLifecycle()
+    val vehicles by remember(appViewModel, currentUserId, currentUserRole) {
+        appViewModel.observeVehicles(currentUserId, currentUserRole)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
 
-    val vehicles by appViewModel.vehicles
-        .collectAsStateWithLifecycle()
-
-    val favoriteProductIds by appViewModel.favoriteProductIds
-        .collectAsStateWithLifecycle()
+    val favoriteProductIds by remember(appViewModel, currentUserId, currentUserRole) {
+        appViewModel.observeFavorites(currentUserId, currentUserRole)
+    }.collectAsStateWithLifecycle(initialValue = emptySet())
 
 
     // =====================================================
@@ -137,8 +139,9 @@ fun EdMotorNavHost(
     val categories by productViewModel.categories
         .collectAsStateWithLifecycle()
 
-    val clients by appViewModel.clients
-        .collectAsStateWithLifecycle()
+    val clients by remember(appViewModel, currentUserId, currentUserRole) {
+        appViewModel.observeClients(currentUserId, currentUserRole)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
 
     val isSavingProduct by productViewModel.isSaving
         .collectAsStateWithLifecycle()
@@ -454,6 +457,8 @@ fun EdMotorNavHost(
 
                 WorkshopGarageScreen(
 
+                    profileName = currentUserName,
+
                     vehicles = vehicleList,
 
                     clients = clients,
@@ -484,6 +489,8 @@ fun EdMotorNavHost(
             } else {
 
                 ClientGarageScreen(
+
+                    profileName = currentUserName,
 
                     vehicles = vehicleList,
 

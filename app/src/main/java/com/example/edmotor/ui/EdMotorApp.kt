@@ -1,15 +1,23 @@
 
 package com.example.edmotor.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -91,21 +99,38 @@ fun EdMotorApp(
     val profileSelection by authViewModel.profileSelection
         .collectAsStateWithLifecycle()
 
+    val logoutError by authViewModel.logoutError.collectAsStateWithLifecycle()
+
     // ==========================================
     // CONTROL DE SESIÓN
     // ==========================================
 
     when (val state = authState) {
+        AuthState.Loading -> {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
+            ) {
+                CircularProgressIndicator()
+                Text("Cargando perfil…")
+            }
+        }
 
         AuthState.SignedOut -> {
+            LaunchedEffect(Unit) { appViewModel.clearActiveUser() }
 
             AuthFlowScreen(
                 profiles = profileSelection.profiles,
                 mockApiConfigured = profileSelection.mockApiConfigured,
                 isLoading = profileSelection.isLoading,
                 selectingKey = profileSelection.selectingKey,
+                isCreating = profileSelection.isCreating,
                 message = profileSelection.message,
+                onSelectOwner = authViewModel::selectOwner,
                 onSelectProfile = authViewModel::selectProfile,
+                onCreateClientProfile = authViewModel::createClientProfile,
+                onClearMessage = authViewModel::clearProfileMessage,
                 onRetry = authViewModel::reloadProfiles
             )
         }
@@ -126,6 +151,7 @@ fun EdMotorApp(
             key(state.user.id, state.user.remoteAuthId, state.user.role) {
                 EdMotorAppContent(
                     currentUserId = state.user.id,
+                    currentUserName = state.user.displayName,
                     currentUserRole = state.user.role,
                     appViewModel = appViewModel,
                     maintenanceViewModel = maintenanceViewModel,
@@ -134,9 +160,17 @@ fun EdMotorApp(
                     appointmentViewModel = appointmentViewModel,
                     themeMode = themeMode,
                     onThemeModeChange = onThemeModeChange,
-                    onLogout = {
-                        appViewModel.clearActiveUser()
-                        authViewModel.logout()
+                    onLogout = authViewModel::logout
+                )
+            }
+
+            logoutError?.let { error ->
+                AlertDialog(
+                    onDismissRequest = authViewModel::clearLogoutError,
+                    title = { Text("Cerrar sesión") },
+                    text = { Text(error) },
+                    confirmButton = {
+                        TextButton(onClick = authViewModel::clearLogoutError) { Text("Entendido") }
                     }
                 )
             }
@@ -151,6 +185,7 @@ fun EdMotorApp(
 @Composable
 private fun EdMotorAppContent(
     currentUserId: Int,
+    currentUserName: String,
     currentUserRole: String,
     appViewModel: EdMotorViewModel,
     maintenanceViewModel: MaintenanceViewModel,
@@ -166,8 +201,9 @@ private fun EdMotorAppContent(
     // CANTIDAD DEL CARRITO
     // ==========================================
 
-    val cartQuantity by appViewModel.cartQuantity
-        .collectAsStateWithLifecycle()
+    val cartQuantity by remember(appViewModel, currentUserId, currentUserRole) {
+        appViewModel.observeCart(currentUserId, currentUserRole)
+    }.collectAsStateWithLifecycle(initialValue = emptyMap())
 
     val cartCount = if (currentUserRole == UserRole.WORKSHOP.name) {
         0
@@ -247,7 +283,11 @@ private fun EdMotorAppContent(
 
             currentUserId = currentUserId,
 
+            currentUserName = currentUserName,
+
             currentUserRole = currentUserRole,
+
+            cartQuantity = cartQuantity,
 
             appViewModel = appViewModel,
 

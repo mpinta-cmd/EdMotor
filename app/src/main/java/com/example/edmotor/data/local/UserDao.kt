@@ -33,4 +33,7 @@ interface UserDao {
 
     @Query("SELECT * FROM users WHERE role = 'CLIENT' ORDER BY displayName COLLATE NOCASE")
     fun observeClients(): Flow<List<UserEntity>>
+
+    @Query("SELECT * FROM users WHERE role = 'WORKSHOP' AND displayName = :displayName COLLATE NOCASE")
+    suspend fun findWorkshopsByDisplayName(displayName: String): List<UserEntity>
 }

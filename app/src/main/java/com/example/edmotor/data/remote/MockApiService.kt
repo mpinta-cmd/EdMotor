@@ -11,6 +11,9 @@ interface MockApiService {
     @GET("profiles")
     suspend fun getProfiles(): List<MockProfileDto>
 
+    @POST("profiles")
+    suspend fun createProfile(@Body body: MockProfileCreateDto): MockProfileDto
+
     @GET("appointments")
     suspend fun getAppointments(@Query("profileId") profileId: String? = null): List<MockAppointmentDto>
 
@@ -32,6 +35,10 @@ data class MockProfileDto(
     val displayName: String,
     val role: String
 )
+
+data class MockProfileCreateDto(val displayName: String) {
+    val role = "CLIENT"
+}
 
 data class MockAppointmentDto(
     val id: String,
