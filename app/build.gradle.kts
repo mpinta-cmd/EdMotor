@@ -11,6 +11,10 @@ val mockApiUrl = providers.gradleProperty("EDMOTOR_MOCKAPI_URL")
     .orElse(providers.environmentVariable("EDMOTOR_MOCKAPI_URL"))
     .orElse("")
 
+val onlineUrl = providers.gradleProperty("EDMOTOR_ONLINE_URL")
+    .orElse(providers.environmentVariable("EDMOTOR_ONLINE_URL"))
+    .orElse("")
+
 // ==========================================
 // CONFIGURACIÓN ANDROID
 // ==========================================
@@ -56,6 +60,13 @@ android {
             applicationIdSuffix = ".secure"
             manifestPlaceholders["edMotorAllowBackup"] = "false"
             buildConfigField("boolean", "EDMOTOR_PRIVATE_MODE", "true")
+        }
+        create("online") {
+            dimension = "access"
+            applicationIdSuffix = ".online"
+            manifestPlaceholders["edMotorAllowBackup"] = "false"
+            buildConfigField("boolean", "EDMOTOR_PRIVATE_MODE", "false")
+            buildConfigField("String", "EDMOTOR_ONLINE_URL", JsonOutput.toJson(onlineUrl.get()))
         }
     }
 

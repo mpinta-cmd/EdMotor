@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${EDMOTOR_DB_NAME:-edmotor}
+      POSTGRES_USER: ${EDMOTOR_DB_USER:-edmotor}
+      POSTGRES_PASSWORD: ${EDMOTOR_DB_PASSWORD:?Define EDMOTOR_DB_PASSWORD en .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      EDMOTOR_DB_HOST: postgres
+      EDMOTOR_DB_NAME: ${EDMOTOR_DB_NAME:-edmotor}
+      EDMOTOR_DB_USER: ${EDMOTOR_DB_USER:-edmotor}
+      EDMOTOR_DB_PASSWORD: ${EDMOTOR_DB_PASSWORD:?Define EDMOTOR_DB_PASSWORD en .env}
+      EDMOTOR_SESSION_HOURS: ${EDMOTOR_SESSION_HOURS:-24}
+      FORWARDED_ALLOW_IPS: ${EDMOTOR_FORWARDED_ALLOW_IPS:-127.0.0.1}
+    ports:
+      - "${EDMOTOR_BIND_HOST:-127.0.0.1}:${EDMOTOR_API_PORT:-8000}:8000"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -71,7 +71,8 @@ fun CredentialAccessScreen(
     onSetupOwner: (username: String, password: String) -> Unit,
     onClearMessage: () -> Unit,
     onRetry: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isOnlineMode: Boolean = false
 ) {
     var requestedMode by rememberSaveable { mutableStateOf(CredentialMode.SIGN_IN) }
     var displayName by rememberSaveable { mutableStateOf("") }
@@ -151,7 +152,7 @@ fun CredentialAccessScreen(
             ) {
                 EdMotorMark(size = 48.dp)
                 Text(
-                    "EdMotor Tecnológica",
+                    if (isOnlineMode) "EdMotor Automotriz" else "EdMotor Tecnológica",
                     modifier = Modifier.weight(1f).semantics { heading() },
                     style = MaterialTheme.typography.headlineSmall,
                     color = Color.White
@@ -178,6 +179,7 @@ fun CredentialAccessScreen(
                     )
                     Text(
                         when {
+                            isOnlineMode -> "Entra con la misma cuenta desde cualquiera de tus celulares."
                             mode == CredentialMode.SETUP_OWNER ->
                                 "La cuenta de EdMotor permite administrar el inventario, los pedidos y el mantenimiento."
                             !isPrivateMode && mode == CredentialMode.REGISTER_CLIENT ->

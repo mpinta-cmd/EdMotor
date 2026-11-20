@@ -1,0 +1,173 @@
+package com.example.edmotor.online
+
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.Query
+import androidx.room.RoomDatabase
+import androidx.room.Transaction
+
+data class OnlineUser(val id: Long, val username: String, val displayName: String, val role: String)
+
+data class OnlineMessage(val text: String, val isError: Boolean)
+
+data class OnlineState(
+    val user: OnlineUser? = null,
+    val restoring: Boolean = true,
+    val loading: Boolean = false,
+    val busy: Boolean = false,
+    val message: OnlineMessage? = null,
+    val configurationError: String? = null,
+    val lastSyncAtMillis: Long? = null,
+    val isStale: Boolean = false,
+    val products: List<OnlineProduct> = emptyList(),
+    val orders: List<OnlineOrder> = emptyList(),
+    val vehicles: List<OnlineVehicle> = emptyList(),
+    val appointments: List<OnlineAppointment> = emptyList(),
+    val maintenance: List<OnlineMaintenance> = emptyList()
+)
+
+data class OnlineProduct(
+    val id: Long,
+    val version: Long,
+    val name: String,
+    val description: String,
+    val category: String,
+    val priceCop: Long,
+    val promotionPriceCop: Long?,
+    val stock: Int,
+    val imagePath: String?
+)
+
+data class OnlineProductDraft(
+    val name: String,
+    val description: String,
+    val category: String,
+    val priceCop: Long,
+    val promotionPriceCop: Long? = null,
+    val stock: Int,
+    val imagePath: String? = null
+)
+
+data class OnlineOrder(
+    val id: Long,
+    val status: String,
+    val clientName: String,
+    val totalCop: Long,
+    val createdAtMillis: Long,
+    val items: List<OnlineOrderItem>
+)
+
+data class OnlineOrderItem(val productId: Long, val productName: String, val quantity: Int, val unitPriceCop: Long)
+
+data class OnlineVehicle(
+    val id: Long,
+    val clientId: Long,
+    val clientName: String,
+    val brand: String,
+    val model: String,
+    val year: Int,
+    val plate: String
+)
+
+data class OnlineAppointment(
+    val id: Long,
+    val version: Long,
+    val vehicleId: Long,
+    val clientId: Long,
+    val clientName: String,
+    val vehicleBrand: String,
+    val vehicleModel: String,
+    val vehicleYear: Int,
+    val vehiclePlate: String,
+    val serviceType: String,
+    val scheduledAtMillis: Long,
+    val status: String,
+    val createdAtMillis: Long,
+    val updatedAtMillis: Long,
+    val finishedAtMillis: Long?
+)
+
+data class OnlineMaintenance(
+    val id: Long,
+    val appointmentId: Long,
+    val vehicleId: Long,
+    val summary: String,
+    val mileageKm: Int?,
+    val createdAtMillis: Long
+)
+
+internal class OnlineCredentials(val username: String, val password: String)
+internal class OnlineRegistration(val username: String, val displayName: String, val password: String)
+internal class OnlineAuthResponse(val token: String, val user: OnlineUser)
+internal data class OnlineProductWrite(
+    val name: String,
+    val description: String,
+    val category: String,
+    val priceCop: Long,
+    val promotionPriceCop: Long?,
+    val stock: Int,
+    val imagePath: String?,
+    val version: Long?
+)
+
+internal data class OnlineImageUpload(val imagePath: String)
+internal data class OnlineOrderWrite(val requestId: String, val items: List<OnlineOrderLine>)
+internal data class OnlineOrderLine(val productId: Long, val quantity: Int)
+internal data class OnlineOrderDecision(val status: String)
+internal data class OnlineVehicleWrite(val brand: String, val model: String, val year: Int, val plate: String)
+internal data class OnlineAppointmentWrite(
+    val requestId: String,
+    val vehicleId: Long,
+    val scheduledAtMillis: Long,
+    val serviceType: String
+)
+
+internal data class OnlineAppointmentChange(val version: Long, val action: String, val scheduledAtMillis: Long?)
+internal data class OnlineMaintenanceWrite(val summary: String, val mileageKm: Int?)
+
+@Entity(tableName = "online_catalog", primaryKeys = ["project", "id"])
+internal data class OnlineProductCacheEntity(
+    val project: String,
+    val id: Long,
+    val version: Long,
+    val name: String,
+    val description: String,
+    val category: String,
+    val priceCop: Long,
+    val promotionPriceCop: Long?,
+    val stock: Int,
+    val imagePath: String?
+) {
+    fun toModel() = OnlineProduct(id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath)
+}
+
+internal fun OnlineProduct.toCache(project: String) = OnlineProductCacheEntity(
+    project, id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath
+)
+
+@Dao
+internal abstract class OnlineCatalogDao {
+    @Query("SELECT * FROM online_catalog WHERE project = :project ORDER BY id")
+    abstract suspend fun read(project: String): List<OnlineProductCacheEntity>
+
+    @Query("DELETE FROM online_catalog WHERE project = :project")
+    protected abstract suspend fun clear(project: String)
+
+    @Insert
+    protected abstract suspend fun insert(products: List<OnlineProductCacheEntity>)
+
+    @Transaction
+    open suspend fun replace(project: String, products: List<OnlineProductCacheEntity>) {
+        val ordered = products.sortedBy { it.id }
+        if (ordered == read(project)) return
+        clear(project)
+        if (ordered.isNotEmpty()) insert(ordered)
+    }
+}
+
+@Database(entities = [OnlineProductCacheEntity::class], version = 1, exportSchema = false)
+internal abstract class OnlineCatalogDatabase : RoomDatabase() {
+    abstract fun catalog(): OnlineCatalogDao
+}

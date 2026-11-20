@@ -58,15 +58,16 @@ internal fun AppointmentRequestForm(
     vehicles: List<Vehicle>,
     nowMillis: Long,
     isProcessing: Boolean,
+    timeZone: TimeZone = TimeZone.getDefault(),
     onCreateAppointment: (Vehicle, Long, String) -> Unit
 ) {
     var vehicleId by rememberSaveable { mutableStateOf<Int?>(null) }
     var service by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedDate by rememberSaveable { mutableStateOf(firstAppointmentDateUtcMillis(nowMillis)) }
+    var selectedDate by rememberSaveable(timeZone.id) { mutableStateOf(firstAppointmentDateUtcMillis(nowMillis, timeZone)) }
     var selectedTime by rememberSaveable { mutableStateOf<String?>(null) }
-    val minimumDate = firstAppointmentDateUtcMillis(nowMillis)
+    val minimumDate = firstAppointmentDateUtcMillis(nowMillis, timeZone)
     val selectedVehicle = vehicles.firstOrNull { it.id == vehicleId } ?: vehicles.firstOrNull()
-    val slots = remember(selectedDate, nowMillis) { appointmentTimeSlots(selectedDate, nowMillis) }
+    val slots = remember(selectedDate, nowMillis, timeZone) { appointmentTimeSlots(selectedDate, nowMillis, timeZone) }
     val selectedSlot = if (selectedTime == null) slots.firstOrNull() else slots.firstOrNull { it.time == selectedTime }
     val availableService = service?.takeIf(AppointmentServiceType.options::contains)
 
@@ -155,18 +156,19 @@ internal fun AppointmentRescheduleDialog(
     isWorkshop: Boolean,
     nowMillis: Long,
     enabled: Boolean,
+    timeZone: TimeZone = TimeZone.getDefault(),
     onDismiss: () -> Unit,
     onSave: (Long) -> Unit
 ) {
     val originalStart = appointment.scheduledAtMillis
-    val originalDate = appointmentDateUtcMillis(originalStart)
-    val minimumDate = firstAppointmentDateUtcMillis(nowMillis)
-    var selectedDate by rememberSaveable(appointment.id, originalStart) {
+    val originalDate = appointmentDateUtcMillis(originalStart, timeZone)
+    val minimumDate = firstAppointmentDateUtcMillis(nowMillis, timeZone)
+    var selectedDate by rememberSaveable(appointment.id, originalStart, timeZone.id) {
         mutableStateOf(maxOf(originalDate, minimumDate))
     }
     var selectedTime by rememberSaveable(appointment.id, originalStart) { mutableStateOf<String?>(null) }
     var showCalendar by rememberSaveable(appointment.id) { mutableStateOf(false) }
-    val slots = remember(selectedDate, nowMillis) { appointmentTimeSlots(selectedDate, nowMillis) }
+    val slots = remember(selectedDate, nowMillis, timeZone) { appointmentTimeSlots(selectedDate, nowMillis, timeZone) }
     val chosenTime = selectedTime
     val selectedSlot = if (chosenTime == null) {
         slots.firstOrNull { it.startsAtMillis == originalStart }
@@ -196,7 +198,7 @@ internal fun AppointmentRescheduleDialog(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Horario actual: ${formatAppointmentDateTime(appointment.scheduledAtMillis)}")
+                    Text("Horario actual: ${formatAppointmentDateTime(appointment.scheduledAtMillis, timeZone)}")
                     if (!isWorkshop && appointment.status == AppointmentStatus.CONFIRMED) {
                         Text(
                             "EdMotor revisará el nuevo horario antes de confirmar la cita.",
@@ -220,7 +222,7 @@ internal fun AppointmentRescheduleDialog(
                 Button(
                     enabled = enabled && newStart != null,
                     onClick = {
-                        if (newStart != null && appointmentTimeSlots(selectedDate, System.currentTimeMillis())
+                        if (newStart != null && appointmentTimeSlots(selectedDate, System.currentTimeMillis(), timeZone)
                                 .any { it.startsAtMillis == newStart }
                         ) {
                             onSave(newStart)

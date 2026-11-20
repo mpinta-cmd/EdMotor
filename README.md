@@ -19,6 +19,8 @@ Room guarda las cuentas y un hash con sal de cada contraseña. MockAPI recibe un
 
 ## Abrir el proyecto
 
+Selecciona **`onlineDebug`** para probar EdMotor entre celulares. La variante en línea usa una API con PostgreSQL para compartir cuentas, citas, catálogo, pedidos, vehículos e informes. [Conectar y probar EdMotor en línea](README_Online.md)
+
 Abre en Android Studio la carpeta que contiene `settings.gradle.kts` y sincroniza Gradle. En **Build Variants**, selecciona **`demoDebug`** para ejecutar **EdMotor Automotriz** con MockAPI. Es la variante predeterminada y usa la configuración `EDMOTOR_MOCKAPI_URL`. El usuario del dueño de práctica es **EdMotor** y su contraseña se configura en el teléfono. [Guía de la práctica](README_MockAPI.md)
 
 Selecciona **`privateDebug`** para ejecutar **EdMotor Tecnológica** con acceso por usuario y contraseña. Esta variante guarda sus datos en la base Room `edmotor_local_accounts`. Las contraseñas se verifican en el teléfono mediante un hash con sal. Sus cuentas y citas son locales a esa instalación.

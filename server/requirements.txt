@@ -1,0 +1,6 @@
+argon2-cffi==25.1.0
+fastapi==0.141.1
+Pillow==13.0.0
+psycopg[binary]==3.3.9
+python-multipart==0.0.34
+uvicorn==0.52.1

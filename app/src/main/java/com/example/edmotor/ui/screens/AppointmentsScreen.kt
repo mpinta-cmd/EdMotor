@@ -70,6 +70,7 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 private enum class AppointmentSection { REQUESTS, CALENDAR, ALL }
 
@@ -94,6 +95,7 @@ fun AppointmentsScreen(
     onRegisterMaintenance: (Appointment) -> Unit = {},
     onViewMaintenance: ((Int) -> Unit)? = null,
     requestedCalendarDay: Long? = null,
+    timeZone: TimeZone = TimeZone.getDefault(),
     onCalendarDayHandled: () -> Unit = {}
 ) {
     var selectedSection by rememberSaveable(isWorkshop) { mutableStateOf(AppointmentSection.REQUESTS) }
@@ -101,8 +103,8 @@ fun AppointmentsScreen(
     var pendingCancel by remember(isWorkshop) { mutableStateOf<Appointment?>(null) }
     var pendingFinish by remember(isWorkshop) { mutableStateOf<Appointment?>(null) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    val today = remember(nowMillis) { appointmentDateUtcMillis(nowMillis) }
-    var selectedDay by rememberSaveable(isWorkshop) { mutableLongStateOf(requestedCalendarDay ?: today) }
+    val today = remember(nowMillis, timeZone) { appointmentDateUtcMillis(nowMillis, timeZone) }
+    var selectedDay by rememberSaveable(isWorkshop, timeZone.id) { mutableLongStateOf(requestedCalendarDay ?: today) }
     val requestListState = rememberLazyListState()
     val calendarListState = rememberLazyListState()
     val allListState = rememberLazyListState()
@@ -132,10 +134,10 @@ fun AppointmentsScreen(
         AppointmentSection.ALL -> allListState
     }
     val activeTime = activeAppointment?.let { it.identity() to it.scheduledAtMillis }
-    var lastActiveTime by remember(isWorkshop) { mutableStateOf<Pair<Triple<String, Long, Long>, Long>?>(null) }
+    var lastActiveTime by remember(isWorkshop, timeZone.id) { mutableStateOf<Pair<Triple<String, Long, Long>, Long>?>(null) }
     var awaitingActiveAfterCalendarLink by remember(isWorkshop) { mutableStateOf(false) }
-    val appointmentsByDay = remember(orderedAppointments) {
-        orderedAppointments.groupBy { appointmentDateUtcMillis(it.scheduledAtMillis) }
+    val appointmentsByDay = remember(orderedAppointments, timeZone) {
+        orderedAppointments.groupBy { appointmentDateUtcMillis(it.scheduledAtMillis, timeZone) }
     }
     val workByAppointment = remember(appointmentWork) {
         appointmentWork.associateBy { (work) ->
@@ -154,7 +156,7 @@ fun AppointmentsScreen(
     LaunchedEffect(message) {
         if (!message.isNullOrBlank()) listState.scrollToItem(0)
     }
-    LaunchedEffect(requestedCalendarDay, activeTime) {
+    LaunchedEffect(requestedCalendarDay, activeTime, timeZone.id) {
         if (requestedCalendarDay != null) {
             selectedDay = requestedCalendarDay
             selectedSection = AppointmentSection.CALENDAR
@@ -167,7 +169,7 @@ fun AppointmentsScreen(
             if (activeAppointment != null) {
                 // An explicit history link can arrive before the client's appointments load.
                 if (!awaitingActiveAfterCalendarLink) {
-                    selectedDay = appointmentDateUtcMillis(activeAppointment.scheduledAtMillis)
+                    selectedDay = appointmentDateUtcMillis(activeAppointment.scheduledAtMillis, timeZone)
                     if (selectedSection != AppointmentSection.ALL) {
                         selectedSection = AppointmentSection.REQUESTS
                         calendarListState.scrollToItem(0)
@@ -196,6 +198,7 @@ fun AppointmentsScreen(
             isWorkshop = isWorkshop,
             showsReview = isWorkshop && visibleSection != AppointmentSection.CALENDAR,
             canManage = canManage,
+            timeZone = timeZone,
             maintenance = report,
             onAccept = { onAccept(appointment.id) },
             onReject = { onReject(appointment.id) },
@@ -245,11 +248,12 @@ fun AppointmentsScreen(
                     val highlightedAppointment = nextAppointment ?: activeAppointment
                     if (highlightedAppointment != null || syncState == AppointmentSyncState.UP_TO_DATE) {
                         item(key = "nextAppointment") {
-                            val appointmentDay = highlightedAppointment?.let { appointmentDateUtcMillis(it.scheduledAtMillis) }
+                            val appointmentDay = highlightedAppointment?.let { appointmentDateUtcMillis(it.scheduledAtMillis, timeZone) }
                             UpcomingAppointmentSummary(
                                 appointment = highlightedAppointment,
                                 isUpcoming = nextAppointment != null,
                                 showsItsDay = selectedDay == appointmentDay,
+                                timeZone = timeZone,
                                 onShowItsDay = {
                                     if (appointmentDay != null) {
                                         selectedDay = appointmentDay
@@ -328,7 +332,7 @@ fun AppointmentsScreen(
                             OpenAgendaButton(
                                 upcomingCount = upcoming.size,
                                 onClick = {
-                                    selectedDay = nextAppointment?.let { appointmentDateUtcMillis(it.scheduledAtMillis) } ?: today
+                                    selectedDay = nextAppointment?.let { appointmentDateUtcMillis(it.scheduledAtMillis, timeZone) } ?: today
                                     selectedSection = AppointmentSection.CALENDAR
                                     coroutineScope.launch { calendarListState.scrollToItem(0) }
                                 }
@@ -348,6 +352,7 @@ fun AppointmentsScreen(
                                 vehicles = vehicles,
                                 nowMillis = nowMillis,
                                 isProcessing = isProcessing,
+                                timeZone = timeZone,
                                 onCreateAppointment = onCreateAppointment
                             )
                         }
@@ -364,6 +369,7 @@ fun AppointmentsScreen(
             isWorkshop = isWorkshop,
             nowMillis = nowMillis,
             enabled = canManage,
+            timeZone = timeZone,
             onDismiss = { rescheduleId = null },
             onSave = { newTime ->
                 rescheduleId = null
@@ -379,7 +385,7 @@ fun AppointmentsScreen(
         AlertDialog(
             icon = { Icon(Icons.Outlined.EventAvailable, contentDescription = null) },
             title = { Text("Cancelar cita") },
-            text = { Text("Al cancelar se eliminará la cita del ${formatAppointmentDateTime(appointmentToCancel.scheduledAtMillis)}.") },
+            text = { Text("Al cancelar se eliminará la cita del ${formatAppointmentDateTime(appointmentToCancel.scheduledAtMillis, timeZone)}.") },
             onDismissRequest = { pendingCancel = null },
             confirmButton = {
                 Button(
@@ -489,6 +495,7 @@ private fun UpcomingAppointmentSummary(
     appointment: Appointment?,
     isUpcoming: Boolean,
     showsItsDay: Boolean,
+    timeZone: TimeZone,
     onShowItsDay: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
@@ -506,7 +513,7 @@ private fun UpcomingAppointmentSummary(
                 fontWeight = FontWeight.Bold
             )
             if (appointment != null) {
-                Text("Horario: ${formatAppointmentDateTime(appointment.scheduledAtMillis)}", style = MaterialTheme.typography.bodyLarge)
+                Text("Horario: ${formatAppointmentDateTime(appointment.scheduledAtMillis, timeZone)}", style = MaterialTheme.typography.bodyLarge)
                 Text(
                     if (appointment.status == AppointmentStatus.PENDING) "Pendiente de confirmación" else "Confirmada por el taller",
                     style = MaterialTheme.typography.bodyMedium
@@ -620,6 +627,7 @@ private fun AppointmentCard(
     isWorkshop: Boolean,
     showsReview: Boolean,
     canManage: Boolean,
+    timeZone: TimeZone,
     maintenance: MaintenanceWithParts?,
     onAccept: () -> Unit,
     onReject: () -> Unit,
@@ -663,7 +671,7 @@ private fun AppointmentCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.AccessTime, contentDescription = null, modifier = Modifier.size(16.dp), tint = colors.primary)
                     Text(
-                        formatAppointmentDateTime(appointment.scheduledAtMillis),
+                        formatAppointmentDateTime(appointment.scheduledAtMillis, timeZone),
                         color = colors.primary,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold
@@ -717,7 +725,7 @@ private fun AppointmentCard(
             if (appointment.status == AppointmentStatus.COMPLETED) {
                 appointment.finishedAtMillis?.let { finishedAt ->
                     Text(
-                        "Terminada el ${formatAppointmentDateTime(finishedAt)}",
+                        "Terminada el ${formatAppointmentDateTime(finishedAt, timeZone)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant
                     )
@@ -813,5 +821,5 @@ private fun Appointment.canBeChanged(): Boolean = AppointmentStatus.isActive(sta
 
 private fun Appointment.identity() = Triple(clientAuthId, id, createdAtMillis)
 
-internal fun formatAppointmentDateTime(millis: Long): String =
-    SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO")).format(Date(millis))
+internal fun formatAppointmentDateTime(millis: Long, timeZone: TimeZone = TimeZone.getDefault()): String =
+    SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale("es", "CO")).apply { this.timeZone = timeZone }.format(Date(millis))
