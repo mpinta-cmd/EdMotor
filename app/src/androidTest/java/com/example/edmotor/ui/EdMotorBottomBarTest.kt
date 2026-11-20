@@ -93,12 +93,17 @@ class EdMotorBottomBarTest {
         }
 
         compose.onNodeWithText(Routes.PROFILE).assertIsSelected()
-        val destinations = listOf(Routes.PROFILE, Routes.APPOINTMENTS, Routes.SERVICES, Routes.HOME)
-        destinations.forEach { route ->
-            compose.onNodeWithText(route).performClick()
-            compose.onNodeWithText(route).assertIsSelected()
+        val destinations = listOf(
+            Routes.PROFILE to "Mi Garaje",
+            Routes.APPOINTMENTS to "Citas",
+            Routes.DASHBOARD to "Testigos",
+            Routes.HOME to "Inicio"
+        )
+        destinations.forEach { (_, label) ->
+            compose.onNodeWithText(label).performClick()
+            compose.onNodeWithText(label).assertIsSelected()
         }
-        compose.runOnIdle { assertEquals(destinations, visited) }
+        compose.runOnIdle { assertEquals(destinations.map { it.first }, visited) }
     }
 
     private fun assertBadgeFitsTab(count: String, label: String) {

@@ -29,7 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Home
@@ -62,7 +62,7 @@ private data class EdMotorTab(val route: String, val label: String, val icon: Im
 
 private val tabs = listOf(
     EdMotorTab(Routes.HOME, "Inicio", Icons.Outlined.Home),
-    EdMotorTab(Routes.SERVICES, "Servicios", Icons.Outlined.Build),
+    EdMotorTab(Routes.DASHBOARD, "Testigos", Icons.Outlined.Speed),
     EdMotorTab(Routes.PROFILE, "Mi Garaje", Icons.Outlined.DirectionsCar),
     EdMotorTab(Routes.APPOINTMENTS, "Citas", Icons.Outlined.CalendarMonth)
 )

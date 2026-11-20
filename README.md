@@ -7,6 +7,7 @@ EdMotor Automotriz es una aplicación Android para consultar repuestos, administ
 - **Acceso.** El dueño y los clientes entran con usuario y contraseña desde la misma pantalla. Los clientes crean su cuenta con su nombre para mostrar y sus credenciales.
 - **Inicio.** Catálogo de repuestos con búsqueda, categorías, favoritos y detalle de producto. Las promociones aparecen primero y cada grupo se ordena alfabéticamente.
 - **Inventario.** Al registrar un repuesto, el dueño puede elegir una foto del dispositivo o escoger una imagen de la biblioteca.
+- **Testigos.** Usa la cámara para comparar símbolos iluminados del tablero con la guía de EdMotor. Consulta su significado, prioridad y pasos sugeridos.
 - **Mi Garaje.** El cliente registra sus vehículos y consulta su historial. En el perfil del dueño, **Clientes** abre el historial desde cada vehículo y **Compras** permite aceptar o rechazar pedidos guardados en la misma instalación. Aceptar un pedido descuenta las existencias.
 - **Citas.** **Próxima cita** destaca el siguiente horario y **Todas las citas** reúne los registros en una lista cronológica. Al solicitar, el cliente pasa al día de la reserva en **Calendario** y puede tener una sola cita pendiente o confirmada. Cancelar elimina la cita. **Solicitar** vuelve al cancelar, rechazar o terminar. El dueño gestiona las pendientes en **Solicitudes** y puede confirmar citas de distintos clientes a la misma hora. Para reagendar se usan las mismas franjas que al solicitar. Un cambio de horario del cliente vuelve a pendientes para revisión.
 - **Entrega del vehículo.** En el calendario, el dueño pulsa **Terminar cita** para guardar la hora de cierre y abrir **Registrar mantenimiento**. El cliente ve **Listo para recoger** en **Mi Garaje** y puede abrir la ficha con el informe guardado en esa instalación. Las citas antiguas sin vehículo asociado piden seleccionar el que se atendió.
@@ -39,3 +40,11 @@ En Windows puedes compilar desde la terminal del proyecto.
 ```
 
 Los APK de depuración se generan en `app/build/outputs/apk/private/debug/` y `app/build/outputs/apk/demo/debug/`.
+
+## Consultar los testigos del tablero
+
+1. Con el vehículo estacionado, abre **Testigos** y pulsa **Activar cámara**. Concede el permiso de cámara.
+2. Enfoca los símbolos iluminados de frente, evita reflejos y pulsa **Escanear tablero**. Acércate a los símbolos pequeños o prueba en grupos si el tablero es ancho.
+3. Revisa las coincidencias y compáralas con tu tablero. Cada ficha indica qué suele significar el símbolo y qué hacer. La guía también se puede consultar de forma manual.
+
+El análisis compara el color y la forma de la imagen con símbolos comunes. La lectura y el análisis ocurren en el teléfono, y el fotograma se procesa en memoria. El catálogo y los resultados son orientativos. Algunos vehículos usan símbolos distintos y un escaneo sin coincidencias puede dejar testigos sin identificar. Si ves un testigo rojo que permanece encendido, estaciona en un lugar seguro y consulta el manual del vehículo.

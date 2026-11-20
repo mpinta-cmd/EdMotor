@@ -51,7 +51,7 @@ import com.example.edmotor.ui.screens.HomeScreen
 import com.example.edmotor.ui.screens.MaintenanceFormScreen
 import com.example.edmotor.ui.screens.MaintenanceHistoryScreen
 import com.example.edmotor.ui.screens.ProductDetailScreen
-import com.example.edmotor.ui.screens.ServicesScreen
+import com.example.edmotor.ui.screens.DashboardScreen
 import com.example.edmotor.ui.screens.WorkshopGarageScreen
 import com.example.edmotor.ui.screens.ProductManagementScreen
 import com.example.edmotor.ui.screens.ProductFormScreen
@@ -436,26 +436,10 @@ fun EdMotorNavHost(
 
 
         // =================================================
-        // 4. SERVICIOS
+        // 4. TESTIGOS
         // =================================================
 
-        composable(Routes.SERVICES) {
-
-            ServicesScreen(
-
-                onOpenGarage = {
-                    onNavigate(Routes.PROFILE)
-                },
-
-                onOpenAppointments = {
-                    onNavigate(Routes.APPOINTMENTS)
-                },
-
-                onOpenCatalog = {
-                    onNavigate(Routes.HOME)
-                }
-            )
-        }
+        composable(Routes.DASHBOARD) { DashboardScreen() }
 
 
         // =================================================

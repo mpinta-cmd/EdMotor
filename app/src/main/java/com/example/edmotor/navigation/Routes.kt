@@ -9,7 +9,8 @@ object Routes {
 
     const val HOME = "Inicio"
     const val CAR = "Carrito"
-    const val SERVICES = "Servicios"
+    // Conserva la ruta guardada para reabrir Testigos después de actualizar la app.
+    const val DASHBOARD = "Servicios"
     const val PROFILE = "Mi Garaje"
     const val APPOINTMENTS = "Citas"
 

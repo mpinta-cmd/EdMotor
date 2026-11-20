@@ -45,7 +45,7 @@ import com.example.edmotor.model.appointmentDateUtcMillis
 import com.example.edmotor.navigation.Routes
 import com.example.edmotor.ui.components.EdMotorBottomBar
 import com.example.edmotor.ui.screens.CredentialAccessScreen
-import com.example.edmotor.ui.screens.ServicesScreen
+import com.example.edmotor.ui.screens.DashboardScreen
 import com.example.edmotor.ui.theme.EdMotorTheme
 import java.util.TimeZone
 import kotlinx.coroutines.delay
@@ -151,7 +151,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState, user: Onlin
         snackbarHost = { SnackbarHost(snackbars) }
     ) { insets ->
         Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
-            if (state.isStale) {
+            if (state.isStale && route != Routes.DASHBOARD) {
                 Text(
                     "No se pudieron actualizar todos los datos. Parte de la información puede estar desactualizada.",
                     style = MaterialTheme.typography.bodySmall,
@@ -160,14 +160,10 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState, user: Onlin
                 )
             }
             Box(Modifier.weight(1f).fillMaxSize()) {
-                if (state.loading && state.lastSyncAtMillis == null && state.products.isEmpty()) {
+                if (route != Routes.DASHBOARD && state.loading && state.lastSyncAtMillis == null && state.products.isEmpty()) {
                     OnlineConnectionNotice("Consultando EdMotor…", working = true)
                 } else screenState.SaveableStateProvider(route) { when (route) {
-                    Routes.SERVICES -> ServicesScreen(
-                        onOpenGarage = { route = Routes.PROFILE },
-                        onOpenAppointments = { route = Routes.APPOINTMENTS },
-                        onOpenCatalog = { route = Routes.HOME }
-                    )
+                    Routes.DASHBOARD -> DashboardScreen()
                     Routes.PROFILE -> OnlineGarageScreen(
                         vm = vm,
                         state = state,
