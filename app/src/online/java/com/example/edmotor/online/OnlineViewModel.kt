@@ -10,7 +10,9 @@ import com.example.edmotor.BuildConfig
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +34,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         app, OnlineCatalogDatabase::class.java, "edmotor_online_catalog.db"
     ).build()
     private val requests = Mutex()
+    private var refreshJob: Job? = null
     private val imageMemory = object : LruCache<String, ByteArray>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ByteArray): Int = value.size
     }
@@ -96,8 +99,8 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     fun clearMessage() = _state.update { it.copy(message = null) }
 
     fun refresh() {
-        if (api == null) return
-        viewModelScope.launch {
+        if (api == null || _state.value.busy || refreshJob?.isActive == true) return
+        refreshJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             if (!requests.tryLock()) return@launch
             try {
                 val current = liveSession ?: (if (restoreAllowed) restoreSession() else null) ?: return@launch
@@ -106,6 +109,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                 requests.unlock()
             }
         }
+        refreshJob?.start()
     }
 
     private suspend fun restoreSession(): LiveSession? {
@@ -309,6 +313,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun runAction(action: suspend () -> (() -> Unit)?) {
         if (api == null || _state.value.busy) return
         _state.update { it.copy(busy = true, message = null) }
+        refreshJob?.cancel()
         viewModelScope.launch {
             var needsRefresh = false
             val completion = try {
