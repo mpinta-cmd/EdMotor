@@ -28,17 +28,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,6 +70,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -71,6 +78,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -90,6 +98,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.Normalizer
+import java.util.Locale
 
 @Composable
 fun DashboardScreen() {
@@ -110,7 +120,15 @@ fun DashboardScreen() {
     var issue by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<DashboardScanResult?>(null) }
     var guideOpen by rememberSaveable { mutableStateOf(false) }
+    var guideQuery by rememberSaveable { mutableStateOf("") }
     var selectedGuideId by rememberSaveable { mutableStateOf<String?>(null) }
+    val filteredGuide = remember(guideQuery) {
+        val words = dashboardSearchText(guideQuery).split(' ').filter { it.isNotBlank() }
+        if (words.isEmpty()) dashboardIndicators else dashboardIndicators.filter { indicator ->
+            val text = dashboardSearchText("${indicator.title} ${indicator.summary}")
+            words.all { it in text }
+        }
+    }
 
     fun closeCamera() {
         cameraOpen = false
@@ -294,13 +312,13 @@ fun DashboardScreen() {
         }
         if (guideOpen) {
             item(key = "guideIntro") {
-                Text(
-                    "Compara el símbolo y su color. Si tu testigo no está en la guía, consulta el manual de tu vehículo.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant
+                DashboardGuideSearch(
+                    query = guideQuery,
+                    onQueryChange = { guideQuery = it },
+                    resultCount = filteredGuide.size
                 )
             }
-            items(dashboardIndicators, key = { "guide_${it.id}" }) { indicator ->
+            items(filteredGuide, key = { "guide_${it.id}" }) { indicator ->
                 DashboardIndicatorCard(
                     indicator = indicator,
                     expanded = selectedGuideId == indicator.id,
@@ -308,6 +326,47 @@ fun DashboardScreen() {
                 )
             }
         }
+    }
+}
+
+private val dashboardDiacritics = Regex("\\p{M}+")
+private val dashboardWordBreaks = Regex("[^\\p{L}\\p{N}]+")
+
+private fun dashboardSearchText(text: String): String =
+    Normalizer.normalize(text.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+        .replace(dashboardDiacritics, "")
+        .replace(dashboardWordBreaks, " ")
+
+@Composable
+private fun DashboardGuideSearch(query: String, onQueryChange: (String) -> Unit, resultCount: Int) {
+    val focusManager = LocalFocusManager.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Buscar testigo") },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Borrar búsqueda")
+                    }
+                }
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() })
+        )
+        Text(
+            when (resultCount) {
+                0 -> "No hay coincidencias. Prueba otro nombre o consulta el manual de tu vehículo."
+                1 -> "1 testigo en la guía"
+                else -> "$resultCount testigos en la guía"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

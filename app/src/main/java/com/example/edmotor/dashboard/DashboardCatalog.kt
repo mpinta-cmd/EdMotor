@@ -202,4 +202,4 @@ internal val dashboardIndicators: List<DashboardIndicator> = listOf(
             DashboardMark("M2 16 L6 18 M2 24 H5 M2 32 L6 30 M46 16 L42 18 M46 24 H43 M46 32 L42 30", strokeWidth = 2.5f)
         )
     )
-)
+) + mechanicalDashboardIndicators + safetyDashboardIndicators + statusDashboardIndicators

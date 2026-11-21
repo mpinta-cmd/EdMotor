@@ -45,6 +45,7 @@ Los APK de depuración se generan en `app/build/outputs/apk/private/debug/` y `a
 
 1. Con el vehículo estacionado, abre **Testigos** y pulsa **Activar cámara**. Concede el permiso de cámara.
 2. Enfoca los símbolos iluminados de frente, evita reflejos y pulsa **Escanear tablero**. Acércate a los símbolos pequeños o prueba en grupos si el tablero es ancho.
-3. Revisa las coincidencias y compáralas con tu tablero. Cada ficha indica qué suele significar el símbolo y qué hacer. La guía también se puede consultar de forma manual.
+3. Revisa las coincidencias y compáralas con tu tablero. Cada ficha indica qué suele significar el símbolo y qué hacer.
+4. En **Consultar guía de testigos** puedes buscar por nombre o siglas, como ABS y DPF, y abrir cualquiera de los 34 testigos aunque no uses la cámara.
 
 El análisis compara el color y la forma de la imagen con símbolos comunes. La lectura y el análisis ocurren en el teléfono, y el fotograma se procesa en memoria. El catálogo y los resultados son orientativos. Algunos vehículos usan símbolos distintos y un escaneo sin coincidencias puede dejar testigos sin identificar. Si ves un testigo rojo que permanece encendido, estaciona en un lugar seguro y consulta el manual del vehículo.

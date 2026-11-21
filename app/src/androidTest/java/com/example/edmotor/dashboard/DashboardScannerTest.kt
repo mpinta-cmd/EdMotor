@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,7 +51,7 @@ class DashboardScannerTest {
     @Test
     fun lightColorAloneDoesNotIdentifyARingOrAnOrangeGlow() {
         withDashboard(420, 220) { bitmap, canvas ->
-            canvas.drawCircle(84f, 117f, 27f, stroke(RED, 4f))
+            canvas.glyph(51f, 84f, 1.4f) { drawBrakeFrame(stroke(RED, 3.4f)) }
             canvas.drawCircle(219f, 119f, 26f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AMBER })
             canvas.drawCircle(325f, 117f, 24f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
 
@@ -69,6 +71,45 @@ class DashboardScannerTest {
             val result = scanDashboard(bitmap)
             assertTrue(result.matches.isEmpty())
             assertEquals(0, result.unresolvedCount)
+        }
+    }
+
+    @Test
+    fun recognizesEveryCatalogSymbolInATiltedReferenceImage() {
+        val ids = dashboardIndicators.map { it.id }
+        assertEquals(ids.size, ids.toSet().size)
+
+        val failures = mutableListOf<String>()
+        for (indicator in dashboardIndicators) {
+            withDashboard(235, 165) { bitmap, canvas ->
+                canvas.glyph(75f, 45f, 1.4f, angle = 5f) { drawCatalogGlyph(indicator) }
+                val actual = scanDashboard(bitmap).matches.map { it.indicator.id }
+                if (actual != listOf(indicator.id)) failures.add("${indicator.id} → $actual")
+            }
+        }
+        assertTrue(failures.joinToString("\n"), failures.isEmpty())
+    }
+
+    @Test
+    fun distinguishesBrakeWarningsAndOppositeTurnArrows() {
+        withDashboard(460, 190) { bitmap, canvas ->
+            canvas.glyph(36f, 60f, 1.25f, angle = -5f) { drawBrakeLight(parkingBrake = true) }
+            canvas.glyph(136f, 60f, 1.2f, angle = 6f) { drawBrakeLight(parkingBrake = false) }
+            canvas.glyph(246f, 65f, 1.3f) { drawTurnArrow() }
+            canvas.glyph(356f, 67f, 1.2f, angle = 5f) {
+                scale(-1f, 1f, 24f, 24f)
+                drawTurnArrow()
+            }
+
+            val result = scanDashboard(bitmap)
+            val matches = result.matches
+            assertEquals(
+                setOf("parking_brake", "brake_system", "turn_left", "turn_right"),
+                matches.map { it.indicator.id }.toSet()
+            )
+            assertEquals(4, matches.size)
+            assertPosition(result, "parking_brake", 66f / bitmap.width, 90f / bitmap.height)
+            assertPosition(result, "brake_system", 165f / bitmap.width, 89f / bitmap.height)
         }
     }
 
@@ -174,6 +215,57 @@ class DashboardScannerTest {
         drawLine(2f, 24f, 5f, 24f, paint)
         drawLine(2f, 32f, 6f, 30f, paint)
         restoreToCount(saved)
+    }
+
+    private fun Canvas.drawBrakeLight(parkingBrake: Boolean) {
+        val paint = stroke(RED, 2.9f)
+        drawBrakeFrame(paint)
+        if (parkingBrake) {
+            drawPath(Path().apply {
+                moveTo(20f, 32f)
+                lineTo(20f, 16f)
+                lineTo(25f, 16f)
+                cubicTo(31.5f, 16f, 31.5f, 24.5f, 25f, 24.5f)
+                lineTo(20f, 24.5f)
+            }, paint)
+        } else {
+            drawLine(24f, 16f, 24f, 25f, paint)
+            paint.style = Paint.Style.FILL
+            drawCircle(24f, 30f, 2f, paint)
+        }
+    }
+
+    private fun Canvas.drawBrakeFrame(paint: Paint) {
+        drawCircle(24f, 24f, 14.25f, paint)
+        drawArc(2.5f, 5.5f, 45.5f, 42.5f, 140f, 80f, false, paint)
+        drawArc(2.5f, 5.5f, 45.5f, 42.5f, -40f, 80f, false, paint)
+    }
+
+    private fun Canvas.drawTurnArrow() {
+        drawPath(Path().apply {
+            moveTo(4f, 24f)
+            lineTo(20f, 8.5f)
+            lineTo(20f, 18f)
+            lineTo(44f, 18f)
+            lineTo(44f, 30f)
+            lineTo(20f, 30f)
+            lineTo(20f, 39.5f)
+            close()
+        }, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = GREEN })
+    }
+
+    private fun Canvas.drawCatalogGlyph(indicator: DashboardIndicator) {
+        val color = when (indicator.lightColor) {
+            DashboardLightColor.RED -> RED
+            DashboardLightColor.AMBER -> AMBER
+            DashboardLightColor.GREEN -> GREEN
+            DashboardLightColor.BLUE -> BLUE
+        }
+        for (mark in indicator.marks) {
+            val paint = stroke(color, mark.strokeWidth)
+            if (mark.filled) paint.style = Paint.Style.FILL
+            drawPath(PathParser().parsePathString(mark.path).toPath().asAndroidPath(), paint)
+        }
     }
 
     private fun assertPosition(result: DashboardScanResult, id: String, x: Float, y: Float) {

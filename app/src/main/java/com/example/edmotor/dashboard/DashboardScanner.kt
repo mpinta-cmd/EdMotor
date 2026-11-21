@@ -399,26 +399,54 @@ private fun templateBounds(pixels: IntArray): PixelBox? {
 }
 
 private fun recognizeDashboardShape(region: DashboardRegion, observed: ShapeMask): MatchCandidate? {
-    val templates = dashboardTemplates[region.color].orEmpty()
-    var best: DashboardTemplate? = null
-    var bestScore = 0f
-    var runnerUpScore = 0f
-
-    for (template in templates) {
+    val ranked = dashboardTemplates[region.color].orEmpty().mapNotNull { template ->
         val score = template.variants.maxOfOrNull { shapeScore(observed, it.shape) - abs(it.angle) * 0.0005f }
-            ?: continue
-        if (score > bestScore) {
-            runnerUpScore = bestScore
-            bestScore = score
-            best = template
-        } else if (score > runnerUpScore) {
-            runnerUpScore = score
-        }
-    }
+            ?: return@mapNotNull null
+        MatchCandidate(region, template.indicator, score)
+    }.sortedByDescending { it.score }
 
-    val winner = best ?: return null
-    if (bestScore < MIN_SHAPE_SCORE || bestScore - runnerUpScore < MIN_SCORE_MARGIN) return null
-    return MatchCandidate(region, winner.indicator, bestScore)
+    val best = ranked.firstOrNull() ?: return null
+    if (best.score < MIN_SHAPE_SCORE) return null
+    val runnerUp = ranked.getOrNull(1) ?: return best
+    if (best.score - runnerUp.score >= MIN_SCORE_MARGIN) return best
+
+    // Los avisos de freno comparten el círculo y los arcos. Si ambas formas completas
+    // encajan, compara el ancho del carácter central y conserva la incertidumbre intermedia.
+    if (runnerUp.score < MIN_SHARED_BRAKE_SCORE ||
+        best.indicator.id !in brakeIndicatorIds || runnerUp.indicator.id !in brakeIndicatorIds
+    ) return null
+
+    val brakeId = brakeSymbolAtCenter(observed) ?: return null
+    val brakeMatch = if (best.indicator.id == brakeId) best else runnerUp
+    val nextScore = ranked.getOrNull(2)?.score ?: 0f
+    return brakeMatch.takeIf { it.score - nextScore >= MIN_BRAKE_DETAIL_MARGIN }
+}
+
+private val brakeIndicatorIds = setOf("brake_system", "parking_brake")
+
+private fun brakeSymbolAtCenter(shape: ShapeMask): String? {
+    val center = (MASK_SIDE - 1) / 2f
+    var count = 0
+    var sumX = 0f
+    var sumSquaredX = 0f
+    for (index in shape.foreground) {
+        val x = index % MASK_SIDE - center
+        val y = index / MASK_SIDE - center
+        if (x * x + y * y > BRAKE_CENTER_RADIUS * BRAKE_CENTER_RADIUS) continue
+
+        count++
+        sumX += x
+        sumSquaredX += x * x
+    }
+    if (count < MIN_BRAKE_CENTER_PIXELS) return null
+
+    val meanX = sumX / count
+    val spread = sumSquaredX / count - meanX * meanX
+    return when {
+        spread <= MAX_BRAKE_EXCLAMATION_VARIANCE -> "brake_system"
+        spread >= MIN_PARKING_BRAKE_VARIANCE -> "parking_brake"
+        else -> null
+    }
 }
 
 private fun shapeScore(observed: ShapeMask, expected: ShapeMask): Float {
@@ -459,3 +487,9 @@ private const val MASK_DRAW_SIDE = 30
 private const val MIN_MASK_PIXELS = 24
 private const val MIN_SHAPE_SCORE = 0.76f
 private const val MIN_SCORE_MARGIN = 0.065f
+private const val MIN_SHARED_BRAKE_SCORE = 0.86f
+private const val MIN_BRAKE_DETAIL_MARGIN = 0.045f
+private const val BRAKE_CENTER_RADIUS = 7.5f
+private const val MIN_BRAKE_CENTER_PIXELS = 5
+private const val MAX_BRAKE_EXCLAMATION_VARIANCE = 2.4f
+private const val MIN_PARKING_BRAKE_VARIANCE = 3.8f
