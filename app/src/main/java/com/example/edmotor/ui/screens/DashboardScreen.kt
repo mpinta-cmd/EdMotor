@@ -61,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -90,8 +91,9 @@ import com.example.edmotor.dashboard.DashboardIndicator
 import com.example.edmotor.dashboard.DashboardLightColor
 import com.example.edmotor.dashboard.DashboardScanResult
 import com.example.edmotor.dashboard.DashboardUrgency
+import com.example.edmotor.dashboard.dashboardCaptureFrame
 import com.example.edmotor.dashboard.dashboardIndicators
-import com.example.edmotor.dashboard.scanDashboard
+import com.example.edmotor.dashboard.scanFramedDashboard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -136,10 +138,15 @@ fun DashboardScreen() {
         awaitingFrame = false
     }
 
+    fun openCamera() {
+        result = null
+        cameraOpen = true
+    }
+
     val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionGranted = granted
         permissionDenied = !granted
-        if (granted && hasCamera) cameraOpen = true
+        if (granted && hasCamera) openCamera()
     }
 
     DisposableEffect(lifecycleOwner, context) {
@@ -196,7 +203,7 @@ fun DashboardScreen() {
                                             analyzing = true
                                             analysisJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                                                 try {
-                                                    result = withContext(Dispatchers.Default) { scanDashboard(bitmap) }
+                                                    result = withContext(Dispatchers.Default) { scanFramedDashboard(bitmap) }
                                                 } catch (cancelled: CancellationException) {
                                                     throw cancelled
                                                 } catch (_: Exception) {
@@ -232,7 +239,7 @@ fun DashboardScreen() {
                                 }
                             }
                             Text(
-                                "Centra los testigos en la guía. Acerca el teléfono lo suficiente para ver los símbolos y evita reflejos.",
+                                "Solo se analiza el área clara. Acerca la cámara a los testigos y evita los reflejos.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurfaceVariant
                             )
@@ -270,7 +277,7 @@ fun DashboardScreen() {
                                     issue = null
                                     permissionGranted = context.hasDashboardCameraPermission()
                                     when {
-                                        permissionGranted -> cameraOpen = true
+                                        permissionGranted -> openCamera()
                                         permissionBlocked -> {
                                             val target = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                                                 data = Uri.fromParts("package", context.packageName, null)
@@ -289,7 +296,11 @@ fun DashboardScreen() {
                             ) {
                                 Icon(Icons.Outlined.CameraAlt, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Text(
-                                    if (permissionBlocked) "Abrir ajustes" else "Activar cámara",
+                                    when {
+                                        permissionBlocked -> "Abrir ajustes"
+                                        result != null -> "Escanear de nuevo"
+                                        else -> "Activar cámara"
+                                    },
                                     modifier = Modifier.padding(start = 8.dp)
                                 )
                             }
@@ -398,17 +409,22 @@ private fun DashboardHeader() {
 @Composable
 private fun DashboardCaptureGuide(modifier: Modifier) {
     Canvas(modifier) {
-        val x = size.width * .1f
-        val y = size.height * .16f
-        val w = size.width - x
-        val h = size.height - y
-        val length = size.minDimension * .09f
+        val left = size.width * dashboardCaptureFrame.left
+        val top = size.height * dashboardCaptureFrame.top
+        val right = size.width * dashboardCaptureFrame.right
+        val bottom = size.height * dashboardCaptureFrame.bottom
+        val shade = Color.Black.copy(alpha = .48f)
+        drawRect(shade, size = Size(size.width, top))
+        drawRect(shade, topLeft = Offset(0f, bottom), size = Size(size.width, size.height - bottom))
+        drawRect(shade, topLeft = Offset(0f, top), size = Size(left, bottom - top))
+        drawRect(shade, topLeft = Offset(right, top), size = Size(size.width - right, bottom - top))
+        val length = size.minDimension * .08f
         val stroke = 2.dp.toPx()
         listOf(
-            Offset(x, y) to Offset(length, length),
-            Offset(w, y) to Offset(-length, length),
-            Offset(x, h) to Offset(length, -length),
-            Offset(w, h) to Offset(-length, -length)
+            Offset(left, top) to Offset(length, length),
+            Offset(right, top) to Offset(-length, length),
+            Offset(left, bottom) to Offset(length, -length),
+            Offset(right, bottom) to Offset(-length, -length)
         ).forEach { (corner, direction) ->
             drawLine(Color.White, corner, corner + Offset(direction.x, 0f), stroke, StrokeCap.Round)
             drawLine(Color.White, corner, corner + Offset(0f, direction.y), stroke, StrokeCap.Round)
@@ -419,11 +435,6 @@ private fun DashboardCaptureGuide(modifier: Modifier) {
 @Composable
 private fun DashboardResultSummary(result: DashboardScanResult) {
     val found = result.matches.distinctBy { it.indicator.id }.size
-    val redSignalMessage = if (result.unresolvedRedCount > 0) {
-        "Se detectó una zona roja sin identificar. Si corresponde a un testigo, conserva el vehículo detenido en un lugar seguro y consulta el manual o solicita asistencia."
-    } else {
-        "Si ves un testigo rojo sin identificar, conserva el vehículo detenido en un lugar seguro y consulta el manual o solicita asistencia."
-    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "Resultado del escaneo",
@@ -435,25 +446,33 @@ private fun DashboardResultSummary(result: DashboardScanResult) {
             fontWeight = FontWeight.Bold
         )
         Text(
-            when (found) {
-                0 -> "No se encontraron coincidencias con la guía. Revisa el tablero y prueba con una imagen más nítida."
-                1 -> "1 coincidencia orientativa. Compárala con el manual de tu vehículo."
+            when {
+                result.needsReframe -> "La imagen no permite una lectura fiable. Acerca la cámara al tablero, encuadra los testigos y evita reflejos."
+                found == 0 -> "No encontramos coincidencias con la guía. Prueba con otra toma o busca el símbolo en el manual de tu vehículo."
+                found == 1 -> "1 coincidencia orientativa. Compárala con el manual de tu vehículo."
                 else -> "$found coincidencias orientativas. Compáralas con el manual de tu vehículo."
             },
             style = MaterialTheme.typography.bodyMedium
         )
-        Text(
-            "Al dar contacto, algunos testigos se encienden durante el chequeo. La urgencia depende de si siguen encendidos o parpadean y del estado del vehículo, como el freno de estacionamiento o el cinturón.",
-            style = MaterialTheme.typography.bodyMedium
-        )
-        if (result.unresolvedCount > 0) {
+        if (found > 0) {
+            Text(
+                "Al dar contacto, algunos testigos se encienden durante el chequeo. La urgencia depende de si siguen encendidos o parpadean y del estado del vehículo.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        if (result.unresolvedCount > 0 && !result.needsReframe) {
             Text(
                 if (result.unresolvedCount == 1) "Quedó una señal sin identificar."
                 else "Quedaron ${result.unresolvedCount} señales sin identificar.",
                 style = MaterialTheme.typography.bodyMedium
             )
         }
-        DashboardNotice(redSignalMessage, urgent = result.unresolvedRedCount > 0)
+        if (result.unresolvedRedCount > 0) {
+            DashboardNotice(
+                "Hay una zona roja sin identificar. Si ves un testigo rojo, mantén el vehículo detenido en un lugar seguro y consulta el manual o solicita asistencia.",
+                urgent = true
+            )
+        }
     }
 }
 

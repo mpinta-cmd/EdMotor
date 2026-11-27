@@ -107,6 +107,20 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
         user == null && route == Routes.ORDER_MANAGEMENT -> Routes.PROFILE
         else -> route
     }
+    val catalogSync = state.syncStatus(OnlineResource.CATALOG)
+    val syncNotice = when (activeRoute) {
+        Routes.HOME, Routes.CAR -> "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
+        Routes.ORDER_MANAGEMENT -> "No pudimos actualizar los pedidos."
+            .takeIf { state.syncStatus(OnlineResource.ORDERS).unavailable }
+        Routes.PROFILE -> when {
+            state.syncStatus(OnlineResource.VEHICLES).unavailable -> "No pudimos actualizar los vehículos."
+            state.syncStatus(OnlineResource.MAINTENANCE).unavailable -> "No pudimos actualizar el historial de mantenimiento."
+            else -> null
+        }
+        Routes.APPOINTMENTS -> "No pudimos actualizar los vehículos para la cita."
+            .takeIf { user != null && !workshop && state.syncStatus(OnlineResource.VEHICLES).unavailable }
+        else -> null
+    }
 
     fun openAccess(entry: AccessEntry) {
         vm.clearMessage()
@@ -181,7 +195,14 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                             BadgedBox(badge = {
                                 if (cartCount > 0) Badge { Text(if (cartCount > 99) "99+" else cartCount.toString()) }
                             }) {
-                                Icon(Icons.Outlined.ShoppingCart, if (cartCount == 0L) "Carrito" else "Carrito, $cartCount unidades")
+                                Icon(
+                                    Icons.Outlined.ShoppingCart,
+                                    when (cartCount) {
+                                        0L -> "Carrito"
+                                        1L -> "Carrito, 1 unidad"
+                                        else -> "Carrito, $cartCount unidades"
+                                    }
+                                )
                             }
                         }
                     } else {
@@ -239,13 +260,12 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
         snackbarHost = { SnackbarHost(snackbars) }
     ) { insets ->
         Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
-            if (state.isStale && activeRoute != Routes.DASHBOARD) {
+            if (syncNotice != null) {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Text(
-                        if (user == null) "No pudimos actualizar el catálogo. Revisa tu conexión."
-                        else "Parte de la información puede estar desactualizada.",
+                        syncNotice,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     TextButton(onClick = vm::refresh, enabled = !state.busy) { Text("Reintentar") }
                 }
@@ -284,8 +304,11 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                     )
                     else -> when {
                         state.configurationError != null -> OnlineConnectionNotice(state.configurationError)
-                        state.loading && state.products.isEmpty() -> OnlineConnectionNotice("Consultando repuestos…", working = true)
-                        else -> OnlineCatalogScreen(vm, state, vm::addToCart)
+                        catalogSync.waitingForFirstData && state.products.isEmpty() -> OnlineConnectionNotice(
+                            if (catalogSync.retrying) "Volviendo a conectar con el catálogo…" else "Consultando repuestos…",
+                            working = true
+                        )
+                        else -> OnlineCatalogScreen(vm, state, vm::addToCart) { route = Routes.CAR }
                     }
                 } }
             }

@@ -75,6 +75,56 @@ class DashboardScannerTest {
     }
 
     @Test
+    fun rejectsCoincidentalShapeWhenMostColoredRegionsAreUnrecognized() {
+        withDashboard(420, 220) { bitmap, canvas ->
+            canvas.glyph(176f, 73f, 1.35f) { drawBattery() }
+            assertEquals(listOf("battery_charging"), scanDashboard(bitmap).matches.map { it.indicator.id })
+
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            repeat(8) { index ->
+                paint.color = if (index % 2 == 0) AMBER else RED
+                val x = 27f + (index % 4) * 110f
+                val y = if (index < 4) 28f else 183f
+                canvas.drawCircle(x, y, 10f, paint)
+            }
+
+            val result = scanDashboard(bitmap)
+            assertTrue(result.needsReframe)
+            assertTrue(result.matches.isEmpty())
+            assertTrue(result.unresolvedRedCount > 0)
+        }
+    }
+
+    @Test
+    fun asksForNewFrameWhenBrightBackgroundMakesARecognizableShapeUnreliable() {
+        withDashboard(240, 160) { bitmap, canvas ->
+            canvas.drawColor(Color.rgb(198, 196, 192))
+            canvas.glyph(86f, 50f, 1.35f) { drawBattery() }
+
+            val result = scanDashboard(bitmap)
+            assertTrue(result.needsReframe)
+            assertTrue(result.matches.isEmpty())
+        }
+    }
+
+    @Test
+    fun analyzesOnlyTheAreaInsideTheCameraGuide() {
+        withDashboard(640, 400) { bitmap, canvas ->
+            canvas.glyph(6f, 150f, 1.3f) { drawBattery() }
+            canvas.glyph(294f, 162f, 1.55f) { drawEngine() }
+            assertEquals(
+                setOf("battery_charging", "check_engine"),
+                scanDashboard(bitmap).matches.map { it.indicator.id }.toSet()
+            )
+
+            val result = scanFramedDashboard(bitmap)
+            assertEquals(listOf("check_engine"), result.matches.map { it.indicator.id })
+            assertFalse(result.needsReframe)
+            assertFalse(bitmap.isRecycled)
+        }
+    }
+
+    @Test
     fun recognizesEveryCatalogSymbolInATiltedReferenceImage() {
         val ids = dashboardIndicators.map { it.id }
         assertEquals(ids.size, ids.toSet().size)

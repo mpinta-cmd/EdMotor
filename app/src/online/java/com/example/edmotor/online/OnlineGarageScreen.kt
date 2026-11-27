@@ -69,6 +69,7 @@ internal fun OnlineGarageScreen(
     val user = state.user ?: return
     val isWorkshop = user.role == "WORKSHOP"
     val colors = MaterialTheme.colorScheme
+    val vehiclesSync = state.syncStatus(OnlineResource.VEHICLES)
     val visibleVehicles = remember(state.vehicles, user.id, isWorkshop) {
         state.vehicles.filter { isWorkshop || it.clientId == user.id }
             .sortedWith(compareBy({ it.brand.lowercase(Locale.ROOT) }, { it.model.lowercase(Locale.ROOT) }, { it.id }))
@@ -105,13 +106,8 @@ internal fun OnlineGarageScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (state.loading) {
+            if (vehiclesSync.waitingForFirstData) {
                 item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            }
-            if (state.isStale) {
-                item(key = "stale") {
-                    Text("Actualiza el garaje para consultar los cambios más recientes.", color = colors.onSurfaceVariant)
-                }
             }
             val message = state.message
             if (message != null) {
@@ -181,7 +177,7 @@ internal fun OnlineGarageScreen(
                         Icon(Icons.Outlined.ShoppingBag, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text(if (isWorkshop) "Pedidos" else "Mis compras", modifier = Modifier.padding(start = 6.dp))
                     }
-                    TextButton(onClick = { vm.refresh() }, enabled = !state.loading && !state.busy) {
+                    TextButton(onClick = { vm.refresh() }, enabled = !state.busy) {
                         Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text("Actualizar", modifier = Modifier.padding(start = 6.dp))
                     }
@@ -195,7 +191,7 @@ internal fun OnlineGarageScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
-            if (visibleVehicles.isEmpty() && !state.loading) {
+            if (visibleVehicles.isEmpty() && vehiclesSync.loaded) {
                 item(key = "empty") {
                     GarageEmptyState(
                         Icons.Outlined.DirectionsCar,

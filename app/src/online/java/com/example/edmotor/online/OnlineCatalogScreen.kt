@@ -99,10 +99,12 @@ private fun searchTerm(value: String): String =
 internal fun OnlineCatalogScreen(
     vm: OnlineViewModel,
     state: OnlineState,
-    onAddToCart: (Long) -> Unit
+    onAddToCart: (Long) -> Unit,
+    onReviewOrder: () -> Unit
 ) {
     val workshop = state.user?.role == UserRole.WORKSHOP.name
     val cart = state.cart
+    val pending = state.pendingOrder != null
     var query by rememberSaveable { mutableStateOf("") }
     var showingEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<OnlineProduct?>(null) }
@@ -151,10 +153,14 @@ internal fun OnlineCatalogScreen(
                         Spacer(Modifier.width(6.dp))
                         Text("Agregar repuesto")
                     }
+                } else if (pending) {
+                    OutlinedButton(onClick = onReviewOrder, modifier = Modifier.fillMaxWidth()) {
+                        Text("Revisar envío pendiente")
+                    }
                 }
             }
         }
-        if (!state.loading && products.isEmpty()) {
+        if (products.isEmpty() && (state.products.isNotEmpty() || state.syncStatus(OnlineResource.CATALOG).loaded)) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 OnlineListNote(
                     if (query.isNotBlank()) "No encontramos repuestos con esa búsqueda."
@@ -169,7 +175,7 @@ internal fun OnlineCatalogScreen(
                 product = product,
                 workshop = workshop,
                 quantity = quantity,
-                busy = state.busy,
+                busy = state.busy || pending,
                 onOpen = { selectedId = product.id },
                 onAdd = { onAddToCart(product.id) },
                 onEdit = { editing = product; showingEditor = true }
@@ -212,7 +218,7 @@ internal fun OnlineCatalogScreen(
                     ) { Text("Editar repuesto") }
                 } else {
                     Button(
-                        enabled = !state.busy && (cart[selected.id] ?: 0) < selected.stock,
+                        enabled = !state.busy && !pending && (cart[selected.id] ?: 0) < selected.stock,
                         onClick = { onAddToCart(selected.id); selectedId = null }
                     ) { Text("Agregar al carrito") }
                 }

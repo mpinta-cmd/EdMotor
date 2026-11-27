@@ -123,8 +123,8 @@ internal fun OnlineAppointmentsScreen(
         appointments = appointments,
         syncState = when {
             state.configurationError != null -> AppointmentSyncState.NOT_CONFIGURED
-            state.loading && state.lastSyncAtMillis == null -> AppointmentSyncState.LOADING
-            state.isStale || state.lastSyncAtMillis == null -> AppointmentSyncState.UNAVAILABLE
+            state.syncStatus(OnlineResource.APPOINTMENTS).waitingForFirstData -> AppointmentSyncState.LOADING
+            state.syncStatus(OnlineResource.APPOINTMENTS).unavailable -> AppointmentSyncState.UNAVAILABLE
             else -> AppointmentSyncState.UP_TO_DATE
         },
         vehicles = selectionVehicles,

@@ -27,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -57,7 +58,8 @@ internal fun OnlineCartScreen(
 ) {
     val colors = MaterialTheme.colorScheme
     val guest = state.user == null
-    val cart = state.cart
+    val pending = state.pendingOrder
+    val cart = pending?.items ?: state.cart
     val productsById = remember(state.products) { state.products.associateBy { it.id } }
     val cartEntries = cart.entries.toList()
     val unavailable = cartEntries.any { (id, quantity) ->
@@ -99,7 +101,7 @@ internal fun OnlineCartScreen(
                     id = id,
                     product = productsById[id],
                     quantity = quantity,
-                    enabled = !state.busy,
+                    enabled = !state.busy && pending == null,
                     onChange = { onQuantityChange(id, it) }
                 )
             }
@@ -111,25 +113,34 @@ internal fun OnlineCartScreen(
                     contentColor = colors.onPrimaryContainer
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Total del pedido", style = MaterialTheme.typography.labelLarge)
-                        Text(onlinePrice(total), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                        if (pending == null) {
+                            Text("Total del pedido", style = MaterialTheme.typography.labelLarge)
+                            Text(onlinePrice(total), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                        } else {
+                            Text("Pedido por verificar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        }
                         Text(
-                            restriction ?: if (guest) "Crea tu perfil o inicia sesión para enviar el pedido."
-                                else "El taller revisará el pedido. Puedes consultar su estado en Pedidos.",
-                            color = if (restriction == null) colors.onPrimaryContainer else colors.error,
+                            when {
+                                pending != null -> "Guardamos tus repuestos. Puedes reintentar el mismo envío de forma segura."
+                                restriction != null -> restriction
+                                guest -> "Crea tu perfil o inicia sesión para enviar el pedido."
+                                else -> "El taller revisará el pedido. Puedes consultar su estado en Pedidos."
+                            },
+                            color = if (pending == null && restriction != null) colors.error else colors.onPrimaryContainer,
                             style = MaterialTheme.typography.bodySmall
                         )
                         Button(
                             onClick = {
-                                if (guest) onAuthenticate() else vm.createOrder(cart, onCreated = onOrderCreated)
+                                if (guest) onAuthenticate() else vm.createOrder(cart, pending?.requestId, onCreated = onOrderCreated)
                             },
-                            enabled = !state.busy && restriction == null,
+                            enabled = !state.busy && (pending != null || restriction == null),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(when {
                                 state.busy -> "Enviando…"
+                                pending != null -> "Reintentar envío"
                                 guest -> "Continuar compra"
                                 else -> "Enviar pedido"
                             })
@@ -236,7 +247,10 @@ internal fun OnlineOrdersScreen(vm: OnlineViewModel, state: OnlineState) {
         item(key = "title") {
             OnlineSectionTitle(if (workshop) "Pedidos del taller" else "Mis pedidos", Icons.Outlined.ReceiptLong)
         }
-        if (!state.loading && orders.isEmpty()) {
+        if (orders.isEmpty() && state.syncStatus(OnlineResource.ORDERS).waitingForFirstData) {
+            item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        }
+        if (state.syncStatus(OnlineResource.ORDERS).loaded && orders.isEmpty()) {
             item(key = "empty") { OnlineListNote("Todavía no hay pedidos registrados.") }
         }
         items(orders, key = { it.id }) { order ->

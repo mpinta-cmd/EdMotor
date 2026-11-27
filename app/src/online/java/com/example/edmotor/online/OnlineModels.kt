@@ -12,21 +12,43 @@ data class OnlineUser(val id: Long, val username: String, val displayName: Strin
 
 data class OnlineMessage(val text: String, val isError: Boolean)
 
+enum class OnlineResource { CATALOG, ORDERS, VEHICLES, APPOINTMENTS, MAINTENANCE }
+
+data class OnlineSyncStatus(val loaded: Boolean = false, val failures: Int = 0) {
+    val retrying: Boolean get() = failures == 1
+    val unavailable: Boolean get() = failures >= 2
+    val waitingForFirstData: Boolean get() = !loaded && !unavailable
+
+    internal fun result(success: Boolean) =
+        if (success) OnlineSyncStatus(loaded = true) else copy(failures = (failures + 1).coerceAtMost(2))
+}
+
 data class OnlineState(
     val user: OnlineUser? = null,
-    val loading: Boolean = false,
     val busy: Boolean = false,
     val message: OnlineMessage? = null,
     val configurationError: String? = null,
-    val lastSyncAtMillis: Long? = null,
-    val isStale: Boolean = false,
+    val sync: Map<OnlineResource, OnlineSyncStatus> = emptyMap(),
     val products: List<OnlineProduct> = emptyList(),
     val cart: Map<Long, Int> = emptyMap(),
+    val pendingOrder: PendingOnlineOrder? = null,
     val orders: List<OnlineOrder> = emptyList(),
     val vehicles: List<OnlineVehicle> = emptyList(),
     val appointments: List<OnlineAppointment> = emptyList(),
     val maintenance: List<OnlineMaintenance> = emptyList()
-)
+) {
+    fun syncStatus(resource: OnlineResource): OnlineSyncStatus = sync[resource] ?: OnlineSyncStatus()
+
+    internal fun checkoutItems(selection: Map<Long, Int>, expectedRequestId: String?): Map<Long, Int> {
+        if (pendingOrder?.requestId != expectedRequestId) {
+            throw OnlineInputError("El estado de tu envío cambió. Revisa el carrito y Mis pedidos.")
+        }
+        if (pendingOrder == null && cart != selection) {
+            throw OnlineInputError("Tu carrito cambió. Revísalo antes de enviar el pedido.")
+        }
+        return pendingOrder?.items ?: selection
+    }
+}
 
 data class OnlineProduct(
     val id: Long,

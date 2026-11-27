@@ -14,8 +14,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -40,7 +41,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private val imageMemory = object : LruCache<String, ByteArray>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ByteArray): Int = value.size
     }
-    private val pendingOrders = mutableMapOf<Map<Long, Int>, String>()
     private val pendingAppointments = mutableMapOf<Booking, String>()
     private var catalogCacheLoaded = false
     private var restoreAllowed = true
@@ -48,7 +48,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(
         OnlineState(
-            loading = api != null,
             cart = cartStore?.read().orEmpty(),
             configurationError = if (api == null) "Configura una URL HTTPS válida para el servidor de EdMotor." else null
         )
@@ -110,16 +109,30 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     fun refresh() {
         if (api == null || _state.value.busy || refreshJob?.isActive == true) return
         refreshJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
-            if (!requests.tryLock()) return@launch
-            try {
-                loadCatalogCache()
-                val current = liveSession ?: if (restoreAllowed) restoreSession() else null
-                if (current == null) refreshPublicCatalog() else refreshSession(current)
-            } finally {
-                requests.unlock()
+            refreshReads()
+            val retrying = _state.value.sync.filterValues { it.retrying }.keys
+            if (retrying.isNotEmpty()) {
+                delay(2_000)
+                refreshReads(retrying)
             }
         }
         refreshJob?.start()
+    }
+
+    private suspend fun refreshReads(only: Set<OnlineResource>? = null) {
+        if (_state.value.busy || !requests.tryLock()) return
+        try {
+            loadCatalogCache()
+            val existing = liveSession
+            val session = existing ?: if (restoreAllowed) restoreSession() else null
+            if (session == null) {
+                refreshPublicCatalog()
+            } else {
+                refreshSession(session, if (existing == null || only == null) OnlineResource.entries.toSet() else only)
+            }
+        } finally {
+            requests.unlock()
+        }
     }
 
     private suspend fun restoreSession(): LiveSession? {
@@ -137,10 +150,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
             throw error
         } catch (error: Exception) {
             if (unauthorized(error)) expireSession()
-            else {
-                val warning = OnlineMessage(onlineError(error), true)
-                _state.update { it.copy(message = warning, isStale = true) }
-            }
             closeErrorResponse(error)
             null
         }
@@ -151,14 +160,19 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         return LiveSession("Bearer $token", user)
     }
 
-    private fun openSession(session: LiveSession) {
+    private suspend fun openSession(session: LiveSession) {
+        val clientId = session.user.id
+        val (cart, pending) = if (session.user.role == UserRole.CLIENT.name) {
+            withContext(Dispatchers.IO) {
+                requireNotNull(cartStore).let { store ->
+                    store.moveGuestCartTo(clientId) to store.pendingOrder(clientId)
+                }
+            }
+        } else emptyMap<Long, Int>() to null
         resetSession()
         restoreAllowed = true
         liveSession = session
-        val cart = if (session.user.role == UserRole.CLIENT.name) {
-            cartStore?.moveGuestCartTo(session.user.id).orEmpty()
-        } else emptyMap()
-        _state.update { it.copy(user = session.user, cart = cart, loading = true) }
+        _state.update { it.copy(user = session.user, cart = cart, pendingOrder = pending) }
     }
 
     private suspend fun loadCatalogCache() {
@@ -170,66 +184,61 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun refreshPublicCatalog() {
-        val result = capture { requireNotNull(api).service.products() }
-        closeErrorResponse(result.exceptionOrNull())
-        val refreshed = storeCatalog(result.getOrNull())
-        _state.update { current ->
-            current.copy(
-                products = refreshed ?: current.products,
-                loading = false,
-                isStale = result.isFailure,
-                lastSyncAtMillis = if (result.isSuccess) System.currentTimeMillis() else current.lastSyncAtMillis
-            )
+        refreshResource(OnlineResource.CATALOG, { storeCatalog(requireNotNull(api).service.products()) }) {
+            copy(products = it)
         }
     }
 
-    private suspend fun storeCatalog(products: List<OnlineProduct>?): List<OnlineProduct>? {
-        val sorted = products?.sortedForCatalog() ?: return null
+    private suspend fun storeCatalog(products: List<OnlineProduct>): List<OnlineProduct> {
+        val sorted = products.sortedForCatalog()
         val project = requireNotNull(api).project
         capture { catalogDatabase.catalog().replace(project, sorted.map { it.toCache(project) }) }
         catalogCacheLoaded = true
         return sorted
     }
 
-    private suspend fun refreshSession(session: LiveSession) = coroutineScope {
-        val connection = requireNotNull(api)
-        val service = connection.service
-        _state.update { current -> current.copy(loading = current.lastSyncAtMillis == null) }
+    private suspend fun refreshSession(session: LiveSession, resources: Set<OnlineResource>) {
+        val service = requireNotNull(api).service
         try {
-            val products = async { capture { service.products(session.auth) } }
-            val orders = async { capture { service.orders(session.auth) } }
-            val vehicles = async { capture { service.vehicles(session.auth) } }
-            val appointments = async { capture { service.appointments(session.auth) } }
-            val maintenance = async { capture { service.maintenance(session.auth) } }
-            val productResult = products.await()
-            val orderResult = orders.await()
-            val vehicleResult = vehicles.await()
-            val appointmentResult = appointments.await()
-            val maintenanceResult = maintenance.await()
-            val results = listOf(productResult, orderResult, vehicleResult, appointmentResult, maintenanceResult)
-            val errors = results.mapNotNull { it.exceptionOrNull() }
-            errors.forEach(::closeErrorResponse)
-            if (errors.any(::unauthorized)) {
-                expireSession()
-                refreshPublicCatalog()
-                return@coroutineScope
+            coroutineScope {
+                if (OnlineResource.CATALOG in resources) launch {
+                    refreshResource(OnlineResource.CATALOG, { storeCatalog(service.products(session.auth)) }) {
+                        copy(products = it)
+                    }
+                }
+                if (OnlineResource.ORDERS in resources) launch {
+                    refreshResource(OnlineResource.ORDERS, { service.orders(session.auth) }) { copy(orders = it) }
+                    recoverPendingOrder(service, session)
+                }
+                if (OnlineResource.VEHICLES in resources) launch {
+                    refreshResource(OnlineResource.VEHICLES, { service.vehicles(session.auth) }) { copy(vehicles = it) }
+                }
+                if (OnlineResource.APPOINTMENTS in resources) launch {
+                    refreshResource(OnlineResource.APPOINTMENTS, { service.appointments(session.auth) }) { copy(appointments = it) }
+                }
+                if (OnlineResource.MAINTENANCE in resources) launch {
+                    refreshResource(OnlineResource.MAINTENANCE, { service.maintenance(session.auth) }) { copy(maintenance = it) }
+                }
             }
-            if (liveSession !== session) return@coroutineScope
+        } catch (error: HttpException) {
+            if (!unauthorized(error)) throw error
+            expireSession()
+            refreshPublicCatalog()
+        }
+    }
 
-            val refreshedProducts = storeCatalog(productResult.getOrNull())
-            _state.update { current ->
-                current.copy(
-                    products = refreshedProducts ?: current.products,
-                    orders = orderResult.getOrNull() ?: current.orders,
-                    vehicles = vehicleResult.getOrNull() ?: current.vehicles,
-                    appointments = appointmentResult.getOrNull() ?: current.appointments,
-                    maintenance = maintenanceResult.getOrNull() ?: current.maintenance,
-                    isStale = errors.isNotEmpty(),
-                    lastSyncAtMillis = if (errors.isEmpty()) System.currentTimeMillis() else current.lastSyncAtMillis
-                )
-            }
-        } finally {
-            _state.update { it.copy(loading = false) }
+    private suspend fun <T : Any> refreshResource(
+        resource: OnlineResource,
+        fetch: suspend () -> T,
+        adopt: OnlineState.(T) -> OnlineState
+    ) {
+        val result = capture(fetch)
+        val failure = result.exceptionOrNull()
+        closeErrorResponse(failure)
+        if (failure is HttpException && unauthorized(failure) && liveSession != null) throw failure
+        _state.update { current ->
+            val updated = result.getOrNull()?.let { current.adopt(it) } ?: current
+            updated.copy(sync = current.sync + (resource to current.syncStatus(resource).result(result.isSuccess)))
         }
     }
 
@@ -283,7 +292,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun changeCartQuantity(productId: Long, quantity: Int) {
         val current = _state.value
-        if (current.busy || current.user?.role == UserRole.WORKSHOP.name) return
+        if (current.busy || current.pendingOrder != null || current.user?.role == UserRole.WORKSHOP.name) return
         val stock = current.products.firstOrNull { it.id == productId }?.stock ?: current.cart[productId] ?: 0
         val count = quantity.coerceIn(0, stock.coerceAtLeast(0))
         updateCart(if (count == 0) current.cart - productId else current.cart + (productId to count))
@@ -294,17 +303,65 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(cart = cart) }
     }
 
-    fun createOrder(items: Map<Long, Int>, onCreated: () -> Unit = {}) {
+    fun createOrder(items: Map<Long, Int>, expectedRequestId: String?, onCreated: () -> Unit = {}) {
         val selection = items.toMap()
         mutate("Pedido enviado.", onCreated) { service, auth ->
-            if (selection.isEmpty() || selection.any { (id, count) -> id <= 0 || count <= 0 }) {
+            val client = requireSession().user
+            if (client.role != UserRole.CLIENT.name) throw OnlineInputError("Entra con tu perfil de cliente para enviar el pedido.")
+            val selected = _state.value.checkoutItems(selection, expectedRequestId)
+            if (selected.isEmpty() || selected.size > 100 || selected.any { (id, count) -> id <= 0 || count <= 0 }) {
                 throw OnlineInputError("Agrega repuestos válidos al carrito.")
             }
-            val order = sendOnce(pendingOrders, selection) { requestId ->
-                service.createOrder(auth, OnlineOrderWrite(requestId, selection.map { (id, count) -> OnlineOrderLine(id, count) }))
+            val store = requireNotNull(cartStore)
+            val pending = withContext(Dispatchers.IO) {
+                if (store.pendingOrder(client.id)?.requestId != expectedRequestId) {
+                    throw OnlineInputError("El estado de tu envío cambió. Revisa el carrito y Mis pedidos.")
+                }
+                store.prepareOrder(client.id, selected)
             }
-            updateCart(emptyMap())
-            _state.update { it.copy(orders = it.orders.withItem(order, OnlineOrder::id).sortedByDescending { row -> row.createdAtMillis }) }
+            _state.update { it.copy(pendingOrder = pending) }
+            val order = try {
+                service.createOrder(
+                    auth,
+                    OnlineOrderWrite(pending.requestId, pending.items.map { (id, count) -> OnlineOrderLine(id, count) })
+                )
+            } catch (error: HttpException) {
+                if (error.response()?.headers()?.get("EdMotor-Order-Result") == "rejected") {
+                    withContext(Dispatchers.IO) { store.discardOrder(client.id, pending) }
+                    _state.update { it.copy(pendingOrder = null) }
+                }
+                throw error
+            }
+            acknowledgeOrder(client.id, pending, order)
+        }
+    }
+
+    private suspend fun recoverPendingOrder(service: OnlineService, session: LiveSession) {
+        val pending = _state.value.pendingOrder ?: return
+        val result = capture { service.orderByRequest(session.auth, pending.requestId) }
+        val error = result.exceptionOrNull()
+        closeErrorResponse(error)
+        if (error is HttpException && unauthorized(error)) throw error
+        val order = result.getOrNull() ?: return
+        if (capture { acknowledgeOrder(session.user.id, pending, order) }.isSuccess) {
+            showMessage("Encontramos tu pedido #${order.id}. Puedes seguirlo en Mis pedidos.", false)
+        }
+    }
+
+    private suspend fun acknowledgeOrder(clientId: Long, pending: PendingOnlineOrder, order: OnlineOrder) {
+        if (order.items.associate { it.productId to it.quantity } != pending.items) {
+            throw OnlineInputError("Aún estamos verificando tu pedido. Conservamos los repuestos del envío.")
+        }
+        // A foreground action can cancel background recovery. Keep the disk update and visible cart together.
+        withContext(NonCancellable) {
+            val cart = withContext(Dispatchers.IO) { requireNotNull(cartStore).acknowledgeOrder(clientId, pending) }
+            _state.update {
+                it.copy(
+                    cart = cart,
+                    pendingOrder = null,
+                    orders = it.orders.withItem(order, OnlineOrder::id).sortedByDescending { row -> row.createdAtMillis }
+                )
+            }
         }
     }
 
@@ -376,8 +433,9 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                         if (unauthorized(error) && liveSession != null) expireSession()
                         else showMessage(onlineError(error), true)
                         closeErrorResponse(error)
-                        needsRefresh = liveSession != null && (error as? HttpException)?.code() in setOf(404, 409, 410)
-                        if (error is IOException && liveSession != null) _state.update { it.copy(isStale = true) }
+                        needsRefresh = liveSession != null && (
+                            _state.value.pendingOrder != null || (error as? HttpException)?.code() in setOf(404, 409, 410)
+                        )
                         null
                     }
                 }
@@ -385,7 +443,9 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(busy = false) }
             }
             completion?.invoke()
-            if (needsRefresh || (completion == null && _state.value.loading)) refresh()
+            if (needsRefresh || (completion == null && _state.value.syncStatus(OnlineResource.CATALOG).waitingForFirstData)) {
+                refresh()
+            }
         }
     }
 
@@ -431,7 +491,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun resetSession() {
         liveSession = null
         imageMemory.evictAll()
-        pendingOrders.clear()
         pendingAppointments.clear()
         val guestCart = cartStore?.read().orEmpty()
         _state.update {
@@ -440,7 +499,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                 configurationError = it.configurationError,
                 products = it.products,
                 cart = guestCart,
-                isStale = it.isStale
+                sync = mapOf(OnlineResource.CATALOG to it.syncStatus(OnlineResource.CATALOG))
             )
         }
     }

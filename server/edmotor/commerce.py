@@ -38,6 +38,7 @@ PositiveLong = Annotated[StrictInt, Field(gt=0, le=MAX_BIGINT)]
 _PRODUCT_FIELDS = "id, version, name, description, category, price_cop, promotion_price_cop, stock, image_id"
 _ORDER_FIELDS = "id, status, client_name, total_cop, created_at"
 _ORDER_ITEM_FIELDS = "order_id, product_id, product_name, quantity, unit_price_cop"
+_ORDER_REJECTED = {"EdMotor-Order-Result": "rejected"}
 
 
 class CommerceBody(BaseModel):
@@ -350,6 +351,21 @@ def list_orders(db: Db, user: User) -> list[dict]:
     return [order_dto(row, items[row["id"]]) for row in rows]
 
 
+def find_order_by_request(db: Connection, client_id: int, request_id: UUID) -> dict | None:
+    return db.execute(
+        f"SELECT {_ORDER_FIELDS} FROM orders WHERE client_user_id = %s AND request_id = %s",
+        (client_id, request_id),
+    ).fetchone()
+
+
+@router.get("/orders/requests/{request_id}")
+def get_order_by_request(request_id: UUID, db: Db, user: User) -> dict:
+    order = find_order_by_request(db, user["id"], request_id)
+    if order is None:
+        raise HTTPException(404, "No encontramos un pedido para esta solicitud.")
+    return order_dto(order, read_order_items(db, [order["id"]]))
+
+
 @router.post("/orders", status_code=status.HTTP_201_CREATED)
 def create_order(body: OrderRequest, db: Db, user: User) -> dict:
     if user["role"] != "CLIENT":
@@ -361,10 +377,7 @@ def create_order(body: OrderRequest, db: Db, user: User) -> dict:
     with db.transaction():
         # Serialize submissions from this client to make retries safe across workers.
         db.execute("SELECT id FROM users WHERE id = %s FOR NO KEY UPDATE", (user["id"],)).fetchone()
-        previous = db.execute(
-            f"SELECT {_ORDER_FIELDS} FROM orders WHERE client_user_id = %s AND request_id = %s",
-            (user["id"], body.request_id),
-        ).fetchone()
+        previous = find_order_by_request(db, user["id"], body.request_id)
         if previous is not None:
             items = read_order_items(db, [previous["id"]])
             if quantities != {item["product_id"]: item["quantity"] for item in items}:
@@ -376,10 +389,10 @@ def create_order(body: OrderRequest, db: Db, user: User) -> dict:
             (list(quantities),),
         ).fetchall()
         if len(products) != len(quantities) or any(row["stock"] < quantities[row["id"]] for row in products):
-            raise HTTPException(409, "Cambió la disponibilidad. Revisa los repuestos del carrito.")
+            raise HTTPException(409, "Cambió la disponibilidad. Revisa los repuestos del carrito.", headers=_ORDER_REJECTED)
         total_cop = sum(row["unit_price"] * quantities[row["id"]] for row in products)
         if total_cop > MAX_BIGINT:
-            raise HTTPException(422, "El total del pedido se pasa del límite. Reduce las cantidades.")
+            raise HTTPException(422, "El total del pedido se pasa del límite. Reduce las cantidades.", headers=_ORDER_REJECTED)
         order = db.execute(
             f"""INSERT INTO orders (client_user_id, request_id, client_name, total_cop)
                 VALUES (%s, %s, %s, %s) RETURNING {_ORDER_FIELDS}""",

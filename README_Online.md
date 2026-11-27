@@ -2,7 +2,11 @@
 
 `onlineDebug` y `onlineRelease` usan la API REST de `server/`. PostgreSQL guarda cuentas, vehículos, citas, repuestos, fotos, pedidos y el informe de cada cita terminada. Android usa Retrofit para intercambiar JSON y Room para conservar una copia local del catálogo. La app vuelve a consultar el servidor al abrirse, después de guardar un cambio y cada 20 segundos mientras está en pantalla.
 
+Si una lectura falla, EdMotor conserva los datos recibidos y vuelve a intentar la consulta. Los avisos de actualización corresponden a los datos que usa cada pantalla.
+
 Al abrir la app se puede explorar el catálogo, ver fotos, consultar Testigos y añadir repuestos al carrito como invitado. El perfil de la barra superior permite iniciar sesión o crear una cuenta. Al continuar una compra o solicitar una cita, la app pide el perfil de cliente y vuelve a la pantalla correspondiente. El carrito del invitado pasa a la cuenta en ese teléfono. El pedido se envía cuando el cliente confirma.
+
+EdMotor guarda cada envío de pedido en el teléfono antes de contactar al servidor. Si se pierde la respuesta, conserva el envío aunque cierres la app. Al volver a abrirla consulta si el servidor ya registró el pedido. Si el carrito muestra **Pedido por verificar**, **Reintentar envío** usa el mismo identificador y los mismos repuestos.
 
 El servidor permite la lectura pública de los repuestos activos y sus fotos. Comprueba la sesión y el rol para pedidos, citas, vehículos y cambios de inventario. El dueño administra repuestos, pedidos y citas. El cliente registra sus vehículos y consulta sus propios pedidos, citas e informes. El inventario se descuenta al confirmar el pedido. Cada cliente puede tener una sola cita activa y clientes distintos pueden reservar a la misma hora. La agenda usa la hora del taller en Colombia.
 

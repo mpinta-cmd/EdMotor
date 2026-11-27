@@ -149,9 +149,15 @@ class SharedWorkflows(unittest.TestCase):
         self.assertTrue(self.call("GET", image_path).startswith(b"RIFF"))
 
         order_data = {"requestId": str(uuid4()), "items": [{"productId": product["id"], "quantity": 1}]}
+        request_path = f"/orders/requests/{order_data['requestId']}"
         self.call("POST", "/orders", body=order_data, expected=401)
         self.call("GET", "/orders", expected=401)
+        self.call("GET", request_path, expected=401)
+        self.call("GET", request_path, first, expected=404)
         first_order = self.call("POST", "/orders", first, body=order_data, expected=201)
+        self.assertEqual(self.call("GET", request_path, first), first_order)
+        self.call("GET", request_path, second, expected=404)
+        self.call("GET", request_path, self.owner, expected=404)
         self.assertEqual(first_order, self.call("POST", "/orders", first, body=order_data, expected=201))
         second_order = self.call("POST", "/orders", second, body={**order_data, "requestId": str(uuid4())}, expected=201)
         self.assertEqual(self.call("GET", "/orders", first), [first_order])
@@ -169,6 +175,17 @@ class SharedWorkflows(unittest.TestCase):
                                    body=decision), confirmed_order)
         latest = next(item for item in self.call("GET", "/products", second) if item["id"] == product["id"])
         self.assertEqual(latest["stock"], 0)
+        with self.assertRaises(HTTPError) as rejection:
+            urlopen(Request(
+                self.base_url + "/orders", method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer " + first},
+                data=json.dumps({**order_data, "requestId": str(uuid4())}).encode(),
+            ), timeout=15)
+        with rejection.exception as response:
+            self.assertEqual(response.code, 409)
+            self.assertEqual(response.headers.get("EdMotor-Order-Result"), "rejected")
+        replay = self.call("GET", request_path, first)
+        self.assertEqual(replay["id"], first_order["id"])
         path = f"/products/{product['id']}"
         self.call("PUT", path, self.owner, body={**product_data, "version": product["version"]}, expected=409)
         self.call("DELETE", f"{path}?version={latest['version']}", self.owner, expected=204)

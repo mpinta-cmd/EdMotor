@@ -2,15 +2,21 @@ package com.example.edmotor.online
 
 import com.google.gson.JsonParser
 import java.io.ByteArrayOutputStream
+import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okhttp3.ResponseBody
 import okio.BufferedSink
 import retrofit2.HttpException
@@ -69,6 +75,11 @@ internal interface OnlineService {
 
     @GET("orders")
     suspend fun orders(@Header("Authorization") auth: String): List<OnlineOrder>
+
+    @GET("orders/requests/{requestId}")
+    suspend fun orderByRequest(
+        @Header("Authorization") auth: String, @Path("requestId") requestId: String
+    ): OnlineOrder
 
     @POST("orders")
     suspend fun createOrder(@Header("Authorization") auth: String, @Body body: OnlineOrderWrite): OnlineOrder
@@ -140,6 +151,8 @@ internal class OnlineApi private constructor(val project: String, val service: O
                             override fun isOneShot() = true
                         }
                         chain.proceed(request.newBuilder().method(request.method, oneShot).build())
+                    } else if (request.method == "GET") {
+                        chain.readWithRetry(request)
                     } else {
                         chain.proceed(request)
                     }
@@ -152,6 +165,27 @@ internal class OnlineApi private constructor(val project: String, val service: O
         }
     }
 }
+
+private val transientReadStatusCodes = setOf(502, 503, 504)
+
+private fun Interceptor.Chain.readWithRetry(request: Request): Response {
+    val response = try {
+        proceed(request)
+    } catch (error: IOException) {
+        if (call().isCanceled() || !error.isTransientReadFailure()) throw error
+        return proceed(request)
+    }
+    if (response.code !in transientReadStatusCodes || response.header("Retry-After") != null ||
+        response.priorResponse != null || call().isCanceled()
+    ) return response
+
+    response.close()
+    return proceed(request)
+}
+
+private fun IOException.isTransientReadFailure(): Boolean =
+    this is EOFException || this is SocketException || this is SocketTimeoutException ||
+        cause is EOFException
 
 private val productImagePath = Regex("/api/v1/products/images/([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})")
 
