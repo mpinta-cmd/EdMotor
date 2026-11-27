@@ -94,6 +94,16 @@ internal interface OnlineService {
         @Header("Authorization") auth: String, @Path("id") id: Long, @Body body: OnlineOrderDecision
     ): OnlineOrder
 
+    @GET("ratings/eligible")
+    suspend fun eligibleRatings(@Header("Authorization") auth: String): List<OnlineRatingItem>
+
+    @PUT("products/{id}/rating")
+    suspend fun rateProduct(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+        @Body body: OnlineRatingWrite
+    ): OnlineRatingResult
+
     @GET("vehicles")
     suspend fun vehicles(@Header("Authorization") auth: String): List<OnlineVehicle>
 

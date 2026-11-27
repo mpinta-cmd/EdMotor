@@ -1,18 +1,21 @@
 package com.example.edmotor.online
 
 import androidx.room.Dao
+import androidx.room.ColumnInfo
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 data class OnlineUser(val id: Long, val username: String, val displayName: String, val role: String)
 
 data class OnlineMessage(val text: String, val isError: Boolean)
 
-enum class OnlineResource { CATALOG, ORDERS, VEHICLES, APPOINTMENTS, MAINTENANCE }
+enum class OnlineResource { CATALOG, ORDERS, VEHICLES, APPOINTMENTS, MAINTENANCE, RATINGS }
 
 data class OnlineSyncStatus(val loaded: Boolean = false, val failures: Int = 0) {
     val retrying: Boolean get() = failures == 1
@@ -34,6 +37,7 @@ data class OnlineState(
     val pendingOrder: PendingOnlineOrder? = null,
     val checkoutReceiptId: Long? = null,
     val orders: List<OnlineOrder> = emptyList(),
+    val eligibleRatings: List<OnlineRatingItem> = emptyList(),
     val vehicles: List<OnlineVehicle> = emptyList(),
     val appointments: List<OnlineAppointment> = emptyList(),
     val maintenance: List<OnlineMaintenance> = emptyList()
@@ -60,7 +64,24 @@ data class OnlineProduct(
     val priceCop: Long,
     val promotionPriceCop: Long?,
     val stock: Int,
-    val imagePath: String?
+    val imagePath: String?,
+    val averageRating: Double? = null,
+    val ratingCount: Long = 0
+)
+
+data class OnlineRatingItem(
+    val productId: Long,
+    val productName: String,
+    val imagePath: String?,
+    val deliveredAtMillis: Long,
+    val myRating: Int?
+)
+
+internal data class OnlineRatingResult(
+    val productId: Long,
+    val myRating: Int,
+    val averageRating: Double?,
+    val ratingCount: Long
 )
 
 data class OnlineProductDraft(
@@ -148,6 +169,7 @@ internal data class OnlineOrderWrite(val requestId: String, val items: List<Onli
 internal data class OnlineCheckoutWrite(val requestId: String, val items: List<OnlineOrderLine>, val expectedTotalCop: Long)
 internal data class OnlineOrderLine(val productId: Long, val quantity: Int)
 internal data class OnlineOrderDecision(val status: String)
+internal data class OnlineRatingWrite(val stars: Int)
 internal data class OnlineVehicleWrite(val brand: String, val model: String, val year: Int, val plate: String)
 internal data class OnlineAppointmentWrite(
     val requestId: String,
@@ -170,13 +192,17 @@ internal data class OnlineProductCacheEntity(
     val priceCop: Long,
     val promotionPriceCop: Long?,
     val stock: Int,
-    val imagePath: String?
+    val imagePath: String?,
+    val averageRating: Double?,
+    @ColumnInfo(defaultValue = "0") val ratingCount: Long
 ) {
-    fun toModel() = OnlineProduct(id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath)
+    fun toModel() = OnlineProduct(
+        id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath, averageRating, ratingCount
+    )
 }
 
 internal fun OnlineProduct.toCache(project: String) = OnlineProductCacheEntity(
-    project, id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath
+    project, id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath, averageRating, ratingCount
 )
 
 @Dao
@@ -199,7 +225,16 @@ internal abstract class OnlineCatalogDao {
     }
 }
 
-@Database(entities = [OnlineProductCacheEntity::class], version = 1, exportSchema = false)
+@Database(entities = [OnlineProductCacheEntity::class], version = 2, exportSchema = false)
 internal abstract class OnlineCatalogDatabase : RoomDatabase() {
     abstract fun catalog(): OnlineCatalogDao
+
+    companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE online_catalog ADD COLUMN averageRating REAL")
+                db.execSQL("ALTER TABLE online_catalog ADD COLUMN ratingCount INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+    }
 }

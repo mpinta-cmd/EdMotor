@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
-from .auth import Bearer, WORKSHOP, require_owner, require_user
+from .auth import Bearer, CLIENT, WORKSHOP, require_owner, require_user
 from .db import get_db
 
 router = APIRouter(tags=["inventario y pedidos"])
@@ -42,6 +42,15 @@ _ORDER_REJECTED = {"EdMotor-Order-Result": "rejected"}
 PAY_ON_PICKUP = "PAY_ON_PICKUP"
 
 
+def require_rating_client(user: User) -> dict:
+    if user["role"] != CLIENT:
+        raise HTTPException(403, "Solo la cuenta de cliente puede calificar repuestos.")
+    return user
+
+
+RatingClient = Annotated[dict, Depends(require_rating_client)]
+
+
 class CommerceBody(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, extra="forbid", str_strip_whitespace=True)
 
@@ -58,6 +67,10 @@ class ProductDraft(CommerceBody):
 
 class ProductEdit(ProductDraft):
     version: PositiveLong
+
+
+class ProductRatingWrite(CommerceBody):
+    stars: StrictInt = Field(ge=1, le=5)
 
 
 class OrderLineRequest(CommerceBody):
@@ -78,14 +91,32 @@ class OrderDecision(CommerceBody):
     status: Literal["CONFIRMED", "REJECTED", "COMPLETED"]
 
 
-def product_dto(row: dict) -> dict:
+def product_dto(row: dict, rating: dict | None = None) -> dict:
     return {
         "id": row["id"], "version": row["version"], "name": row["name"],
         "description": row["description"], "category": row["category"],
         "priceCop": row["price_cop"], "promotionPriceCop": row["promotion_price_cop"],
         "stock": row["stock"],
         "imagePath": f"{IMAGE_PREFIX}{row['image_id']}" if row["image_id"] else None,
+        "averageRating": rating["average_rating"] if rating else None,
+        "ratingCount": rating["rating_count"] if rating else 0,
     }
+
+
+def product_rating_totals(db: Connection, product_ids: list[int]) -> dict[int, dict]:
+    rows = db.execute(
+        """SELECT product_id, avg(stars)::double precision AS average_rating, count(*) AS rating_count
+           FROM product_ratings WHERE product_id = ANY(%s::bigint[]) GROUP BY product_id""",
+        (product_ids,),
+    ).fetchall()
+    return {row["product_id"]: row for row in rows}
+
+
+def catalog_product_dtos(db: Connection, rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+    totals = product_rating_totals(db, [row["id"] for row in rows])
+    return [product_dto(row, totals.get(row["id"])) for row in rows]
 
 
 def product_values(db: Connection, body: ProductDraft) -> tuple:
@@ -118,7 +149,7 @@ def list_products(db: Db) -> list[dict]:
         f"""SELECT {_PRODUCT_FIELDS} FROM products WHERE is_active
             ORDER BY (promotion_price_cop IS NOT NULL) DESC, lower(name), id"""
     ).fetchall()
-    return [product_dto(row) for row in rows]
+    return catalog_product_dtos(db, rows)
 
 
 @router.post("/products", status_code=status.HTTP_201_CREATED)
@@ -153,9 +184,76 @@ def update_product(product_id: PositiveId, body: ProductEdit, db: Db, _owner: Ow
             ).fetchone()
             if row is None:
                 product_write_conflict(db, product_id)
+            rating = product_rating_totals(db, [product_id]).get(product_id)
     except UniqueViolation as error:
         raise HTTPException(409, "Ya hay un repuesto con ese nombre en la categoría.") from error
-    return product_dto(row)
+    return product_dto(row, rating)
+
+
+@router.get("/ratings/eligible")
+def list_eligible_ratings(db: Db, client: RatingClient, response: Response) -> list[dict]:
+    rows = db.execute(
+        """SELECT delivered.product_id, delivered.product_name, delivered.delivered_at,
+                  product.image_id, rating.stars
+           FROM (
+               SELECT DISTINCT ON (item.product_id)
+                      item.product_id, item.product_name, placed.reviewed_at AS delivered_at
+               FROM orders placed
+               JOIN order_items item ON item.order_id = placed.id
+               WHERE placed.client_user_id = %s
+                 AND placed.status = 'COMPLETED' AND placed.payment_method = 'PAY_ON_PICKUP'
+               ORDER BY item.product_id, placed.reviewed_at DESC, placed.id DESC
+           ) delivered
+           LEFT JOIN products product ON product.id = delivered.product_id AND product.is_active
+           LEFT JOIN product_ratings rating
+             ON rating.product_id = delivered.product_id AND rating.client_user_id = %s
+           ORDER BY delivered.delivered_at DESC, delivered.product_id""",
+        (client["id"], client["id"]),
+    ).fetchall()
+    response.headers["Cache-Control"] = "private, no-store"
+    return [
+        {
+            "productId": row["product_id"],
+            "productName": row["product_name"],
+            "imagePath": f"{IMAGE_PREFIX}{row['image_id']}" if row["image_id"] else None,
+            "deliveredAtMillis": int(row["delivered_at"].timestamp() * 1000),
+            "myRating": row["stars"],
+        }
+        for row in rows
+    ]
+
+
+@router.put("/products/{product_id}/rating")
+def save_product_rating(
+    product_id: PositiveId, body: ProductRatingWrite, db: Db, client: RatingClient, response: Response
+) -> dict:
+    with db.transaction():
+        delivered = db.execute(
+            """SELECT 1 FROM orders placed
+               JOIN order_items item ON item.order_id = placed.id
+               WHERE placed.client_user_id = %s AND item.product_id = %s
+                 AND placed.status = 'COMPLETED' AND placed.payment_method = 'PAY_ON_PICKUP'
+               LIMIT 1""",
+            (client["id"], product_id),
+        ).fetchone()
+        if delivered is None:
+            raise HTTPException(403, "Puedes calificar este repuesto cuando el pedido quede entregado a tu cuenta.")
+        # Alternate ratings for a product finish in order so the reply includes prior committed votes.
+        db.execute("SELECT id FROM products WHERE id = %s FOR NO KEY UPDATE", (product_id,)).fetchone()
+        db.execute(
+            """INSERT INTO product_ratings (product_id, client_user_id, stars)
+               VALUES (%s, %s, %s)
+               ON CONFLICT (product_id, client_user_id) DO UPDATE SET stars = EXCLUDED.stars""",
+            (product_id, client["id"], body.stars),
+        )
+        rating = product_rating_totals(db, [product_id])[product_id]
+    response.headers["Cache-Control"] = "private, no-store"
+    return {
+        "productId": product_id,
+        "myRating": body.stars,
+        "averageRating": rating["average_rating"],
+        "ratingCount": rating["rating_count"],
+    }
 
 
 def product_write_conflict(db: Connection, product_id: int) -> None:
@@ -348,7 +446,7 @@ def order_with_inventory(db: Connection, order: dict, items: list[dict]) -> dict
         f"SELECT {_PRODUCT_FIELDS} FROM products WHERE is_active AND id = ANY(%s::bigint[]) ORDER BY id",
         ([item["product_id"] for item in items],),
     ).fetchall()
-    return {**order_dto(order, items), "inventoryUpdates": [product_dto(row) for row in products]}
+    return {**order_dto(order, items), "inventoryUpdates": catalog_product_dtos(db, products)}
 
 
 @router.get("/orders")

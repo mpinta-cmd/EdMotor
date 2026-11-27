@@ -34,6 +34,14 @@ El servidor permite la lectura pública de los repuestos activos y sus fotos. Co
 
 Las variantes tienen instalaciones separadas. El servidor en línea comienza con sus propios datos. Crea allí las cuentas y repuestos que quieras usar y registra los vehículos con el perfil correspondiente. Las bases y las cuentas de la práctica siguen accesibles desde sus respectivas variantes.
 
+## Calificar repuestos entregados
+
+1. Desde el taller, marca una compra como lista para recoger y pulsa **Registrar pago y entrega** cuando el cliente reciba los repuestos.
+2. Desde la cuenta del cliente, abre **Calificar** en la barra inferior. Selecciona de 1 a 5 estrellas para cada repuesto recibido y guarda.
+3. Vuelve a **Inicio**. La tarjeta y el detalle del repuesto muestran el promedio de todos los clientes y la cantidad de calificaciones.
+
+Cada cliente tiene una calificación por repuesto y puede editarla desde la misma pestaña. Si compra el mismo repuesto otra vez, se conserva su calificación. EdMotor valida la entrega en el servidor y guarda las estrellas en PostgreSQL.
+
 ## Demostrar el CRUD remoto de Citas
 
 En `onlineDebug`, inicia sesión como cliente y registra un vehículo en **Mi Garaje**. Usa una cuenta de prueba sin citas activas para recorrer estos pasos.

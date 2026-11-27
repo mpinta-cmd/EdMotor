@@ -35,7 +35,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private val cartStore = api?.let { OnlineCartStore(app, it.project) }
     private val catalogDatabase = Room.databaseBuilder(
         app, OnlineCatalogDatabase::class.java, "edmotor_online_catalog.db"
-    ).build()
+    ).addMigrations(OnlineCatalogDatabase.MIGRATION_1_2).build()
     private val requests = Mutex()
     private var refreshJob: Job? = null
     private val imageMemory = object : LruCache<String, ByteArray>(16 * 1024 * 1024) {
@@ -208,6 +208,11 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
                 if (OnlineResource.ORDERS in resources) launch {
                     refreshResource(OnlineResource.ORDERS, { service.orders(session.auth) }) { copy(orders = it) }
+                }
+                if (session.user.role == UserRole.CLIENT.name && OnlineResource.RATINGS in resources) launch {
+                    refreshResource(OnlineResource.RATINGS, { service.eligibleRatings(session.auth) }) {
+                        copy(eligibleRatings = it)
+                    }
                 }
                 if (OnlineResource.VEHICLES in resources) launch {
                     refreshResource(OnlineResource.VEHICLES, { service.vehicles(session.auth) }) { copy(vehicles = it) }
@@ -393,6 +398,36 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
             it.copy(
                 products = products ?: it.products,
                 orders = it.orders.withItem(order, OnlineOrder::id).sortedByDescending { row -> row.createdAtMillis }
+            )
+        }
+    }
+
+    fun rateProduct(productId: Long, stars: Int) = mutateSession("Calificación guardada.") { session ->
+        if (session.user.role != UserRole.CLIENT.name) {
+            throw OnlineInputError("Entra con tu cuenta de cliente para calificar el repuesto.")
+        }
+        if (productId <= 0L || stars !in 1..5) throw OnlineInputError("Elige de 1 a 5 estrellas.")
+        val result = requireNotNull(api).service.rateProduct(session.auth, productId, OnlineRatingWrite(stars))
+        val average = result.averageRating
+        if (result.productId != productId || result.myRating != stars || result.ratingCount < 1L ||
+            average == null || average !in 1.0..5.0
+        ) {
+            throw OnlineInputError("No pudimos verificar la calificación. Actualiza el catálogo para revisar el resultado.")
+        }
+        val catalog = _state.value.products
+        val products = if (catalog.any { it.id == productId }) {
+            storeCatalog(catalog.map { product ->
+                if (product.id == productId) {
+                    product.copy(averageRating = average, ratingCount = result.ratingCount)
+                } else product
+            })
+        } else catalog
+        _state.update { current ->
+            current.copy(
+                products = products,
+                eligibleRatings = current.eligibleRatings.map { item ->
+                    if (item.productId == productId) item.copy(myRating = result.myRating) else item
+                }
             )
         }
     }

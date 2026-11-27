@@ -78,6 +78,17 @@ class SharedWorkflows(unittest.TestCase):
     def catalog_stock(self, *product_ids):
         return {row["id"]: row["stock"] for row in self.call("GET", "/products") if row["id"] in product_ids}
 
+    def pickup_order(self, client, product_id):
+        return self.call("POST", "/orders/checkout", client, body={
+            "requestId": str(uuid4()), "items": [{"productId": product_id, "quantity": 1}],
+            "expectedTotalCop": 15_000,
+        }, expected=201)
+
+    def deliver_pickup(self, order):
+        path = f"/orders/{order['id']}/decision"
+        self.call("POST", path, self.owner, body={"status": "CONFIRMED"})
+        self.call("POST", path, self.owner, body={"status": "COMPLETED"})
+
     def test_appointments_are_shared_and_changes_are_versioned(self):
         client, credentials = self.client()
         second_device = self.call("POST", "/auth/login", body=credentials)["token"]
@@ -313,3 +324,82 @@ class SharedWorkflows(unittest.TestCase):
         self.assertEqual(rejected["status"], "REJECTED")
         self.assertEqual({row["id"]: row["stock"] for row in rejected["inventoryUpdates"]}, {ample_id: 3})
         self.assertEqual(self.catalog_stock(scarce_id, ample_id), {ample_id: 3})
+
+    def test_rating_requires_an_owned_delivery_and_stays_available_for_inactive_products(self):
+        client, _ = self.client()
+        product = self.checkout_product(stock=3)
+        product_id = product["id"]
+        rating_path = f"/products/{product_id}/rating"
+        eligible_path = "/ratings/eligible"
+        self.call("GET", eligible_path, expected=401)
+        self.call("GET", eligible_path, self.owner, expected=403)
+        self.call("PUT", rating_path, body={"stars": 5}, expected=401)
+        self.call("PUT", rating_path, self.owner, body={"stars": 5}, expected=403)
+
+        order = self.pickup_order(client, product_id)
+        self.assertEqual(self.call("GET", eligible_path, client), [])
+        self.call("PUT", rating_path, client, body={"stars": 5}, expected=403)
+        decision_path = f"/orders/{order['id']}/decision"
+        self.call("POST", decision_path, self.owner, body={"status": "CONFIRMED"})
+        self.assertEqual(self.call("GET", eligible_path, client), [])
+        self.call("PUT", rating_path, client, body={"stars": 5}, expected=403)
+        self.call("POST", decision_path, self.owner, body={"status": "COMPLETED"})
+
+        eligible, = self.call("GET", eligible_path, client, expected_header=("Cache-Control", "private, no-store"))
+        self.assertEqual(eligible, {
+            "productId": product_id, "productName": product["name"], "imagePath": None,
+            "deliveredAtMillis": eligible["deliveredAtMillis"], "myRating": None,
+        })
+        self.assertGreater(eligible["deliveredAtMillis"], 0)
+        for invalid in (0, 6, "4", True, 4.5):
+            with self.subTest(invalid=invalid):
+                self.call("PUT", rating_path, client, body={"stars": invalid}, expected=422)
+        rating = self.call("PUT", rating_path, client, body={"stars": 5})
+        self.assertEqual(rating, {"productId": product_id, "myRating": 5, "averageRating": 5.0, "ratingCount": 1})
+
+        self.deliver_pickup(self.pickup_order(client, product_id))
+        second_delivery, = self.call("GET", eligible_path, client)
+        self.assertEqual(second_delivery["myRating"], 5)
+        self.assertGreaterEqual(second_delivery["deliveredAtMillis"], eligible["deliveredAtMillis"])
+
+        current = next(row for row in self.call("GET", "/products") if row["id"] == product_id)
+        self.call("DELETE", f"/products/{product_id}?version={current['version']}", self.owner, expected=204)
+        self.assertNotIn(product_id, self.catalog_stock(product_id))
+        archived, = self.call("GET", eligible_path, client)
+        self.assertEqual(archived["productName"], product["name"])
+        self.assertIsNone(archived["imagePath"])
+        changed = self.call("PUT", rating_path, client, body={"stars": 4})
+        self.assertEqual(changed, {"productId": product_id, "myRating": 4, "averageRating": 4.0, "ratingCount": 1})
+
+    def test_catalog_and_inventory_follow_the_average_of_distinct_buyers(self):
+        first, _ = self.client()
+        second, _ = self.client()
+        product = self.checkout_product(stock=4)
+        product_id = product["id"]
+        rating_path = f"/products/{product_id}/rating"
+        self.assertIsNone(product["averageRating"])
+        self.assertEqual(product["ratingCount"], 0)
+        self.deliver_pickup(self.pickup_order(first, product_id))
+        self.assertEqual(self.call("GET", "/ratings/eligible", second), [])
+        self.call("PUT", rating_path, second, body={"stars": 5}, expected=403)
+        self.deliver_pickup(self.pickup_order(second, product_id))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_vote = pool.submit(self.call, "PUT", rating_path, first, body={"stars": 5})
+            second_vote = pool.submit(self.call, "PUT", rating_path, second, body={"stars": 3})
+        votes = [future.result() for future in (first_vote, second_vote)]
+        self.assertCountEqual([vote["ratingCount"] for vote in votes], [1, 2])
+        self.assertEqual(next(vote for vote in votes if vote["ratingCount"] == 2)["averageRating"], 4.0)
+        self.assertEqual(self.call("GET", "/ratings/eligible", first)[0]["myRating"], 5)
+        self.assertEqual(self.call("GET", "/ratings/eligible", second)[0]["myRating"], 3)
+
+        modified = self.call("PUT", rating_path, first, body={"stars": 4})
+        self.assertEqual(modified, {"productId": product_id, "myRating": 4, "averageRating": 3.5, "ratingCount": 2})
+        self.assertEqual(self.call("PUT", rating_path, first, body={"stars": 4}), modified)
+        inventory, = self.pickup_order(first, product_id)["inventoryUpdates"]
+        self.assertEqual((inventory["averageRating"], inventory["ratingCount"]), (3.5, 2))
+        product_keys = ("name", "description", "category", "priceCop", "promotionPriceCop", "stock", "imagePath", "version")
+        updated = self.call("PUT", f"/products/{product_id}", self.owner, body={
+            **{key: inventory[key] for key in product_keys}, "stock": 2,
+        })
+        self.assertEqual((updated["averageRating"], updated["ratingCount"]), (3.5, 2))
+        self.assertIn(updated, self.call("GET", "/products"))

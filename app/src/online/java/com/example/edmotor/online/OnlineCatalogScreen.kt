@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.AddShoppingCart
@@ -62,6 +63,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +80,7 @@ import com.example.edmotor.ui.components.ProductImagePicker
 import com.example.edmotor.ui.theme.EdMotorPhotoMatte
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.math.RoundingMode
 import java.text.Collator
 import java.text.Normalizer
 import java.text.NumberFormat
@@ -191,6 +195,7 @@ internal fun OnlineCatalogScreen(
                     OnlineProductPhoto(vm, selected.imagePath, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
                     OnlineProductPrice(selected)
                     Text(selected.category, style = MaterialTheme.typography.labelLarge)
+                    OnlineProductRating(selected, detailed = true)
                     if (selected.description.isNotBlank()) Text(selected.description)
                     Text(stockLabel(selected.stock), style = MaterialTheme.typography.bodySmall)
                     if (workshop) {
@@ -289,6 +294,7 @@ private fun OnlineProductCard(
                 overflow = TextOverflow.Ellipsis
             )
             Text(product.category, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            OnlineProductRating(product)
             OnlineProductPrice(product)
             Text(
                 stockLabel(product.stock),
@@ -322,6 +328,36 @@ private fun stockLabel(stock: Int): String = when {
     stock <= 0 -> "Agotado"
     stock == 1 -> "Última unidad"
     else -> "$stock disponibles"
+}
+
+@Composable
+private fun OnlineProductRating(product: OnlineProduct, detailed: Boolean = false) {
+    val average = product.averageRating?.takeIf { it in 1.0..5.0 } ?: return
+    val count = product.ratingCount.takeIf { it > 0L } ?: return
+    val score = remember(average) {
+        NumberFormat.getNumberInstance(localeColombia).apply {
+            minimumFractionDigits = 1
+            maximumFractionDigits = 1
+            roundingMode = RoundingMode.HALF_UP
+        }.format(average)
+    }
+    val quantity = remember(count) { NumberFormat.getIntegerInstance(localeColombia).format(count) }
+    val votes = if (count == 1L) "$quantity calificación" else "$quantity calificaciones"
+    val text = if (detailed) "$score de 5 · $votes" else "$score ($quantity)"
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.clearAndSetSemantics { contentDescription = "$score de 5 estrellas, $votes" },
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Filled.Star, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
 }
 
 @Composable

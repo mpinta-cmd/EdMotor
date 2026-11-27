@@ -100,6 +100,7 @@ private const val PURCHASE_RECEIPT_ROUTE = "compraConfirmada"
 private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     val user = state.user
     val workshop = user?.role == UserRole.WORKSHOP.name
+    val client = user?.role == UserRole.CLIENT.name
     var route by rememberSaveable { mutableStateOf(Routes.HOME) }
     var receiptOrderId by rememberSaveable { mutableStateOf<Long?>(null) }
     var calendarDay by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -109,6 +110,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     val screenState = rememberSaveableStateHolder()
     val cartCount = state.cart.values.sumOf { it.toLong() }
     val activeRoute = when {
+        !client && route == Routes.RATINGS -> Routes.HOME
         workshop && (route == Routes.CAR || route == CHECKOUT_ROUTE || route == PURCHASE_RECEIPT_ROUTE) -> Routes.HOME
         user == null && route == CHECKOUT_ROUTE -> Routes.CAR
         user == null && (route == Routes.ORDER_MANAGEMENT || route == PURCHASE_RECEIPT_ROUTE) -> Routes.PROFILE
@@ -129,6 +131,8 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
         Routes.HOME, Routes.CAR, CHECKOUT_ROUTE -> "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
         Routes.ORDER_MANAGEMENT -> "No pudimos actualizar los pedidos."
             .takeIf { state.syncStatus(OnlineResource.ORDERS).unavailable }
+        Routes.RATINGS -> "No pudimos actualizar los repuestos para calificar."
+            .takeIf { state.syncStatus(OnlineResource.RATINGS).unavailable }
         Routes.PROFILE -> when {
             state.syncStatus(OnlineResource.VEHICLES).unavailable -> "No pudimos actualizar los vehículos."
             state.syncStatus(OnlineResource.MAINTENANCE).unavailable -> "No pudimos actualizar el historial de mantenimiento."
@@ -155,7 +159,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
         profileMenu = false
     }
     LaunchedEffect(activeRoute) {
-        if (activeRoute == Routes.HOME || activeRoute == CHECKOUT_ROUTE) vm.refresh()
+        if (activeRoute in setOf(Routes.HOME, CHECKOUT_ROUTE, Routes.RATINGS)) vm.refresh()
     }
     LaunchedEffect(state.checkoutReceiptId) {
         val orderId = state.checkoutReceiptId ?: return@LaunchedEffect
@@ -300,6 +304,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                 currentRoute = activeRoute,
                 pendingOrderCount = if (workshop) state.orders.count { it.status == "PENDING" } else 0,
                 pendingAppointmentCount = if (workshop) state.appointments.count { it.status == "PENDING" } else 0,
+                showRatings = client,
                 onNavigate = { route = it }
             )
         },
@@ -351,6 +356,11 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                         }
                     }
                     Routes.ORDER_MANAGEMENT -> OnlineOrdersScreen(vm, state)
+                    Routes.RATINGS -> OnlineRatingsScreen(
+                        state,
+                        onRate = vm::rateProduct,
+                        onOpenOrders = { route = Routes.ORDER_MANAGEMENT }
+                    )
                     Routes.CAR -> OnlineCartScreen(
                         vm, state, vm::changeCartQuantity,
                         onCheckout = {

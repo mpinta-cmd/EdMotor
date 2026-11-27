@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -60,12 +61,14 @@ import com.example.edmotor.navigation.Routes
 
 private data class EdMotorTab(val route: String, val label: String, val icon: ImageVector)
 
-private val tabs = listOf(
+private val standardTabs = listOf(
     EdMotorTab(Routes.HOME, "Inicio", Icons.Outlined.Home),
     EdMotorTab(Routes.DASHBOARD, "Testigos", Icons.Outlined.Speed),
     EdMotorTab(Routes.PROFILE, "Mi Garaje", Icons.Outlined.DirectionsCar),
     EdMotorTab(Routes.APPOINTMENTS, "Citas", Icons.Outlined.CalendarMonth)
 )
+
+private val tabsWithRatings = standardTabs + EdMotorTab(Routes.RATINGS, "Calificar", Icons.Outlined.StarBorder)
 
 private val iconSize = 24.dp
 private val tabHorizontalPadding = 4.dp
@@ -81,8 +84,10 @@ fun EdMotorBottomBar(
     currentRoute: String?,
     pendingOrderCount: Int = 0,
     pendingAppointmentCount: Int = 0,
+    showRatings: Boolean = false,
     onNavigate: (String) -> Unit
 ) {
+    val tabs = if (showRatings) tabsWithRatings else standardTabs
     val activeRoute = if (currentRoute == Routes.ORDER_MANAGEMENT) Routes.PROFILE else currentRoute
     val activeIndex = tabs.indexOfFirst { it.route == activeRoute }
     val colors = MaterialTheme.colorScheme
