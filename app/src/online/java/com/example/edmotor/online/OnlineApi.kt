@@ -44,9 +44,6 @@ internal interface OnlineService {
     @POST("auth/register")
     suspend fun register(@Body body: OnlineRegistration): OnlineAuthResponse
 
-    @POST("auth/register-owner")
-    suspend fun registerOwner(@Body body: OnlineOwnerRegistration): OnlineAuthResponse
-
     @GET("auth/me")
     suspend fun me(@Header("Authorization") auth: String): OnlineUser
 

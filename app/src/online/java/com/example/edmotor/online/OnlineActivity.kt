@@ -102,6 +102,8 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     val workshop = user?.role == UserRole.WORKSHOP.name
     val client = user?.role == UserRole.CLIENT.name
     var route by rememberSaveable { mutableStateOf(Routes.HOME) }
+    var detailProductId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var cartReturnsToProduct by rememberSaveable { mutableStateOf(false) }
     var receiptOrderId by rememberSaveable { mutableStateOf<Long?>(null) }
     var calendarDay by rememberSaveable { mutableStateOf<Long?>(null) }
     var accessEntry by rememberSaveable { mutableStateOf<AccessEntry?>(null) }
@@ -111,24 +113,27 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     val cartCount = state.cart.values.sumOf { it.toLong() }
     val activeRoute = when {
         !client && route == Routes.RATINGS -> Routes.HOME
+        route == Routes.PRODUCT_DETAIL && detailProductId == null -> Routes.HOME
         workshop && (route == Routes.CAR || route == CHECKOUT_ROUTE || route == PURCHASE_RECEIPT_ROUTE) -> Routes.HOME
         user == null && route == CHECKOUT_ROUTE -> Routes.CAR
         user == null && (route == Routes.ORDER_MANAGEMENT || route == PURCHASE_RECEIPT_ROUTE) -> Routes.PROFILE
         else -> route
     }
+    val inProductDetail = activeRoute == Routes.PRODUCT_DETAIL
     val ownerSession = vm.inventoryOwnerSession(user?.id)
     val inventoryAccess = if (ownerSession != null) {
         rememberOwnerInventoryAccess(
             sessionIdentity = ownerSession,
             profileScope = vm.onlineProfileScope(user?.id),
-            inventoryOpen = activeRoute == Routes.HOME,
+            inventoryOpen = activeRoute == Routes.HOME || inProductDetail,
             isCurrentSession = vm::isInventoryOwnerSession,
             confirmPassword = vm::confirmInventoryOwnerPassword
         )
     } else null
     val catalogSync = state.syncStatus(OnlineResource.CATALOG)
     val syncNotice = when (activeRoute) {
-        Routes.HOME, Routes.CAR, CHECKOUT_ROUTE -> "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
+        Routes.HOME, Routes.PRODUCT_DETAIL, Routes.CAR, CHECKOUT_ROUTE ->
+            "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
         Routes.ORDER_MANAGEMENT -> "No pudimos actualizar los pedidos."
             .takeIf { state.syncStatus(OnlineResource.ORDERS).unavailable }
         Routes.RATINGS -> "No pudimos actualizar los repuestos para calificar."
@@ -146,6 +151,11 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     fun openAccess(entry: AccessEntry) {
         vm.clearMessage()
         accessEntry = entry
+    }
+
+    fun openCart(fromProductDetail: Boolean = false) {
+        cartReturnsToProduct = fromProductDetail
+        route = Routes.CAR
     }
 
     LaunchedEffect(user?.id) {
@@ -197,8 +207,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                 vm.clearMessage()
                 if (entry == AccessEntry.CART) route = Routes.CAR
                 accessEntry = null
-            },
-            onRegisterOnlineOwner = vm::registerOwner
+            }
         )
         return
     }
@@ -206,6 +215,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     BackHandler(activeRoute != Routes.HOME) {
         route = when (activeRoute) {
             CHECKOUT_ROUTE -> Routes.CAR
+            Routes.CAR -> if (cartReturnsToProduct && detailProductId != null) Routes.PRODUCT_DETAIL else Routes.HOME
             PURCHASE_RECEIPT_ROUTE -> Routes.ORDER_MANAGEMENT
             Routes.ORDER_MANAGEMENT -> Routes.PROFILE
             else -> Routes.HOME
@@ -214,7 +224,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (!inProductDetail) TopAppBar(
                 title = {
                     Column {
                         Text(
@@ -234,7 +244,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                 },
                 actions = {
                     if (!workshop) {
-                        IconButton(onClick = { route = Routes.CAR }) {
+                        IconButton(onClick = { openCart() }) {
                             BadgedBox(badge = {
                                 if (cartCount > 0) Badge { Text(if (cartCount > 99) "99+" else cartCount.toString()) }
                             }) {
@@ -300,7 +310,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
             )
         },
         bottomBar = {
-            EdMotorBottomBar(
+            if (!inProductDetail) EdMotorBottomBar(
                 currentRoute = activeRoute,
                 pendingOrderCount = if (workshop) state.orders.count { it.status == "PENDING" } else 0,
                 pendingAppointmentCount = if (workshop) state.appointments.count { it.status == "PENDING" } else 0,
@@ -322,7 +332,8 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                 }
             }
             Box(Modifier.weight(1f).fillMaxSize()) {
-                screenState.SaveableStateProvider("${user?.id ?: "guest"}:$activeRoute") { when (activeRoute) {
+                val screenKey = if (inProductDetail) "$activeRoute:$detailProductId" else activeRoute
+                screenState.SaveableStateProvider("${user?.id ?: "guest"}:$screenKey") { when (activeRoute) {
                     Routes.DASHBOARD -> DashboardScreen(
                         evidenceScope = vm.onlineProfileScope(user?.id),
                         vehicles = if (user == null) emptyList() else state.vehicles
@@ -361,6 +372,17 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                         onRate = vm::rateProduct,
                         onOpenOrders = { route = Routes.ORDER_MANAGEMENT }
                     )
+                    Routes.PRODUCT_DETAIL -> when {
+                        workshop && inventoryAccess == null -> OnlineConnectionNotice("Verificando el perfil del dueño…", working = true)
+                        inventoryAccess?.locked == true -> OwnerInventoryLockedScreen(inventoryAccess)
+                        else -> OnlineProductDetailScreen(
+                            vm = vm,
+                            state = state,
+                            productId = requireNotNull(detailProductId),
+                            onBack = { route = Routes.HOME },
+                            onOpenCart = { openCart(fromProductDetail = true) }
+                        )
+                    }
                     Routes.CAR -> OnlineCartScreen(
                         vm, state, vm::changeCartQuantity,
                         onCheckout = {
@@ -416,7 +438,11 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                                 onToggleFavorite = vm::toggleFavorite,
                                 voiceSearch = voiceSearch,
                                 onOpenAppointments = { route = Routes.APPOINTMENTS },
-                                onReviewOrder = { route = Routes.CAR }
+                                onReviewOrder = { openCart() },
+                                onOpenProduct = { productId ->
+                                    detailProductId = productId
+                                    route = Routes.PRODUCT_DETAIL
+                                }
                             )
                         }
                     }

@@ -147,12 +147,6 @@ data class OnlineMaintenance(
 
 internal class OnlineCredentials(val username: String, val password: String)
 internal class OnlineRegistration(val username: String, val displayName: String, val password: String)
-internal class OnlineOwnerRegistration(
-    val username: String,
-    val displayName: String,
-    val password: String,
-    val activationCode: String
-)
 internal class OnlineAuthResponse(val token: String, val user: OnlineUser)
 internal data class OnlineProductWrite(
     val name: String,

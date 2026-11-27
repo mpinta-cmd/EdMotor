@@ -46,7 +46,6 @@ import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Remove
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledIconButton
@@ -131,7 +130,8 @@ internal fun OnlineCatalogScreen(
     onToggleFavorite: (Long) -> Unit,
     voiceSearch: OnlineVoiceSearchState,
     onOpenAppointments: () -> Unit,
-    onReviewOrder: () -> Unit
+    onReviewOrder: () -> Unit,
+    onOpenProduct: (Long) -> Unit
 ) {
     val workshop = state.user?.role == UserRole.WORKSHOP.name
     val cart = state.cart
@@ -140,10 +140,10 @@ internal fun OnlineCatalogScreen(
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     var selectedCategory by rememberSaveable { mutableStateOf<String?>(null) }
+    var appliedQuery by rememberSaveable { mutableStateOf(query) }
+    var appliedCategory by rememberSaveable { mutableStateOf(selectedCategory) }
     var showingEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<OnlineProduct?>(null) }
-    var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var deactivating by remember { mutableStateOf<OnlineProduct?>(null) }
     var stockAdjustmentId by rememberSaveable { mutableStateOf<Long?>(null) }
     var increasingStock by rememberSaveable { mutableStateOf(true) }
     val hasFilters = query.isNotEmpty() || selectedCategory != null
@@ -179,7 +179,13 @@ internal fun OnlineCatalogScreen(
         else -> "Catálogo de repuestos"
     }
 
-    LaunchedEffect(query, selectedCategory) { gridState.scrollToItem(0) }
+    LaunchedEffect(query, selectedCategory) {
+        if (query != appliedQuery || selectedCategory != appliedCategory) {
+            gridState.scrollToItem(0)
+            appliedQuery = query
+            appliedCategory = selectedCategory
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -251,7 +257,7 @@ internal fun OnlineCatalogScreen(
                     quantity = cart[product.id] ?: 0,
                     busy = state.busy || pending,
                     isFavorite = product.id in state.favoriteProductIds,
-                    onOpen = { selectedId = product.id },
+                    onOpen = { onOpenProduct(product.id) },
                     onAdd = { onAddToCart(product.id) },
                     onRemove = { onRemoveFromCart(product.id) },
                     onToggleFavorite = { onToggleFavorite(product.id) },
@@ -266,69 +272,6 @@ internal fun OnlineCatalogScreen(
     }
 
     OnlineVoiceSearchDialogs(voiceSearch)
-
-    val selected = state.products.firstOrNull { it.id == selectedId }
-    if (selected != null) {
-        AlertDialog(
-            onDismissRequest = { selectedId = null },
-            title = { Text(selected.name) },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box {
-                        OnlineProductPhoto(vm, selected.imagePath, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
-                        if (!workshop) {
-                            OnlineFavoriteButton(
-                                selected.name,
-                                selected.id in state.favoriteProductIds,
-                                { onToggleFavorite(selected.id) },
-                                Modifier.align(Alignment.TopEnd)
-                            )
-                        }
-                    }
-                    OnlineProductPrice(selected)
-                    Text(selected.category, style = MaterialTheme.typography.labelLarge)
-                    OnlineProductRating(selected, detailed = true)
-                    if (selected.description.isNotBlank()) Text(selected.description)
-                    Text(stockLabel(selected.stock), style = MaterialTheme.typography.bodySmall)
-                    if (workshop) {
-                        TextButton(
-                            onClick = { selectedId = null; deactivating = selected },
-                            enabled = !state.busy
-                        ) {
-                            Icon(Icons.Outlined.VisibilityOff, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(5.dp))
-                            Text("Desactivar repuesto")
-                        }
-                    } else {
-                        OnlineCatalogCartControls(
-                            product = selected,
-                            quantity = cart[selected.id] ?: 0,
-                            enabled = !state.busy && !pending,
-                            onAdd = { onAddToCart(selected.id) },
-                            onRemove = { onRemoveFromCart(selected.id) },
-                            addLabel = "Agregar al carrito"
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                if (workshop) {
-                    Button(
-                        enabled = !state.busy,
-                        onClick = { selectedId = null; editing = selected; showingEditor = true }
-                    ) { Text("Editar repuesto") }
-                } else {
-                    Button(onClick = { selectedId = null; onReviewOrder() }) {
-                        Text("Ver mi carrito (${cart.values.sumOf { it.toLong() }})")
-                    }
-                }
-            },
-            dismissButton = { TextButton(onClick = { selectedId = null }) { Text("Cerrar") } }
-        )
-    }
 
     if (workshop && showingEditor) {
         OnlineProductEditor(
@@ -353,21 +296,6 @@ internal fun OnlineCatalogScreen(
         )
     }
 
-    val toDeactivate = deactivating
-    if (workshop && toDeactivate != null) {
-        AlertDialog(
-            onDismissRequest = { deactivating = null },
-            title = { Text("Desactivar repuesto") },
-            text = { Text("${toDeactivate.name} dejará de estar disponible en el catálogo.") },
-            confirmButton = {
-                Button(enabled = !state.busy, onClick = {
-                    vm.deleteProduct(toDeactivate)
-                    deactivating = null
-                }) { Text("Desactivar") }
-            },
-            dismissButton = { TextButton(onClick = { deactivating = null }) { Text("Volver") } }
-        )
-    }
 }
 
 @Composable
@@ -422,7 +350,7 @@ private fun OnlineCatalogResults(title: String, count: Int) {
 }
 
 @Composable
-private fun OnlineFavoriteButton(
+internal fun OnlineFavoriteButton(
     name: String,
     isFavorite: Boolean,
     onToggle: () -> Unit,
@@ -538,8 +466,7 @@ private fun OnlineCatalogCartControls(
     quantity: Int,
     enabled: Boolean,
     onAdd: () -> Unit,
-    onRemove: () -> Unit,
-    addLabel: String = "Agregar"
+    onRemove: () -> Unit
 ) {
     val haptics = LocalHapticFeedback.current
     val canAdd = enabled && quantity < product.stock
@@ -556,7 +483,7 @@ private fun OnlineCatalogCartControls(
         ) {
             Icon(Icons.Outlined.AddShoppingCart, contentDescription = null, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(4.dp))
-            Text(addLabel)
+            Text("Agregar")
         }
         return
     }
@@ -572,7 +499,7 @@ private fun OnlineCatalogCartControls(
 }
 
 @Composable
-private fun OnlineCatalogQuantityControls(
+internal fun OnlineCatalogQuantityControls(
     name: String,
     quantity: Int,
     canAdd: Boolean,
@@ -619,14 +546,14 @@ private fun OnlineCatalogQuantityControls(
     }
 }
 
-private fun stockLabel(stock: Int): String = when {
+internal fun stockLabel(stock: Int): String = when {
     stock <= 0 -> "Agotado"
     stock == 1 -> "Última unidad"
     else -> "$stock disponibles"
 }
 
 @Composable
-private fun OnlineProductRating(product: OnlineProduct, detailed: Boolean = false) {
+internal fun OnlineProductRating(product: OnlineProduct, detailed: Boolean = false) {
     val average = product.averageRating?.takeIf { it in 1.0..5.0 } ?: return
     val count = product.ratingCount.takeIf { it > 0L } ?: return
     val score = remember(average) {
@@ -656,11 +583,11 @@ private fun OnlineProductRating(product: OnlineProduct, detailed: Boolean = fals
 }
 
 @Composable
-private fun OnlineProductPrice(product: OnlineProduct) {
+internal fun OnlineProductPrice(product: OnlineProduct, prominent: Boolean = false) {
     Column {
         Text(
             onlinePrice(product.currentPriceCop),
-            style = MaterialTheme.typography.titleMedium,
+            style = if (prominent) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.ExtraBold
         )
@@ -676,7 +603,7 @@ private fun OnlineProductPrice(product: OnlineProduct) {
 }
 
 @Composable
-private fun OnlineProductEditor(
+internal fun OnlineProductEditor(
     vm: OnlineViewModel,
     state: OnlineState,
     product: OnlineProduct?,

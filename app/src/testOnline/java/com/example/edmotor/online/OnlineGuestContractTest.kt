@@ -43,30 +43,28 @@ class OnlineGuestContractTest {
     }
 
     @Test
-    fun ownerActivationUsesCamelCaseAndReturnsTheWorkshopRole() {
-        val registrationRoute = "POST /api/v1/auth/register-owner"
-        val registrationResponse = """
+    fun ownerSignsInThroughStandardLoginAndKeepsTheWorkshopRole() {
+        val loginRoute = "POST /api/v1/auth/login"
+        val loginResponse = """
             {
                 "token": "token-de-prueba",
                 "user": {"id": 1, "username": "edmotor", "displayName": "Taller EdMotor", "role": "WORKSHOP"}
             }
         """.trimIndent()
 
-        withApi(mapOf(registrationRoute to Reply(registrationResponse, status = 201))) { api, requests ->
-            val response = api.registerOwner(
-                OnlineOwnerRegistration("edmotor", "Taller EdMotor", "clave-de-prueba", "codigo-de-prueba")
-            )
+        withApi(mapOf(loginRoute to Reply(loginResponse))) { api, requests ->
+            val response = api.login(OnlineCredentials("edmotor", "clave-de-prueba"))
 
             assertEquals("WORKSHOP", response.user.role)
             assertEquals("token-de-prueba", response.token)
             val request = requests.single()
-            assertEquals(registrationRoute, request.route)
+            assertEquals(loginRoute, request.route)
             assertNull(request.authorization)
             val expected = JsonParser.parseString(
                 """
                     {
-                        "username": "edmotor", "displayName": "Taller EdMotor",
-                        "password": "clave-de-prueba", "activationCode": "codigo-de-prueba"
+                        "username": "edmotor",
+                        "password": "clave-de-prueba"
                     }
                 """.trimIndent()
             )

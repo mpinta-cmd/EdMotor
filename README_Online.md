@@ -17,7 +17,7 @@ El servidor permite la lectura pública de los repuestos activos y sus fotos. Co
 ## Probar desde Android Studio
 
 1. Instala Docker con Compose. Abre la terminal en `server/`, copia `.env.example` como `.env` y establece una contraseña aleatoria en `EDMOTOR_DB_PASSWORD`.
-2. Levanta el servidor. Si quieres crear el primer dueño desde la app, usa la activación explicada en la siguiente sección. Si prefieres hacerlo por terminal, el segundo comando pide la contraseña.
+2. Levanta el servidor y configura la cuenta del propietario si es la primera instalación. El segundo comando pide la contraseña en la terminal. En Android, el dueño entra desde **Iniciar sesión** con su usuario y contraseña.
 
    ```text
    docker compose up --build -d
@@ -100,10 +100,6 @@ Si dictas desde un Inventario protegido y Android deja EdMotor en segundo plano,
 2. Pulsa **Activar con huella** y confirma en el diálogo de Android. La protección se guarda para esa cuenta en ese celular.
 3. Sal de Inventario o deja EdMotor en segundo plano. Al volver, pulsa **Desbloquear con huella**. También puedes usar **Usar contraseña de EdMotor**. La verificación de Android puede ofrecer la credencial del dispositivo según la versión del sistema.
 4. Para retirar la protección, abre el mismo ajuste y confirma con Android o con tu contraseña de EdMotor.
-
-## Activar al primer dueño desde Android
-
-Genera un código con `python -c "import secrets; print(secrets.token_urlsafe(32))"` y guarda el resultado en `EDMOTOR_OWNER_ACTIVATION_CODE` dentro del archivo privado `server/.env`. Arranca o recrea el servicio `api` con `docker compose up -d --build api`. En la app selecciona **Perfil → Crear cuenta de dueño** e introduce el código junto a los datos de la cuenta. Una vez activado el dueño, elimina el código del archivo de entorno y recrea el servicio. Un taller con un dueño existente accede con **Iniciar sesión**.
 
 ## Instalar el servidor para un piloto
 

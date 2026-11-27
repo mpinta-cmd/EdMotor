@@ -66,11 +66,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         service.register(OnlineRegistration(username.trim(), displayName.trim(), password))
     }
 
-    fun registerOwner(username: String, displayName: String, password: String, activationCode: String) =
-        authenticate { service ->
-            service.registerOwner(OnlineOwnerRegistration(username.trim(), displayName.trim(), password, activationCode.trim()))
-        }
-
     private fun authenticate(authenticate: suspend (OnlineService) -> OnlineAuthResponse) = runAction {
         if (liveSession != null) return@runAction null
         val service = requireNotNull(api).service
@@ -264,10 +259,11 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(products = it.products.withItem(saved, OnlineProduct::id).sortedForCatalog()) }
     }
 
-    fun deleteProduct(product: OnlineProduct) = mutate("Repuesto retirado del catálogo.") { service, auth ->
-        service.deleteProduct(auth, product.id, product.version)
-        _state.update { current -> current.copy(products = current.products.filterNot { it.id == product.id }) }
-    }
+    fun deleteProduct(product: OnlineProduct, onDeleted: () -> Unit = {}) =
+        mutate("Repuesto retirado del catálogo.", onDeleted) { service, auth ->
+            service.deleteProduct(auth, product.id, product.version)
+            _state.update { current -> current.copy(products = current.products.filterNot { it.id == product.id }) }
+        }
 
     fun adjustInventoryStock(productId: Long, delta: Int) {
         if (_state.value.user?.role != UserRole.WORKSHOP.name || delta == 0) return
