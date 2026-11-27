@@ -20,7 +20,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
@@ -49,7 +48,7 @@ class OnlineVoiceSearchTest {
             )
         }
 
-        compose.onNodeWithContentDescription("Buscar por voz").performClick()
+        compose.onNodeWithText("Buscar por voz").assertIsDisplayed().performClick()
         compose.onNodeWithText("Revisa tu búsqueda").assertIsDisplayed()
         compose.onNodeWithText("filtro de aceite").assertIsDisplayed()
         compose.runOnIdle { assertEquals("", searchState.query) }
@@ -64,7 +63,7 @@ class OnlineVoiceSearchTest {
         showSearch { ActivityResult(Activity.RESULT_CANCELED, null) }
         compose.onNode(hasSetTextAction() and hasText("Buscar repuestos")).performTextReplacement("Bombillo")
 
-        compose.onNodeWithContentDescription("Buscar por voz").performClick()
+        compose.onNodeWithText("Buscar por voz").performClick()
 
         compose.onNodeWithText("Revisa tu búsqueda").assertDoesNotExist()
         compose.onNodeWithText("Bombillo").assertIsDisplayed()
@@ -74,7 +73,7 @@ class OnlineVoiceSearchTest {
     fun missingRecognizerLeavesTypedSearchAvailable() {
         showSearch { throw ActivityNotFoundException() }
 
-        compose.onNodeWithContentDescription("Buscar por voz").performClick()
+        compose.onNodeWithText("Buscar por voz").performClick()
         compose.onNodeWithText("La búsqueda por voz no está disponible en este dispositivo. Puedes escribir el repuesto.")
             .assertIsDisplayed()
         compose.onNodeWithText("Entendido").performClick()
@@ -92,10 +91,10 @@ class OnlineVoiceSearchTest {
             )
         }
         compose.onNode(hasSetTextAction() and hasText("Buscar repuestos")).performTextReplacement("Bombillo")
-        compose.onNodeWithContentDescription("Buscar por voz").performClick()
+        compose.onNodeWithText("Buscar por voz").performClick()
         compose.runOnIdle { catalogVisible = false }
         compose.onNodeWithText("Inventario bloqueado").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Buscar por voz").assertDoesNotExist()
+        compose.onNodeWithText("Buscar por voz").assertDoesNotExist()
 
         compose.runOnIdle { requireNotNull(deliverResult).invoke() }
         compose.onNodeWithText("Revisa tu búsqueda").assertDoesNotExist()

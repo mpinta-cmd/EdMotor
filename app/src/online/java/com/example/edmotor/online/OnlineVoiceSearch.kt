@@ -9,7 +9,9 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -18,7 +20,6 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -31,6 +32,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
@@ -98,15 +100,17 @@ internal fun OnlineVoiceSearchField(voiceSearch: OnlineVoiceSearchState) {
         label = { Text("Buscar repuestos") },
         leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
         trailingIcon = {
-            IconButton(onClick = {
-                focus.clearFocus()
-                voiceSearch.startRecognition()
-            }) {
-                Icon(
-                    Icons.Outlined.Mic,
-                    contentDescription = "Buscar por voz",
-                    tint = MaterialTheme.colorScheme.primary
-                )
+            TextButton(
+                onClick = {
+                    focus.clearFocus()
+                    voiceSearch.startRecognition()
+                },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Text("Buscar por voz", style = MaterialTheme.typography.labelSmall)
+                }
             }
         },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
