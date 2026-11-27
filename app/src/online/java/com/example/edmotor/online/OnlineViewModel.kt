@@ -35,7 +35,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private val cartStore = api?.let { OnlineCartStore(app, it.project) }
     private val catalogDatabase = Room.databaseBuilder(
         app, OnlineCatalogDatabase::class.java, "edmotor_online_catalog.db"
-    ).addMigrations(OnlineCatalogDatabase.MIGRATION_1_2).build()
+    ).addMigrations(OnlineCatalogDatabase.MIGRATION_1_2, OnlineCatalogDatabase.MIGRATION_2_3).build()
     private val requests = Mutex()
     private var refreshJob: Job? = null
     private val imageMemory = object : LruCache<String, ByteArray>(16 * 1024 * 1024) {
@@ -47,6 +47,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(
         OnlineState(
+            products = if (api == null) referenceCatalog else emptyList(),
             cart = cartStore?.read().orEmpty(),
             favoriteProductIds = cartStore?.favorites().orEmpty(),
             configurationError = if (api == null) "Configura una URL HTTPS válida para el servidor de EdMotor." else null
@@ -175,9 +176,9 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private suspend fun loadCatalogCache() {
         if (catalogCacheLoaded) return
         val project = requireNotNull(api).project
-        val cached = capture { catalogDatabase.catalog().read(project).map { it.toModel() } }.getOrNull() ?: return
-        catalogCacheLoaded = true
-        _state.update { it.copy(products = cached.sortedForCatalog()) }
+        val cached = capture { catalogDatabase.catalog().readSnapshot(project)?.map { it.toModel() } }
+        catalogCacheLoaded = cached.isSuccess
+        _state.update { it.copy(products = cached.getOrNull()?.sortedForCatalog() ?: referenceCatalog) }
     }
 
     private suspend fun refreshPublicCatalog() {
@@ -266,7 +267,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         }
 
     fun adjustInventoryStock(productId: Long, delta: Int) {
-        if (_state.value.user?.role != UserRole.WORKSHOP.name || delta == 0) return
+        if (productId <= 0L || _state.value.user?.role != UserRole.WORKSHOP.name || delta == 0) return
         val product = _state.value.products.firstOrNull { it.id == productId } ?: return
         val stock = product.stock.toLong() + delta
         if (stock !in 0L..Int.MAX_VALUE.toLong()) {
@@ -321,6 +322,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleFavorite(productId: Long) {
+        if (productId <= 0L) return
         val current = _state.value
         val store = cartStore ?: return
         if (current.busy || current.products.none { it.id == productId }) return
@@ -332,6 +334,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun changeCartQuantity(productId: Long, quantity: Int) {
+        if (productId <= 0L) return
         val current = _state.value
         if (current.busy || current.pendingOrder != null || current.user?.role == UserRole.WORKSHOP.name) return
         val stock = current.products.firstOrNull { it.id == productId }?.stock ?: current.cart[productId] ?: 0
@@ -418,8 +421,9 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     fun clearCheckoutReceipt() = _state.update { it.copy(checkoutReceiptId = null) }
 
     private suspend fun applyInventoryUpdates(updates: List<OnlineProduct>?): List<OnlineProduct>? {
-        if (updates.isNullOrEmpty()) return null
-        val catalog = _state.value.products.associateBy(OnlineProduct::id).toMutableMap()
+        val state = _state.value
+        if (updates.isNullOrEmpty() || state.hasReferenceCatalog) return null
+        val catalog = state.products.associateBy(OnlineProduct::id).toMutableMap()
         for (product in updates) {
             val previous = catalog[product.id]
             if (previous == null || product.version >= previous.version) catalog[product.id] = product

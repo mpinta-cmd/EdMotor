@@ -39,7 +39,7 @@ class OnlineCatalogMigrationTest {
             }
 
             val builder = Room.databaseBuilder(context, OnlineCatalogDatabase::class.java, name)
-                .addMigrations(OnlineCatalogDatabase.MIGRATION_1_2)
+                .addMigrations(OnlineCatalogDatabase.MIGRATION_1_2, OnlineCatalogDatabase.MIGRATION_2_3)
             val database = builder.build()
             val rated = try {
                 val original = database.catalog().read("test").single()
@@ -49,6 +49,8 @@ class OnlineCatalogMigrationTest {
                 assertNull(original.averageRating)
                 val updated = original.copy(averageRating = 4.5, ratingCount = 2)
                 database.catalog().replace("test", listOf(updated))
+                assertNull(database.catalog().readSnapshot("unseen"))
+                database.catalog().replace("empty", emptyList())
                 updated
             } finally {
                 database.close()
@@ -56,6 +58,8 @@ class OnlineCatalogMigrationTest {
             val reopened = builder.build()
             try {
                 assertEquals(rated, reopened.catalog().read("test").single())
+                assertEquals(emptyList<OnlineProductCacheEntity>(), reopened.catalog().readSnapshot("empty"))
+                assertNull(reopened.catalog().readSnapshot("unseen"))
             } finally {
                 reopened.close()
             }

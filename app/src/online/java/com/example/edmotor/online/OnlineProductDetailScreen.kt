@@ -69,7 +69,8 @@ internal fun OnlineProductDetailScreen(
     val workshop = state.user?.role == UserRole.WORKSHOP.name
     val quantity = state.cart[productId] ?: 0
     val cartCount = state.cart.values.sumOf { it.toLong() }
-    val product = state.products.firstOrNull { it.id == productId }
+    val isReference = productId < 0L
+    val product = state.products.firstOrNull { it.id == productId } ?: referenceCatalogProduct(productId)
     var editing by rememberSaveable(productId) { mutableStateOf(false) }
     var confirmingRemoval by rememberSaveable(productId) { mutableStateOf(false) }
 
@@ -92,7 +93,7 @@ internal fun OnlineProductDetailScreen(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
-                if (workshop) {
+                if (workshop || isReference) {
                     Spacer(Modifier.width(48.dp))
                 } else {
                     IconButton(onClick = onOpenCart) {
@@ -146,15 +147,17 @@ internal fun OnlineProductDetailScreen(
                         vm,
                         product.imagePath,
                         Modifier.matchParentSize().padding(12.dp)
-                            .semantics { contentDescription = "Foto de ${product.name}" }
+                            .semantics { contentDescription = "Foto de ${product.name}" },
+                        referenceDrawable = referenceCatalogImage(product.id)
                     )
                     when {
+                        isReference -> Unit
                         product.stock <= 0 -> DetailStockBadge("AGOTADO", Modifier.align(Alignment.TopStart))
                         product.currentPriceCop < product.priceCop ->
                             DetailStockBadge("PROMOCIÓN", Modifier.align(Alignment.TopStart))
                         else -> Unit
                     }
-                    if (!workshop) {
+                    if (!workshop && !isReference) {
                         OnlineFavoriteButton(
                             product.name,
                             product.id in state.favoriteProductIds,
@@ -177,7 +180,7 @@ internal fun OnlineProductDetailScreen(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold
                 )
-                OnlineProductRating(product, detailed = true)
+                if (!isReference) OnlineProductRating(product, detailed = true)
             }
 
             Surface(
@@ -187,10 +190,17 @@ internal fun OnlineProductDetailScreen(
                 color = colors.surface
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("PRECIO DEL PRODUCTO", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        if (isReference) "PRECIO DE REFERENCIA" else "PRECIO DEL PRODUCTO",
+                        style = MaterialTheme.typography.labelMedium
+                    )
                     OnlineProductPrice(product, prominent = true)
-                    Text("Disponibilidad", style = MaterialTheme.typography.labelSmall)
-                    Text(stockLabel(product.stock), fontWeight = FontWeight.Bold)
+                    if (isReference) {
+                        Text("Consulta las existencias y compra cuando se conecte con el taller.", color = colors.onSurfaceVariant)
+                    } else {
+                        Text("Disponibilidad", style = MaterialTheme.typography.labelSmall)
+                        Text(stockLabel(product.stock), fontWeight = FontWeight.Bold)
+                    }
                 }
             }
 
@@ -207,20 +217,24 @@ internal fun OnlineProductDetailScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(product.description, color = colors.onSurfaceVariant)
-                    HorizontalDivider(color = colors.outline)
-                    Text(
-                        "Información de compra",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    DetailInformation(
-                        if (workshop) "Existencias disponibles" else "Unidades en tu carrito",
-                        if (workshop) product.stock.toString() else quantity.toString()
-                    )
-                    DetailInformation("Identificación", "REF-${product.id}")
+                    if (!isReference) {
+                        HorizontalDivider(color = colors.outline)
+                        Text(
+                            "Información de compra",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        DetailInformation(
+                            if (workshop) "Existencias disponibles" else "Unidades en tu carrito",
+                            if (workshop) product.stock.toString() else quantity.toString()
+                        )
+                        DetailInformation("Identificación", "REF-${product.id}")
+                    }
                 }
             }
         }
+
+        if (isReference) return@Column
 
         ProductDetailFooter(
             product = product,

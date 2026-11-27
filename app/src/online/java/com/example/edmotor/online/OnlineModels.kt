@@ -5,6 +5,8 @@ import androidx.room.ColumnInfo
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
@@ -43,6 +45,8 @@ data class OnlineState(
     val appointments: List<OnlineAppointment> = emptyList(),
     val maintenance: List<OnlineMaintenance> = emptyList()
 ) {
+    internal val hasReferenceCatalog: Boolean get() = (products.firstOrNull()?.id ?: 0L) < 0L
+
     fun syncStatus(resource: OnlineResource): OnlineSyncStatus = sync[resource] ?: OnlineSyncStatus()
 
     internal fun checkoutItems(selection: Map<Long, Int>, expectedRequestId: String?): Map<Long, Int> {
@@ -200,6 +204,9 @@ internal fun OnlineProduct.toCache(project: String) = OnlineProductCacheEntity(
     project, id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath, averageRating, ratingCount
 )
 
+@Entity(tableName = "online_catalog_empty_snapshots")
+internal data class OnlineEmptyCatalogSnapshot(@PrimaryKey val project: String)
+
 @Dao
 internal abstract class OnlineCatalogDao {
     @Query("SELECT * FROM online_catalog WHERE project = :project ORDER BY id")
@@ -211,16 +218,29 @@ internal abstract class OnlineCatalogDao {
     @Insert
     protected abstract suspend fun insert(products: List<OnlineProductCacheEntity>)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM online_catalog_empty_snapshots WHERE project = :project)")
+    protected abstract suspend fun hasEmptySnapshot(project: String): Boolean
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    protected abstract suspend fun recordEmptySnapshot(snapshot: OnlineEmptyCatalogSnapshot)
+
+    @Transaction
+    open suspend fun readSnapshot(project: String): List<OnlineProductCacheEntity>? {
+        val rows = read(project)
+        return rows.takeIf { it.isNotEmpty() || hasEmptySnapshot(project) }
+    }
+
     @Transaction
     open suspend fun replace(project: String, products: List<OnlineProductCacheEntity>) {
         val ordered = products.sortedBy { it.id }
+        if (ordered.isEmpty()) recordEmptySnapshot(OnlineEmptyCatalogSnapshot(project))
         if (ordered == read(project)) return
         clear(project)
         if (ordered.isNotEmpty()) insert(ordered)
     }
 }
 
-@Database(entities = [OnlineProductCacheEntity::class], version = 2, exportSchema = false)
+@Database(entities = [OnlineProductCacheEntity::class, OnlineEmptyCatalogSnapshot::class], version = 3, exportSchema = false)
 internal abstract class OnlineCatalogDatabase : RoomDatabase() {
     abstract fun catalog(): OnlineCatalogDao
 
@@ -229,6 +249,11 @@ internal abstract class OnlineCatalogDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE online_catalog ADD COLUMN averageRating REAL")
                 db.execSQL("ALTER TABLE online_catalog ADD COLUMN ratingCount INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS online_catalog_empty_snapshots (project TEXT NOT NULL PRIMARY KEY)")
             }
         }
     }

@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -77,6 +78,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -210,7 +212,7 @@ internal fun OnlineCatalogScreen(
                     }
                 }
             }
-            if (workshop) {
+            if (workshop && !state.hasReferenceCatalog) {
                 item(key = "catalog-create", span = { GridItemSpan(maxLineSpan) }) {
                     Button(
                         onClick = { editing = null; showingEditor = true },
@@ -392,6 +394,7 @@ private fun OnlineProductCard(
     onAdjustStock: (Boolean) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val isReference = product.id < 0L
     Surface(
         onClick = onOpen,
         shape = MaterialTheme.shapes.large,
@@ -400,9 +403,16 @@ private fun OnlineProductCard(
     ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Box {
-                OnlineProductPhoto(vm, product.imagePath, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
-                OnlineFavoriteButton(product.name, isFavorite, onToggleFavorite, Modifier.align(Alignment.TopEnd))
-                if (product.currentPriceCop < product.priceCop) {
+                OnlineProductPhoto(
+                    vm,
+                    product.imagePath,
+                    Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                    referenceDrawable = referenceCatalogImage(product.id)
+                )
+                if (!isReference) {
+                    OnlineFavoriteButton(product.name, isFavorite, onToggleFavorite, Modifier.align(Alignment.TopEnd))
+                }
+                if (!isReference && product.currentPriceCop < product.priceCop) {
                     Surface(
                         modifier = Modifier.align(Alignment.BottomStart).padding(5.dp),
                         shape = MaterialTheme.shapes.small,
@@ -422,7 +432,7 @@ private fun OnlineProductCard(
                 overflow = TextOverflow.Ellipsis
             )
             Text(product.category, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-            OnlineProductRating(product)
+            if (!isReference) OnlineProductRating(product)
             OnlineProductPrice(product)
             if (product.description.isNotBlank()) {
                 Text(
@@ -433,6 +443,8 @@ private fun OnlineProductCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            if (isReference) return@Column
+
             Text(
                 stockLabel(product.stock),
                 style = MaterialTheme.typography.bodySmall,
@@ -791,29 +803,44 @@ private fun OnlineProductField(
 }
 
 @Composable
-internal fun OnlineProductPhoto(vm: OnlineViewModel, imagePath: String?, modifier: Modifier) {
-    val bitmap by produceState<Bitmap?>(initialValue = null, key1 = vm, key2 = imagePath) {
-        value = null
-        if (imagePath != null) {
-            val bytes = vm.loadProductImage(imagePath)
-            if (bytes != null && bytes.size in 1..5_242_880) {
-                value = withContext(Dispatchers.IO) {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
-                        bounds.outWidth.toLong() * bounds.outHeight > 20_000_000L
-                    ) return@withContext null
-                    var sample = 1
-                    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 720) sample *= 2
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                }
-            }
-        }
-    }
+internal fun OnlineProductPhoto(
+    vm: OnlineViewModel,
+    imagePath: String?,
+    modifier: Modifier,
+    @DrawableRes referenceDrawable: Int? = null
+) {
     Box(
         modifier.clip(MaterialTheme.shapes.medium).background(EdMotorPhotoMatte),
         contentAlignment = Alignment.Center
     ) {
+        if (referenceDrawable != null) {
+            Image(
+                painterResource(referenceDrawable),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().padding(4.dp),
+                contentScale = ContentScale.Fit
+            )
+            return@Box
+        }
+
+        val bitmap by produceState<Bitmap?>(initialValue = null, key1 = vm, key2 = imagePath) {
+            value = null
+            if (imagePath != null) {
+                val bytes = vm.loadProductImage(imagePath)
+                if (bytes != null && bytes.size in 1..5_242_880) {
+                    value = withContext(Dispatchers.IO) {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
+                            bounds.outWidth.toLong() * bounds.outHeight > 20_000_000L
+                        ) return@withContext null
+                        var sample = 1
+                        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 720) sample *= 2
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                    }
+                }
+            }
+        }
         val image = bitmap
         if (image != null) {
             Image(

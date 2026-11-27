@@ -131,9 +131,16 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
         )
     } else null
     val catalogSync = state.syncStatus(OnlineResource.CATALOG)
+    val showingReferenceCatalog = activeRoute == Routes.HOME && state.hasReferenceCatalog
+    val showingReferenceDetail = inProductDetail && (detailProductId ?: 0L) < 0L
     val syncNotice = when (activeRoute) {
-        Routes.HOME, Routes.PRODUCT_DETAIL, Routes.CAR, CHECKOUT_ROUTE ->
+        Routes.HOME -> if (showingReferenceCatalog) {
+            "Catálogo incluido · Precios de referencia. Consulta existencias y compra al conectar con el taller."
+        } else {
             "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
+        }
+        Routes.PRODUCT_DETAIL, Routes.CAR, CHECKOUT_ROUTE ->
+            "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable && !showingReferenceDetail }
         Routes.ORDER_MANAGEMENT -> "No pudimos actualizar los pedidos."
             .takeIf { state.syncStatus(OnlineResource.ORDERS).unavailable }
         Routes.RATINGS -> "No pudimos actualizar los repuestos para calificar."
@@ -328,7 +335,9 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    TextButton(onClick = vm::refresh, enabled = !state.busy) { Text("Reintentar") }
+                    if (!showingReferenceCatalog || (state.configurationError == null && catalogSync.unavailable)) {
+                        TextButton(onClick = vm::refresh, enabled = !state.busy) { Text("Reintentar") }
+                    }
                 }
             }
             Box(Modifier.weight(1f).fillMaxSize()) {
@@ -423,7 +432,8 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                     else -> {
                         val voiceSearch = rememberOnlineVoiceSearch()
                         when {
-                            state.configurationError != null -> OnlineConnectionNotice(state.configurationError)
+                            state.configurationError != null && !state.hasReferenceCatalog ->
+                                OnlineConnectionNotice(state.configurationError)
                             workshop && inventoryAccess == null -> OnlineConnectionNotice("Verificando el perfil del dueño…", working = true)
                             inventoryAccess?.locked == true -> OwnerInventoryLockedScreen(inventoryAccess)
                             catalogSync.waitingForFirstData && state.products.isEmpty() -> OnlineConnectionNotice(
