@@ -6,6 +6,8 @@ Si una lectura falla, EdMotor conserva los datos recibidos y vuelve a intentar l
 
 Al abrir la app se puede explorar el catálogo, ver fotos, consultar Testigos y añadir repuestos al carrito como invitado. El perfil de la barra superior permite iniciar sesión o crear una cuenta. Al pulsar **Ir a pagar** en el carrito o solicitar una cita, la app pide el perfil de cliente y vuelve a la pantalla correspondiente. El carrito del invitado pasa a la cuenta en ese teléfono.
 
+En **Inicio**, el botón **Agregar** pasa a mostrar **− / cantidad / +**. El detalle del repuesto permite ajustar la cantidad y abrir el carrito. Los filtros por categoría y **Favoritos** se pueden combinar con la búsqueda. Los favoritos se conservan en el teléfono dentro de cada perfil. El dueño también puede ajustar las existencias desde su tarjeta de inventario.
+
 En **Finalizar compra**, el cliente revisa sus repuestos y el total en COP. La modalidad disponible es **Pagar al recoger** en el taller. Al pulsar **Confirmar compra**, la API valida el precio y las unidades, registra el pedido y descuenta las existencias en una sola transacción. **Inicio** muestra el saldo de cada repuesto disponible. El dueño marca el pedido **Listo para recoger** y luego registra el cobro y la entrega. Si cancela un pedido pendiente de preparación, las unidades vuelven al inventario.
 
 EdMotor guarda el identificador de la compra, los repuestos y el total revisado antes de contactar al servidor. Si se pierde la respuesta, conserva esos datos aunque cierres la app. Al volver a abrirla, consulta si el servidor ya registró la compra. **Reintentar confirmación** usa los mismos datos para evitar pedidos y descuentos duplicados.
@@ -33,6 +35,10 @@ El servidor permite la lectura pública de los repuestos activos y sus fotos. Co
 6. En el dueño, abre **Mi Garaje → Pedidos** y marca el pedido como **Listo para recoger**. Registra el cobro y la entrega. Verifica que la cantidad sigue en una unidad en ambos perfiles. Después registra un vehículo, solicita una cita y verifícala desde la agenda del dueño.
 
 Las variantes tienen instalaciones separadas. El servidor en línea comienza con sus propios datos. Crea allí las cuentas y repuestos que quieras usar y registra los vehículos con el perfil correspondiente. Las bases y las cuentas de la práctica siguen accesibles desde sus respectivas variantes.
+
+### Probar un celular por Wi‑Fi
+
+Conecta el computador y el celular a la misma red Wi‑Fi, habilita la depuración inalámbrica y conecta el dispositivo con ADB. Ejecuta `adb devices -l` para encontrar la dirección de la conexión inalámbrica, que incluye el puerto. Para una compilación `onlineDebug` con la URL `http://127.0.0.1:8000/api/v1/`, ejecuta `adb -s IP:PUERTO reverse tcp:8000 tcp:8000` sustituyendo `IP:PUERTO` por esa dirección. La API local y la conexión inalámbrica de ADB deben estar activas durante la prueba.
 
 ## Calificar repuestos entregados
 

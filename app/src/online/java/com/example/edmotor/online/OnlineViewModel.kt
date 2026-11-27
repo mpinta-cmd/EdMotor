@@ -48,6 +48,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(
         OnlineState(
             cart = cartStore?.read().orEmpty(),
+            favoriteProductIds = cartStore?.favorites().orEmpty(),
             configurationError = if (api == null) "Configura una URL HTTPS válida para el servidor de EdMotor." else null
         )
     )
@@ -162,17 +163,18 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private suspend fun openSession(session: LiveSession) {
         val clientId = session.user.id
-        val (cart, pending) = if (session.user.role == UserRole.CLIENT.name) {
-            withContext(Dispatchers.IO) {
-                requireNotNull(cartStore).let { store ->
-                    store.moveGuestCartTo(clientId) to store.pendingOrder(clientId)
-                }
+        val (cart, pending, favorites) = withContext(Dispatchers.IO) {
+            val store = requireNotNull(cartStore)
+            if (session.user.role == UserRole.CLIENT.name) {
+                Triple(store.moveGuestCartTo(clientId), store.pendingOrder(clientId), store.moveGuestFavoritesTo(clientId))
+            } else {
+                Triple(emptyMap(), null, store.favorites(clientId))
             }
-        } else emptyMap<Long, Int>() to null
+        }
         resetSession()
         restoreAllowed = true
         liveSession = session
-        _state.update { it.copy(user = session.user, cart = cart, pendingOrder = pending) }
+        _state.update { it.copy(user = session.user, cart = cart, pendingOrder = pending, favoriteProductIds = favorites) }
     }
 
     private suspend fun loadCatalogCache() {
@@ -267,6 +269,28 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         _state.update { current -> current.copy(products = current.products.filterNot { it.id == product.id }) }
     }
 
+    fun adjustInventoryStock(productId: Long, delta: Int) {
+        if (_state.value.user?.role != UserRole.WORKSHOP.name || delta == 0) return
+        val product = _state.value.products.firstOrNull { it.id == productId } ?: return
+        val stock = product.stock.toLong() + delta
+        if (stock !in 0L..Int.MAX_VALUE.toLong()) {
+            showMessage("La cantidad no coincide con las existencias actuales.", true)
+            return
+        }
+        saveProduct(
+            OnlineProductDraft(
+                name = product.name,
+                description = product.description,
+                category = product.category,
+                priceCop = product.priceCop,
+                promotionPriceCop = product.promotionPriceCop,
+                stock = stock.toInt(),
+                imagePath = product.imagePath
+            ),
+            product
+        )
+    }
+
     fun uploadImage(uri: Uri, onUploaded: (String) -> Unit) = runAction {
         val path = sendImage(requireNotNull(api).service, requireSession().auth, uri)
         return@runAction { onUploaded(path) }
@@ -293,6 +317,22 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     fun addToCart(productId: Long) {
         val count = _state.value.cart[productId] ?: 0
         if (count < Int.MAX_VALUE) changeCartQuantity(productId, count + 1)
+    }
+
+    fun removeFromCart(productId: Long) {
+        val count = _state.value.cart[productId] ?: return
+        if (count > 0) changeCartQuantity(productId, count - 1)
+    }
+
+    fun toggleFavorite(productId: Long) {
+        val current = _state.value
+        val store = cartStore ?: return
+        if (current.busy || current.products.none { it.id == productId }) return
+        val favorites = if (productId in current.favoriteProductIds) {
+            current.favoriteProductIds - productId
+        } else current.favoriteProductIds + productId
+        store.saveFavorites(liveSession?.user?.id, favorites)
+        _state.update { it.copy(favoriteProductIds = favorites) }
     }
 
     fun changeCartQuantity(productId: Long, quantity: Int) {
@@ -594,12 +634,14 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         liveSession = null
         imageMemory.evictAll()
         val guestCart = cartStore?.read().orEmpty()
+        val guestFavorites = cartStore?.favorites().orEmpty()
         _state.update {
             OnlineState(
                 busy = it.busy,
                 configurationError = it.configurationError,
                 products = it.products,
                 cart = guestCart,
+                favoriteProductIds = guestFavorites,
                 sync = mapOf(OnlineResource.CATALOG to it.syncStatus(OnlineResource.CATALOG))
             )
         }

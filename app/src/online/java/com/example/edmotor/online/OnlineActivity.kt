@@ -408,7 +408,16 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                                 if (catalogSync.retrying) "Volviendo a conectar con el catálogo…" else "Consultando repuestos…",
                                 working = true
                             )
-                            else -> OnlineCatalogScreen(vm, state, vm::addToCart, voiceSearch = voiceSearch) { route = Routes.CAR }
+                            else -> OnlineCatalogScreen(
+                                vm = vm,
+                                state = state,
+                                onAddToCart = vm::addToCart,
+                                onRemoveFromCart = vm::removeFromCart,
+                                onToggleFavorite = vm::toggleFavorite,
+                                voiceSearch = voiceSearch,
+                                onOpenAppointments = { route = Routes.APPOINTMENTS },
+                                onReviewOrder = { route = Routes.CAR }
+                            )
                         }
                     }
                 } }

@@ -73,4 +73,19 @@ class OnlineCartStoreTest {
         assertEquals(remaining, afterAcknowledgment.read(17L))
         assertEquals(remaining, afterAcknowledgment.acknowledgeOrder(17L, request))
     }
+
+    @Test
+    fun favoritesFollowTheClientAndRemainSeparateFromOtherProfiles() {
+        val store = OnlineCartStore(context, project)
+        store.saveFavorites(null, setOf(2L, 9L))
+        store.saveFavorites(17L, setOf(9L, 12L))
+        store.saveFavorites(18L, setOf(33L))
+
+        assertEquals(setOf(2L, 9L, 12L), store.moveGuestFavoritesTo(17L))
+        val reopened = OnlineCartStore(context, project)
+        assertEquals(emptySet<Long>(), reopened.favorites())
+        assertEquals(setOf(2L, 9L, 12L), reopened.favorites(17L))
+        assertEquals(setOf(33L), reopened.favorites(18L))
+        assertEquals(emptySet<Long>(), OnlineCartStore(context, otherProject).favorites(17L))
+    }
 }

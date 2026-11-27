@@ -19,6 +19,26 @@ internal class OnlineCartStore(context: Context, project: String) {
         preferences.edit().putStringSet(key(clientId), encode(cart)).apply()
     }
 
+    fun favorites(accountId: Long? = null): Set<Long> =
+        preferences.getStringSet(favoritesKey(accountId), emptySet()).orEmpty()
+            .mapNotNull { value -> value.toLongOrNull()?.takeIf { it > 0 } }.toSet()
+
+    fun saveFavorites(accountId: Long?, products: Set<Long>) = synchronized(preferences) {
+        preferences.edit().putStringSet(favoritesKey(accountId), products.map(Long::toString).toSet()).apply()
+    }
+
+    fun moveGuestFavoritesTo(clientId: Long): Set<Long> = synchronized(preferences) {
+        val guest = favorites()
+        val account = favorites(clientId)
+        if (guest.isEmpty()) return@synchronized account
+        val combined = account + guest
+        preferences.edit()
+            .putStringSet(favoritesKey(clientId), combined.map(Long::toString).toSet())
+            .remove(favoritesKey(null))
+            .apply()
+        combined
+    }
+
     fun moveGuestCartTo(clientId: Long): Map<Long, Int> = synchronized(preferences) {
         val accountCart = read(clientId).toMutableMap()
         val guestCart = read()
@@ -106,6 +126,8 @@ internal class OnlineCartStore(context: Context, project: String) {
     }
 
     private fun key(clientId: Long?): String = clientId?.let { "client_$it" } ?: "guest"
+
+    private fun favoritesKey(accountId: Long?): String = "favorites_${key(accountId)}"
 
     private fun pendingKey(clientId: Long): String = "pending_$clientId"
 

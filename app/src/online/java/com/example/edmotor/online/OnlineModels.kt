@@ -34,6 +34,7 @@ data class OnlineState(
     val sync: Map<OnlineResource, OnlineSyncStatus> = emptyMap(),
     val products: List<OnlineProduct> = emptyList(),
     val cart: Map<Long, Int> = emptyMap(),
+    val favoriteProductIds: Set<Long> = emptySet(),
     val pendingOrder: PendingOnlineOrder? = null,
     val checkoutReceiptId: Long? = null,
     val orders: List<OnlineOrder> = emptyList(),
