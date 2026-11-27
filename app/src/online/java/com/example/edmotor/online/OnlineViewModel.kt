@@ -379,6 +379,9 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     internal suspend fun findVehicleModels(brand: String, year: Int): List<VehicleModelSuggestion> =
         vehicleModelLookup.findModels(brand, year)
 
+    internal fun dashboardEvidenceScope(userId: Long?): String =
+        "online:${api?.project.orEmpty()}:${userId ?: "guest"}"
+
     fun createAppointment(vehicleId: Long, scheduledAtMillis: Long, serviceType: String) =
         mutateSession("Solicitud de cita enviada.") { session ->
             updateAppointment(session.appointments.create(vehicleId, scheduledAtMillis, serviceType))

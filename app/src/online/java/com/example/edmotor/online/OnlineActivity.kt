@@ -54,6 +54,7 @@ import com.example.edmotor.model.appointmentDateUtcMillis
 import com.example.edmotor.navigation.Routes
 import com.example.edmotor.ui.components.EdMotorBottomBar
 import com.example.edmotor.ui.screens.CredentialAccessScreen
+import com.example.edmotor.ui.screens.DashboardEvidenceVehicle
 import com.example.edmotor.ui.screens.DashboardScreen
 import com.example.edmotor.ui.theme.EdMotorTheme
 import java.util.TimeZone
@@ -272,7 +273,16 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
             }
             Box(Modifier.weight(1f).fillMaxSize()) {
                 screenState.SaveableStateProvider("${user?.id ?: "guest"}:$activeRoute") { when (activeRoute) {
-                    Routes.DASHBOARD -> DashboardScreen()
+                    Routes.DASHBOARD -> DashboardScreen(
+                        evidenceScope = vm.dashboardEvidenceScope(user?.id),
+                        vehicles = if (user == null) emptyList() else state.vehicles
+                            .filter { workshop || it.clientId == user.id }
+                            .map { vehicle ->
+                                val label = listOf("${vehicle.brand} ${vehicle.model}", vehicle.year.toString(), vehicle.plate)
+                                    .filter(String::isNotBlank).joinToString(" · ")
+                                DashboardEvidenceVehicle(vehicle.id.toString(), label)
+                            }
+                    )
                     Routes.PROFILE -> if (user == null) GuestGarageScreen(
                         onCreateAccount = { openAccess(AccessEntry.GARAGE) },
                         onBrowseCatalog = { route = Routes.HOME }

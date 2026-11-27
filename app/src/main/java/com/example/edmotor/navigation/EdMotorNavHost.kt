@@ -51,6 +51,7 @@ import com.example.edmotor.ui.screens.HomeScreen
 import com.example.edmotor.ui.screens.MaintenanceFormScreen
 import com.example.edmotor.ui.screens.MaintenanceHistoryScreen
 import com.example.edmotor.ui.screens.ProductDetailScreen
+import com.example.edmotor.ui.screens.DashboardEvidenceVehicle
 import com.example.edmotor.ui.screens.DashboardScreen
 import com.example.edmotor.ui.screens.WorkshopGarageScreen
 import com.example.edmotor.ui.screens.ProductManagementScreen
@@ -439,7 +440,16 @@ fun EdMotorNavHost(
         // 4. TESTIGOS
         // =================================================
 
-        composable(Routes.DASHBOARD) { DashboardScreen() }
+        composable(Routes.DASHBOARD) {
+            DashboardScreen(
+                evidenceScope = "local:$currentUserId",
+                vehicles = vehicleList.map { vehicle ->
+                    val label = listOf("${vehicle.brand} ${vehicle.model}", vehicle.year.toString(), vehicle.plate)
+                        .filter(String::isNotBlank).joinToString(" · ")
+                    DashboardEvidenceVehicle(vehicle.id.toString(), label)
+                }
+            )
+        }
 
 
         // =================================================

@@ -55,6 +55,15 @@ EdMotor consulta el catálogo público **NHTSA vPIC** para elegir un modelo al r
 4. Prueba con **Renault** y **2021** para mostrar qué sucede cuando no hay coincidencias. Puedes registrar el vehículo con el modelo escrito a mano.
 5. Con la sesión iniciada, desactiva la conexión del dispositivo antes de hacer otra búsqueda. Comprueba que aparece el aviso de error y que el formulario conserva los datos. Restablece la conexión y pulsa **Reintentar**.
 
+## Demostrar una foto guardada de Testigos
+
+1. Abre **Testigos → Activar cámara** y concede el permiso. Con el vehículo detenido, encuadra el tablero y pulsa **Escanear tablero**.
+2. En **Foto del tablero**, revisa la imagen capturada. Confirma o cambia el **Testigo asociado**. Si el escaneo no es concluyente, puedes elegir un testigo de la guía o dejarlo sin identificar. Para vincular el registro con un vehículo, inicia sesión como cliente y elige uno de **Mi Garaje**.
+3. Pulsa **Guardar foto**. El registro conserva el mismo fotograma que recibió el escáner, el testigo seleccionado, la fecha de captura y el vehículo si lo elegiste.
+4. Cierra EdMotor por completo y vuelve a abrirlo. Con el mismo perfil, entra en **Testigos → Historial de fotos** y abre el registro para recuperar la imagen y los datos guardados.
+
+Room guarda juntos los datos y la imagen en el dispositivo. Los registros del invitado y de cada cuenta tienen historiales independientes. Puedes eliminar una foto desde su detalle mediante una confirmación.
+
 ## Activar al primer dueño desde Android
 
 Genera un código con `python -c "import secrets; print(secrets.token_urlsafe(32))"` y guarda el resultado en `EDMOTOR_OWNER_ACTIVATION_CODE` dentro del archivo privado `server/.env`. Arranca o recrea el servicio `api` con `docker compose up -d --build api`. En la app selecciona **Perfil → Crear cuenta de dueño** e introduce el código junto a los datos de la cuenta. Una vez activado el dueño, elimina el código del archivo de entorno y recrea el servicio. Un taller con un dueño existente accede con **Iniciar sesión**.
