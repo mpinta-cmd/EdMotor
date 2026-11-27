@@ -64,6 +64,14 @@ EdMotor consulta el catálogo público **NHTSA vPIC** para elegir un modelo al r
 
 Room guarda juntos los datos y la imagen en el dispositivo. Los registros del invitado y de cada cuenta tienen historiales independientes. Puedes eliminar una foto desde su detalle mediante una confirmación.
 
+## Demostrar los sensores de Testigos
+
+1. En un celular Android con acelerómetro y sensor de luz ambiental, abre **Testigos → Activar cámara**. Con el vehículo detenido, apunta al tablero y mueve el celular ligeramente. El marco se vuelve ámbar y aparece **Mantén el celular quieto**. Cuando lo sostienes firme, el marco se vuelve verde y aparece **Listo para escanear**.
+2. Baja la iluminación alrededor del celular para ver **Poca luz ambiental**. Al recuperar iluminación suficiente, el aviso desaparece. Puedes pulsar **Escanear tablero** en cualquiera de estos estados.
+3. Pulsa **Cerrar cámara** o cambia de pantalla. Las lecturas se detienen y se reinician cuando vuelves a abrir la cámara. Si falta el acelerómetro, aparece **Captura manual**. En un equipo sin sensor de luz, puedes seguir usando la cámara.
+
+El acelerómetro da una referencia de estabilidad del celular. El sensor de luz mide la iluminación ambiental cerca del dispositivo. Ambos funcionan localmente y la foto se sigue guardando desde **Foto del tablero**.
+
 ## Activar al primer dueño desde Android
 
 Genera un código con `python -c "import secrets; print(secrets.token_urlsafe(32))"` y guarda el resultado en `EDMOTOR_OWNER_ACTIVATION_CODE` dentro del archivo privado `server/.env`. Arranca o recrea el servicio `api` con `docker compose up -d --build api`. En la app selecciona **Perfil → Crear cuenta de dueño** e introduce el código junto a los datos de la cuenta. Una vez activado el dueño, elimina el código del archivo de entorno y recrea el servicio. Un taller con un dueño existente accede con **Iniciar sesión**.

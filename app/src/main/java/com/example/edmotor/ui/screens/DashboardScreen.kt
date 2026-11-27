@@ -92,10 +92,12 @@ import com.example.edmotor.dashboard.DashboardEvidenceRepository
 import com.example.edmotor.dashboard.DashboardIndicator
 import com.example.edmotor.dashboard.DashboardLightColor
 import com.example.edmotor.dashboard.DashboardScanResult
+import com.example.edmotor.dashboard.DashboardStability
 import com.example.edmotor.dashboard.DashboardUrgency
 import com.example.edmotor.dashboard.dashboardCaptureFrame
 import com.example.edmotor.dashboard.dashboardIndicators
 import com.example.edmotor.dashboard.encodeDashboardPhoto
+import com.example.edmotor.dashboard.rememberDashboardSensorGuidance
 import com.example.edmotor.dashboard.scanFramedDashboard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -218,12 +220,18 @@ internal fun DashboardScreen(
                     when {
                         !hasCamera -> Text("No hay una cámara disponible en este dispositivo. Puedes consultar la guía de testigos.")
                         cameraOpen && permissionGranted -> {
-                            Text(
-                                "Cámara de Testigos",
-                                modifier = Modifier.semantics { heading() },
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
+                            val sensorGuidance = rememberDashboardSensorGuidance(active = true)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Cámara de Testigos",
+                                    modifier = Modifier.weight(1f).semantics { heading() },
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(onClick = { closeCamera() }) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Cerrar cámara")
+                                }
+                            }
                             Box(
                                 modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f)
                                     .clip(RoundedCornerShape(14.dp)).background(Color(0xFF0A1120))
@@ -275,7 +283,10 @@ internal fun DashboardScreen(
                                     },
                                     modifier = Modifier.matchParentSize()
                                 )
-                                DashboardCaptureGuide(Modifier.matchParentSize())
+                                DashboardCaptureGuide(
+                                    modifier = Modifier.matchParentSize(),
+                                    stability = if (cameraReady) sensorGuidance.stability else DashboardStability.Waiting
+                                )
                                 if (!cameraReady) {
                                     Surface(
                                         modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp),
@@ -290,6 +301,7 @@ internal fun DashboardScreen(
                                     }
                                 }
                             }
+                            if (cameraReady) DashboardCaptureHints(sensorGuidance)
                             Text(
                                 "Solo se analiza el área clara. Acerca la cámara a los testigos y evita los reflejos.",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -305,7 +317,6 @@ internal fun DashboardScreen(
                                 enabled = cameraReady && !awaitingFrame,
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text(if (awaitingFrame) "Capturando…" else "Escanear tablero") }
-                            TextButton(onClick = { closeCamera() }) { Text("Cerrar cámara") }
                         }
                         analyzing -> {
                             Text(
@@ -505,7 +516,12 @@ private fun DashboardHeader(historyEnabled: Boolean, onHistory: () -> Unit) {
 }
 
 @Composable
-private fun DashboardCaptureGuide(modifier: Modifier) {
+private fun DashboardCaptureGuide(modifier: Modifier, stability: DashboardStability) {
+    val cornerColor = when (stability) {
+        DashboardStability.Stable -> Color(0xFF9AEBC4)
+        DashboardStability.Moving -> Color(0xFFFFCF80)
+        DashboardStability.Waiting, DashboardStability.Unavailable -> Color.White
+    }
     Canvas(modifier) {
         val left = size.width * dashboardCaptureFrame.left
         val top = size.height * dashboardCaptureFrame.top
@@ -524,8 +540,8 @@ private fun DashboardCaptureGuide(modifier: Modifier) {
             Offset(left, bottom) to Offset(length, -length),
             Offset(right, bottom) to Offset(-length, -length)
         ).forEach { (corner, direction) ->
-            drawLine(Color.White, corner, corner + Offset(direction.x, 0f), stroke, StrokeCap.Round)
-            drawLine(Color.White, corner, corner + Offset(0f, direction.y), stroke, StrokeCap.Round)
+            drawLine(cornerColor, corner, corner + Offset(direction.x, 0f), stroke, StrokeCap.Round)
+            drawLine(cornerColor, corner, corner + Offset(0f, direction.y), stroke, StrokeCap.Round)
         }
     }
 }
