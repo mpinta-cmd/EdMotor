@@ -32,6 +32,19 @@ El servidor permite la lectura pública de los repuestos activos y sus fotos. Co
 
 Las variantes tienen instalaciones separadas. El servidor en línea comienza con sus propios datos. Crea allí las cuentas y repuestos que quieras usar y registra los vehículos con el perfil correspondiente. Las bases y las cuentas de la práctica siguen accesibles desde sus respectivas variantes.
 
+## Demostrar el CRUD remoto de Citas
+
+En `onlineDebug`, inicia sesión como cliente y registra un vehículo en **Mi Garaje**. Usa una cuenta de prueba sin citas activas para recorrer estos pasos.
+
+| Acción en Android | Petición REST | Resultado |
+| --- | --- | --- |
+| Abre **Citas → Todas las citas** | `GET /api/v1/appointments` | Muestra las citas de tu cuenta. |
+| En **Solicitar**, elige vehículo, servicio y horario y pulsa **Solicitar cita** | `POST /api/v1/appointments` | Guarda una cita pendiente en PostgreSQL. |
+| En la cita, pulsa **Reagendar**, elige otro horario y pulsa **Guardar horario** | `PATCH /api/v1/appointments/{id}` | Actualiza la hora de la misma cita. |
+| Pulsa **Cancelar cita** y confirma | `DELETE /api/v1/appointments/{id}` | Elimina la cita activa de PostgreSQL y de la lista. |
+
+Cierra y vuelve a abrir la app después de reagendar o cancelar. En **Todas las citas**, comprueba que la lista consultada al servidor refleja el cambio. La pantalla de Compose envía cada acción a `OnlineViewModel`. El ViewModel usa `OnlineAppointmentRepository` para acceder a los endpoints y modelos de Retrofit.
+
 ## Activar al primer dueño desde Android
 
 Genera un código con `python -c "import secrets; print(secrets.token_urlsafe(32))"` y guarda el resultado en `EDMOTOR_OWNER_ACTIVATION_CODE` dentro del archivo privado `server/.env`. Arranca o recrea el servicio `api` con `docker compose up -d --build api`. En la app selecciona **Perfil → Crear cuenta de dueño** e introduce el código junto a los datos de la cuenta. Una vez activado el dueño, elimina el código del archivo de entorno y recrea el servicio. Un taller con un dueño existente accede con **Iniciar sesión**.

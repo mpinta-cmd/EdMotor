@@ -9,7 +9,6 @@ import androidx.room.Room
 import com.example.edmotor.BuildConfig
 import com.example.edmotor.model.UserRole
 import java.io.IOException
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +40,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private val imageMemory = object : LruCache<String, ByteArray>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ByteArray): Int = value.size
     }
-    private val pendingAppointments = mutableMapOf<Booking, String>()
     private var catalogCacheLoaded = false
     private var restoreAllowed = true
     @Volatile private var liveSession: LiveSession? = null
@@ -157,7 +155,8 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private fun validatedSession(token: String, user: OnlineUser): LiveSession {
         check(validOnlineToken(token) && user.id > 0 && user.role in setOf("CLIENT", "WORKSHOP"))
-        return LiveSession("Bearer $token", user)
+        val auth = "Bearer $token"
+        return LiveSession(auth, user, OnlineAppointmentRepository(requireNotNull(api).service, auth))
     }
 
     private suspend fun openSession(session: LiveSession) {
@@ -214,7 +213,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                     refreshResource(OnlineResource.VEHICLES, { service.vehicles(session.auth) }) { copy(vehicles = it) }
                 }
                 if (OnlineResource.APPOINTMENTS in resources) launch {
-                    refreshResource(OnlineResource.APPOINTMENTS, { service.appointments(session.auth) }) { copy(appointments = it) }
+                    refreshResource(OnlineResource.APPOINTMENTS, session.appointments::list) { copy(appointments = it) }
                 }
                 if (OnlineResource.MAINTENANCE in resources) launch {
                     refreshResource(OnlineResource.MAINTENANCE, { service.maintenance(session.auth) }) { copy(maintenance = it) }
@@ -377,23 +376,17 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         }
 
     fun createAppointment(vehicleId: Long, scheduledAtMillis: Long, serviceType: String) =
-        mutate("Solicitud de cita enviada.") { service, auth ->
-            val booking = Booking(vehicleId, scheduledAtMillis, serviceType)
-            val appointment = sendOnce(pendingAppointments, booking) { requestId ->
-                service.createAppointment(auth, OnlineAppointmentWrite(requestId, vehicleId, scheduledAtMillis, serviceType))
-            }
-            updateAppointment(appointment)
+        mutateSession("Solicitud de cita enviada.") { session ->
+            updateAppointment(session.appointments.create(vehicleId, scheduledAtMillis, serviceType))
         }
 
     fun changeAppointment(appointment: OnlineAppointment, action: String, scheduledAtMillis: Long? = null) =
-        mutate("Cita actualizada.") { service, auth ->
-            updateAppointment(service.changeAppointment(
-                auth, appointment.id, OnlineAppointmentChange(appointment.version, action, scheduledAtMillis)
-            ))
+        mutateSession("Cita actualizada.") { session ->
+            updateAppointment(session.appointments.update(appointment, action, scheduledAtMillis))
         }
 
-    fun cancelAppointment(appointment: OnlineAppointment) = mutate("Cita cancelada.") { service, auth ->
-        service.cancelAppointment(auth, appointment.id, appointment.version)
+    fun cancelAppointment(appointment: OnlineAppointment) = mutateSession("Cita cancelada.") { session ->
+        session.appointments.delete(appointment)
         _state.update { current -> current.copy(appointments = current.appointments.filterNot { it.id == appointment.id }) }
     }
 
@@ -411,8 +404,16 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         message: String,
         onSaved: () -> Unit = {},
         operation: suspend (OnlineService, String) -> Unit
+    ) = mutateSession(message, onSaved) { session ->
+        operation(requireNotNull(api).service, session.auth)
+    }
+
+    private fun mutateSession(
+        message: String,
+        onSaved: () -> Unit = {},
+        operation: suspend (LiveSession) -> Unit
     ) = runAction {
-        operation(requireNotNull(api).service, requireSession().auth)
+        operation(requireSession())
         showMessage(message, false)
         return@runAction { onSaved(); refresh() }
     }
@@ -491,7 +492,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun resetSession() {
         liveSession = null
         imageMemory.evictAll()
-        pendingAppointments.clear()
         val guestCart = cartStore?.read().orEmpty()
         _state.update {
             OnlineState(
@@ -511,8 +511,11 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         super.onCleared()
     }
 
-    private class LiveSession(val auth: String, val user: OnlineUser)
-    private data class Booking(val vehicleId: Long, val startsAtMillis: Long, val serviceType: String)
+    private class LiveSession(
+        val auth: String,
+        val user: OnlineUser,
+        val appointments: OnlineAppointmentRepository
+    )
 
     private companion object {
         const val MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -531,16 +534,6 @@ private fun unauthorized(error: Throwable): Boolean = (error as? HttpException)?
 
 private fun closeErrorResponse(error: Throwable?) {
     (error as? HttpException)?.response()?.errorBody()?.close()
-}
-
-private suspend fun <K, V> sendOnce(attempts: MutableMap<K, String>, key: K, send: suspend (String) -> V): V {
-    val id = attempts.getOrPut(key) { UUID.randomUUID().toString() }
-    return try {
-        send(id).also { attempts.remove(key) }
-    } catch (error: HttpException) {
-        if (error.code() in 400..499 && error.code() != 408) attempts.remove(key)
-        throw error
-    }
 }
 
 private fun List<OnlineProduct>.sortedForCatalog(): List<OnlineProduct> = sortedWith(

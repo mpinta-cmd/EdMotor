@@ -62,13 +62,12 @@ class SharedWorkflows(unittest.TestCase):
             **credentials, "displayName": "Cliente de prueba",
         }, expected=201)
         self.assertEqual(registration["user"]["role"], "CLIENT")
-        second_device = self.call("POST", "/auth/login", body=credentials)
-        self.assertEqual(second_device["user"], registration["user"])
-        self.assertNotEqual(second_device["token"], registration["token"])
-        return registration["token"], second_device["token"]
+        return registration["token"], credentials
 
     def test_appointments_are_shared_and_changes_are_versioned(self):
-        client, second_device = self.client()
+        client, credentials = self.client()
+        second_device = self.call("POST", "/auth/login", body=credentials)["token"]
+        self.assertNotEqual(second_device, client)
         other, _ = self.client()
         vehicle_data = {"brand": "Marca", "model": "Modelo", "year": 2020, "plate": "PRU123"}
         vehicle = self.call("POST", "/vehicles", client, body=vehicle_data, expected=201)
@@ -84,6 +83,11 @@ class SharedWorkflows(unittest.TestCase):
             "requestId": str(uuid4()), "vehicleId": vehicle["id"],
             "scheduledAtMillis": scheduled, "serviceType": "Revisión general",
         }
+        self.call("GET", "/appointments", expected=401)
+        self.call("POST", "/appointments", client, body={
+            **payload, "scheduledAtMillis": scheduled + 60_000,
+        }, expected=422)
+        self.call("POST", "/appointments", other, body=payload, expected=404)
         sibling = {**payload, "requestId": str(uuid4())}
         with ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(self.call, "POST", "/appointments", client, body=payload, expected=(201, 409))
@@ -97,22 +101,37 @@ class SharedWorkflows(unittest.TestCase):
         other_booking = self.call("POST", "/appointments", other, body={
             **payload, "requestId": str(uuid4()), "vehicleId": other_vehicle["id"],
         }, expected=201)
-        self.assertEqual(other_booking["scheduledAtMillis"], appointment["scheduledAtMillis"])
+        self.assertEqual(appointment["scheduledAtMillis"], scheduled)
+        self.assertEqual(appointment["status"], "PENDING")
         self.assertEqual(self.call("GET", "/appointments", client), [appointment])
-        self.assertIn(appointment, self.call("GET", "/appointments", self.owner))
+        self.assertEqual(self.call("GET", "/appointments", other), [other_booking])
 
         path = f"/appointments/{appointment['id']}"
         version = appointment["version"]
+        reschedule = {"version": version, "action": "RESCHEDULE", "scheduledAtMillis": scheduled + 1_800_000}
         self.call("DELETE", f"{path}?version={version}", other, expected=404)
-        moved = self.call("PATCH", path, second_device, body={
-            "version": version, "action": "RESCHEDULE", "scheduledAtMillis": scheduled + 1_800_000,
-        })
+        self.call("PATCH", path, other, body=reschedule, expected=404)
+        moved = self.call("PATCH", path, second_device, body=reschedule)
+        self.assertEqual(moved["id"], appointment["id"])
+        self.assertEqual(moved["scheduledAtMillis"], reschedule["scheduledAtMillis"])
+        self.assertEqual(moved["status"], "PENDING")
+        self.assertEqual(moved["version"], version + 1)
+        self.assertEqual(self.call("GET", "/appointments", client), [moved])
+        owner_bookings = self.call("GET", "/appointments", self.owner)
+        ids = {appointment["id"], other_booking["id"]}
+        self.assertEqual([booking for booking in owner_bookings if booking["id"] in ids], [other_booking, moved])
         self.call("PATCH", path, self.owner, body={"version": version, "action": "CONFIRM"}, expected=409)
+        self.call("DELETE", f"{path}?version={version}", client, expected=409)
         confirmed = self.call("PATCH", path, self.owner, body={"version": moved["version"], "action": "CONFIRM"})
         self.assertEqual(self.call("GET", "/appointments", client), [confirmed])
         self.call("PATCH", path, self.owner, body={"version": confirmed["version"], "action": "FINISH"}, expected=409)
-        self.call("DELETE", f"{path}?version={confirmed['version']}", self.owner, expected=204)
+        delete_path = f"{path}?version={confirmed['version']}"
+        self.assertEqual(self.call("DELETE", delete_path, client, expected=204), b"")
         self.assertEqual(self.call("GET", "/appointments", client), [])
+        new_session = self.call("POST", "/auth/login", body=credentials)["token"]
+        self.assertEqual(self.call("GET", "/appointments", new_session), [])
+        self.call("DELETE", delete_path, self.owner, expected=404)
+        self.assertEqual(self.call("GET", "/appointments", other), [other_booking])
         self.call("POST", "/appointments", client, body=booked_payload, expected=410)
 
         self.call("POST", "/auth/logout", second_device, expected=204)
