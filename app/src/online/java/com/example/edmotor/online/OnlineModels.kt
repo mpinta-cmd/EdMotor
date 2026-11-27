@@ -32,6 +32,7 @@ data class OnlineState(
     val products: List<OnlineProduct> = emptyList(),
     val cart: Map<Long, Int> = emptyMap(),
     val pendingOrder: PendingOnlineOrder? = null,
+    val checkoutReceiptId: Long? = null,
     val orders: List<OnlineOrder> = emptyList(),
     val vehicles: List<OnlineVehicle> = emptyList(),
     val appointments: List<OnlineAppointment> = emptyList(),
@@ -44,7 +45,7 @@ data class OnlineState(
             throw OnlineInputError("El estado de tu envío cambió. Revisa el carrito y Mis pedidos.")
         }
         if (pendingOrder == null && cart != selection) {
-            throw OnlineInputError("Tu carrito cambió. Revísalo antes de enviar el pedido.")
+            throw OnlineInputError("Tu carrito cambió. Revísalo antes de confirmar la compra.")
         }
         return pendingOrder?.items ?: selection
     }
@@ -78,7 +79,9 @@ data class OnlineOrder(
     val clientName: String,
     val totalCop: Long,
     val createdAtMillis: Long,
-    val items: List<OnlineOrderItem>
+    val items: List<OnlineOrderItem>,
+    val paymentMethod: String? = null,
+    val inventoryUpdates: List<OnlineProduct>? = null
 )
 
 data class OnlineOrderItem(val productId: Long, val productName: String, val quantity: Int, val unitPriceCop: Long)
@@ -142,6 +145,7 @@ internal data class OnlineProductWrite(
 
 internal data class OnlineImageUpload(val imagePath: String)
 internal data class OnlineOrderWrite(val requestId: String, val items: List<OnlineOrderLine>)
+internal data class OnlineCheckoutWrite(val requestId: String, val items: List<OnlineOrderLine>, val expectedTotalCop: Long)
 internal data class OnlineOrderLine(val productId: Long, val quantity: Int)
 internal data class OnlineOrderDecision(val status: String)
 internal data class OnlineVehicleWrite(val brand: String, val model: String, val year: Int, val plate: String)

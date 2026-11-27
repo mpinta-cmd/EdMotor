@@ -87,10 +87,13 @@ private fun OnlineEdMotor(vm: OnlineViewModel = viewModel()) {
 
 private enum class AccessEntry(val reason: String? = null) {
     PROFILE,
-    CART("Crea tu perfil de cliente o inicia sesión para enviar tu pedido. Tu carrito se conserva."),
+    CART("Crea tu perfil de cliente o inicia sesión para finalizar tu compra. Tu carrito se conserva."),
     APPOINTMENTS("Crea tu perfil de cliente o inicia sesión para solicitar una cita y consultar su estado."),
     GARAGE("Crea tu perfil de cliente para guardar tus vehículos y consultar su historial.")
 }
+
+private const val CHECKOUT_ROUTE = "finalizarCompra"
+private const val PURCHASE_RECEIPT_ROUTE = "compraConfirmada"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,6 +101,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     val user = state.user
     val workshop = user?.role == UserRole.WORKSHOP.name
     var route by rememberSaveable { mutableStateOf(Routes.HOME) }
+    var receiptOrderId by rememberSaveable { mutableStateOf<Long?>(null) }
     var calendarDay by rememberSaveable { mutableStateOf<Long?>(null) }
     var accessEntry by rememberSaveable { mutableStateOf<AccessEntry?>(null) }
     var profileMenu by remember { mutableStateOf(false) }
@@ -105,8 +109,9 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     val screenState = rememberSaveableStateHolder()
     val cartCount = state.cart.values.sumOf { it.toLong() }
     val activeRoute = when {
-        workshop && route == Routes.CAR -> Routes.HOME
-        user == null && route == Routes.ORDER_MANAGEMENT -> Routes.PROFILE
+        workshop && (route == Routes.CAR || route == CHECKOUT_ROUTE || route == PURCHASE_RECEIPT_ROUTE) -> Routes.HOME
+        user == null && route == CHECKOUT_ROUTE -> Routes.CAR
+        user == null && (route == Routes.ORDER_MANAGEMENT || route == PURCHASE_RECEIPT_ROUTE) -> Routes.PROFILE
         else -> route
     }
     val ownerSession = vm.inventoryOwnerSession(user?.id)
@@ -121,7 +126,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     } else null
     val catalogSync = state.syncStatus(OnlineResource.CATALOG)
     val syncNotice = when (activeRoute) {
-        Routes.HOME, Routes.CAR -> "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
+        Routes.HOME, Routes.CAR, CHECKOUT_ROUTE -> "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
         Routes.ORDER_MANAGEMENT -> "No pudimos actualizar los pedidos."
             .takeIf { state.syncStatus(OnlineResource.ORDERS).unavailable }
         Routes.PROFILE -> when {
@@ -140,9 +145,25 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     }
 
     LaunchedEffect(user?.id) {
+        val enteringCheckout = accessEntry == AccessEntry.CART
+        if (enteringCheckout && user?.role == UserRole.CLIENT.name) {
+            route = CHECKOUT_ROUTE
+        } else if (activeRoute != route && (!enteringCheckout || user != null)) {
+            route = activeRoute
+        }
         if (user != null) accessEntry = null
-        if (activeRoute != route) route = activeRoute
         profileMenu = false
+    }
+    LaunchedEffect(activeRoute) {
+        if (activeRoute == Routes.HOME || activeRoute == CHECKOUT_ROUTE) vm.refresh()
+    }
+    LaunchedEffect(state.checkoutReceiptId) {
+        val orderId = state.checkoutReceiptId ?: return@LaunchedEffect
+        if (activeRoute == CHECKOUT_ROUTE) {
+            receiptOrderId = orderId
+            route = PURCHASE_RECEIPT_ROUTE
+        }
+        vm.clearCheckoutReceipt()
     }
     LaunchedEffect(state.message, accessEntry) {
         if (accessEntry != null) return@LaunchedEffect
@@ -170,6 +191,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
             accessReason = entry.reason,
             onDismiss = {
                 vm.clearMessage()
+                if (entry == AccessEntry.CART) route = Routes.CAR
                 accessEntry = null
             },
             onRegisterOnlineOwner = vm::registerOwner
@@ -178,7 +200,12 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     }
 
     BackHandler(activeRoute != Routes.HOME) {
-        route = if (activeRoute == Routes.ORDER_MANAGEMENT) Routes.PROFILE else Routes.HOME
+        route = when (activeRoute) {
+            CHECKOUT_ROUTE -> Routes.CAR
+            PURCHASE_RECEIPT_ROUTE -> Routes.ORDER_MANAGEMENT
+            Routes.ORDER_MANAGEMENT -> Routes.PROFILE
+            else -> Routes.HOME
+        }
     }
 
     Scaffold(
@@ -326,10 +353,41 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                     Routes.ORDER_MANAGEMENT -> OnlineOrdersScreen(vm, state)
                     Routes.CAR -> OnlineCartScreen(
                         vm, state, vm::changeCartQuantity,
-                        onAuthenticate = { openAccess(AccessEntry.CART) },
-                        onBrowseCatalog = { route = Routes.HOME },
-                        onOrderCreated = { route = Routes.ORDER_MANAGEMENT }
+                        onCheckout = {
+                            route = CHECKOUT_ROUTE
+                            if (user == null) openAccess(AccessEntry.CART)
+                        },
+                        onBrowseCatalog = { route = Routes.HOME }
                     )
+                    CHECKOUT_ROUTE -> OnlineCheckoutScreen(
+                        state,
+                        onConfirmPurchase = vm::confirmPurchase,
+                        onBackToCart = { route = Routes.CAR }
+                    )
+                    PURCHASE_RECEIPT_ROUTE -> {
+                        val order = state.orders.firstOrNull { it.id == receiptOrderId }
+                        if (order != null) {
+                            OnlinePurchaseReceipt(
+                                order,
+                                onViewOrders = { route = Routes.ORDER_MANAGEMENT },
+                                onBrowseCatalog = { route = Routes.HOME }
+                            )
+                        } else {
+                            val ordersSync = state.syncStatus(OnlineResource.ORDERS)
+                            val loading = ordersSync.waitingForFirstData
+                            Column(
+                                modifier = Modifier.fillMaxSize().padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    if (loading) "Consultando la compra…" else "Consulta el estado de tu compra en Mis pedidos.",
+                                    textAlign = TextAlign.Center
+                                )
+                                TextButton(onClick = { route = Routes.ORDER_MANAGEMENT }) { Text("Ir a Mis pedidos") }
+                            }
+                        }
+                    }
                     else -> {
                         val voiceSearch = rememberOnlineVoiceSearch()
                         when {

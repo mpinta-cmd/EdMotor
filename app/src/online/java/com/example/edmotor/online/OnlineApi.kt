@@ -35,6 +35,8 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.Streaming
 
+private const val CHECKOUT_PATH = "orders/checkout"
+
 internal interface OnlineService {
     @POST("auth/login")
     suspend fun login(@Body body: OnlineCredentials): OnlineAuthResponse
@@ -83,6 +85,9 @@ internal interface OnlineService {
 
     @POST("orders")
     suspend fun createOrder(@Header("Authorization") auth: String, @Body body: OnlineOrderWrite): OnlineOrder
+
+    @POST(CHECKOUT_PATH)
+    suspend fun checkout(@Header("Authorization") auth: String, @Body body: OnlineCheckoutWrite): OnlineOrder
 
     @POST("orders/{id}/decision")
     suspend fun decideOrder(
@@ -150,9 +155,17 @@ internal class OnlineApi private constructor(val project: String, val service: O
                             override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
                             override fun isOneShot() = true
                         }
-                        chain.proceed(request.newBuilder().method(request.method, oneShot).build())
+                        val write = request.newBuilder().method(request.method, oneShot).build()
+                        if (request.method == "POST" && request.url.encodedPath == "/api/v1/$CHECKOUT_PATH" &&
+                            request.body != null && !body.isOneShot()
+                        ) {
+                            // Checkout persists this request ID before sending and the server deduplicates it.
+                            chain.proceedWithRetry(write, retryUnavailable = false)
+                        } else {
+                            chain.proceed(write)
+                        }
                     } else if (request.method == "GET") {
-                        chain.readWithRetry(request)
+                        chain.proceedWithRetry(request, retryUnavailable = true)
                     } else {
                         chain.proceed(request)
                     }
@@ -168,14 +181,14 @@ internal class OnlineApi private constructor(val project: String, val service: O
 
 private val transientReadStatusCodes = setOf(502, 503, 504)
 
-private fun Interceptor.Chain.readWithRetry(request: Request): Response {
+private fun Interceptor.Chain.proceedWithRetry(request: Request, retryUnavailable: Boolean): Response {
     val response = try {
         proceed(request)
     } catch (error: IOException) {
-        if (call().isCanceled() || !error.isTransientReadFailure()) throw error
+        if (call().isCanceled() || !error.isTransientConnectionFailure()) throw error
         return proceed(request)
     }
-    if (response.code !in transientReadStatusCodes || response.header("Retry-After") != null ||
+    if (!retryUnavailable || response.code !in transientReadStatusCodes || response.header("Retry-After") != null ||
         response.priorResponse != null || call().isCanceled()
     ) return response
 
@@ -183,7 +196,7 @@ private fun Interceptor.Chain.readWithRetry(request: Request): Response {
     return proceed(request)
 }
 
-private fun IOException.isTransientReadFailure(): Boolean =
+private fun IOException.isTransientConnectionFailure(): Boolean =
     this is EOFException || this is SocketException || this is SocketTimeoutException ||
         cause is EOFException
 

@@ -1,5 +1,6 @@
 package com.example.edmotor.online
 
+import com.google.gson.JsonParser
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.IOException
@@ -81,6 +82,29 @@ class OnlineReadRetryTest {
     }
 
     @Test
+    fun losingCheckoutResponseReplaysTheSamePurchaseWithItsOriginalTotal() = withApi(
+        handler = { exchange, attempt ->
+            if (attempt == 2) {
+                exchange.respond(
+                    201,
+                    """{"id":47,"status":"PENDING","clientName":"Cliente","totalCop":18500,"createdAtMillis":1,"items":[],"paymentMethod":"PAY_ON_PICKUP"}"""
+                )
+            }
+        }
+    ) { api, requests ->
+        val confirmed = api.checkout(AUTH, OnlineCheckoutWrite(REQUEST_ID, listOf(OnlineOrderLine(1, 1)), 18_500L))
+
+        assertEquals(47L, confirmed.id)
+        assertEquals("PAY_ON_PICKUP", confirmed.paymentMethod)
+        assertEquals(List(2) { "POST /api/v1/orders/checkout" }, requests.map { it.route })
+        assertEquals(List(2) { AUTH }, requests.map { it.authorization })
+        val payload = JsonParser.parseString(
+            """{"requestId":"$REQUEST_ID","items":[{"productId":1,"quantity":1}],"expectedTotalCop":18500}"""
+        )
+        assertEquals(List(2) { payload }, requests.map { JsonParser.parseString(it.body) })
+    }
+
+    @Test
     fun writeStaysOneShotEvenWhenTheServerSuggestsAnImmediateRetry() = withApi(
         handler = { exchange, _ ->
             exchange.responseHeaders.set("Retry-After", "0")
@@ -102,11 +126,12 @@ class OnlineReadRetryTest {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/api/v1/") { exchange ->
             try {
-                exchange.requestBody.use { it.readBytes() }
+                val body = exchange.requestBody.bufferedReader().use { it.readText() }
                 requests.add(
                     ObservedRequest(
                         "${exchange.requestMethod} ${exchange.requestURI}",
-                        exchange.requestHeaders.getFirst("Authorization")
+                        exchange.requestHeaders.getFirst("Authorization"),
+                        body
                     )
                 )
                 handler(exchange, requests.size)
@@ -131,7 +156,7 @@ class OnlineReadRetryTest {
         responseBody.use { it.write(payload) }
     }
 
-    private data class ObservedRequest(val route: String, val authorization: String?)
+    private data class ObservedRequest(val route: String, val authorization: String?, val body: String)
 
     private companion object {
         const val AUTH = "Bearer prueba"

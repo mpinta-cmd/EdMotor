@@ -31,7 +31,8 @@ class SharedWorkflows(unittest.TestCase):
         cls.owner = owner_login["token"]
 
     @classmethod
-    def call(cls, method, path, token=None, *, body=None, expected=200, raw=None, content_type=None):
+    def call(cls, method, path, token=None, *, body=None, expected=200, raw=None, content_type=None,
+             expected_header=None):
         headers = {"Accept": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
@@ -49,6 +50,10 @@ class SharedWorkflows(unittest.TestCase):
             status = response.code
             data = response.read()
             mime = response.headers.get_content_type()
+            if expected_header:
+                name, value = expected_header
+                if response.headers.get(name) != value:
+                    raise AssertionError(f"{method} {path}: se esperaba {name}={value}")
         allowed = (expected,) if isinstance(expected, int) else expected
         if status not in allowed:
             raise AssertionError(f"{method} {path}: HTTP {status} en vez de {allowed} ({data[:250]!r})")
@@ -63,6 +68,15 @@ class SharedWorkflows(unittest.TestCase):
         }, expected=201)
         self.assertEqual(registration["user"]["role"], "CLIENT")
         return registration["token"], credentials
+
+    def checkout_product(self, stock):
+        return self.call("POST", "/products", self.owner, body={
+            "name": "Repuesto de prueba " + uuid4().hex[:8], "description": "Prueba de compra en taller",
+            "category": "Repuestos", "priceCop": 20_000, "promotionPriceCop": 15_000, "stock": stock,
+        }, expected=201)
+
+    def catalog_stock(self, *product_ids):
+        return {row["id"]: row["stock"] for row in self.call("GET", "/products") if row["id"] in product_ids}
 
     def test_appointments_are_shared_and_changes_are_versioned(self):
         client, credentials = self.client()
@@ -194,6 +208,10 @@ class SharedWorkflows(unittest.TestCase):
                                    body=decision), confirmed_order)
         latest = next(item for item in self.call("GET", "/products", second) if item["id"] == product["id"])
         self.assertEqual(latest["stock"], 0)
+        self.assertEqual(confirmed_order.pop("inventoryUpdates"), [latest])
+        self.assertIsNone(confirmed_order["paymentMethod"])
+        self.call("POST", f"/orders/{confirmed_order['id']}/decision", self.owner,
+                  body={"status": "COMPLETED"}, expected=409)
         with self.assertRaises(HTTPError) as rejection:
             urlopen(Request(
                 self.base_url + "/orders", method="POST",
@@ -212,3 +230,86 @@ class SharedWorkflows(unittest.TestCase):
         self.assertNotIn(product["id"], [item["id"] for item in self.call("GET", "/products")])
         self.call("GET", image_path, expected=404)
         self.assertIn(confirmed_order, self.call("GET", "/orders", self.owner))
+
+    def test_checkout_uses_confirmed_price_and_reserves_stock_once(self):
+        client, _ = self.client()
+        product = self.checkout_product(stock=3)
+        product_id = product["id"]
+        body = {
+            "requestId": str(uuid4()), "items": [{"productId": product_id, "quantity": 2}],
+            "expectedTotalCop": 30_000,
+        }
+        request_path = f"/orders/requests/{body['requestId']}"
+        self.call("POST", "/orders/checkout", body=body, expected=401)
+        self.call("POST", "/orders/checkout", self.owner, body=body, expected=403)
+        self.call("POST", "/orders/checkout", client, body={**body, "expectedTotalCop": 29_999},
+                  expected=409, expected_header=("EdMotor-Order-Result", "rejected"))
+        self.call("GET", request_path, client, expected=404)
+        self.assertEqual(self.catalog_stock(product_id), {product_id: 3})
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            purchases = [pool.submit(self.call, "POST", "/orders/checkout", client, body=body, expected=201)
+                         for _ in range(2)]
+        order, retry = [purchase.result() for purchase in purchases]
+        self.assertEqual(order, retry)
+        self.assertEqual(order["paymentMethod"], "PAY_ON_PICKUP")
+        self.assertEqual(order["status"], "PENDING")
+        self.assertEqual(order["totalCop"], 30_000)
+        self.assertEqual(order["items"][0]["unitPriceCop"], 15_000)
+        self.assertEqual(order["inventoryUpdates"], [
+            {**product, "stock": 1, "version": product["version"] + 1},
+        ])
+        self.assertEqual(self.call("GET", request_path, client), order)
+        self.assertEqual(self.catalog_stock(product_id), {product_id: 1})
+        legacy_retry = self.call("POST", "/orders", client, body={
+            "requestId": body["requestId"], "items": body["items"],
+        }, expected=201)
+        self.assertEqual(legacy_retry["id"], order["id"])
+        self.call("POST", "/orders/checkout", client, body={**body, "expectedTotalCop": 29_999}, expected=409)
+
+        decision_path = f"/orders/{order['id']}/decision"
+        self.call("POST", decision_path, self.owner, body={"status": "COMPLETED"}, expected=409)
+        ready = self.call("POST", decision_path, self.owner, body={"status": "CONFIRMED"})
+        self.assertEqual(ready["status"], "CONFIRMED")
+        self.call("POST", decision_path, client, body={"status": "COMPLETED"}, expected=403)
+        completed = self.call("POST", decision_path, self.owner, body={"status": "COMPLETED"})
+        self.assertEqual(completed["status"], "COMPLETED")
+        self.assertEqual(self.call("POST", decision_path, self.owner, body={"status": "COMPLETED"}), completed)
+        self.call("POST", decision_path, self.owner, body={"status": "REJECTED"}, expected=409)
+        self.assertEqual(self.call("GET", "/orders", client), [completed])
+        self.assertEqual(self.catalog_stock(product_id), {product_id: 1})
+
+    def test_checkout_stock_conflict_is_atomic_and_rejection_restores_units_once(self):
+        first, _ = self.client()
+        second, _ = self.client()
+        scarce_id = self.checkout_product(stock=1)["id"]
+        ample_id = self.checkout_product(stock=3)["id"]
+        bodies = [{
+            "requestId": str(uuid4()), "expectedTotalCop": 45_000,
+            "items": [{"productId": ample_id, "quantity": 2}, {"productId": scarce_id, "quantity": 1}],
+        } for _ in range(2)]
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            purchases = [pool.submit(self.call, "POST", "/orders/checkout", token, body=body, expected=(201, 409))
+                         for token, body in zip((first, second), bodies)]
+        results = [purchase.result() for purchase in purchases]
+        self.assertCountEqual([status for status, _ in results], [201, 409])
+        order = next(value for status, value in results if status == 201)
+        self.assertEqual(self.catalog_stock(scarce_id, ample_id), {scarce_id: 0, ample_id: 1})
+        for (status, _), client, body in zip(results, (first, second), bodies):
+            if status == 409:
+                self.call("GET", f"/orders/requests/{body['requestId']}", client, expected=404)
+
+        # Inactive items must return to inventory too, while staying hidden from the public catalog.
+        scarce = next(product for product in order["inventoryUpdates"] if product["id"] == scarce_id)
+        self.call("DELETE", f"/products/{scarce_id}?version={scarce['version']}", self.owner, expected=204)
+        decision_path = f"/orders/{order['id']}/decision"
+        decision = {"status": "REJECTED"}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            decisions = [pool.submit(self.call, "POST", decision_path, self.owner, body=decision)
+                         for _ in range(2)]
+        rejected, retry = [result.result() for result in decisions]
+        self.assertEqual(rejected, retry)
+        self.assertEqual(rejected["status"], "REJECTED")
+        self.assertEqual({row["id"]: row["stock"] for row in rejected["inventoryUpdates"]}, {ample_id: 3})
+        self.assertEqual(self.catalog_stock(scarce_id, ample_id), {ample_id: 3})

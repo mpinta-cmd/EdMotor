@@ -4,11 +4,13 @@
 
 Si una lectura falla, EdMotor conserva los datos recibidos y vuelve a intentar la consulta. Los avisos de actualización corresponden a los datos que usa cada pantalla.
 
-Al abrir la app se puede explorar el catálogo, ver fotos, consultar Testigos y añadir repuestos al carrito como invitado. El perfil de la barra superior permite iniciar sesión o crear una cuenta. Al continuar una compra o solicitar una cita, la app pide el perfil de cliente y vuelve a la pantalla correspondiente. El carrito del invitado pasa a la cuenta en ese teléfono. El pedido se envía cuando el cliente confirma.
+Al abrir la app se puede explorar el catálogo, ver fotos, consultar Testigos y añadir repuestos al carrito como invitado. El perfil de la barra superior permite iniciar sesión o crear una cuenta. Al pulsar **Ir a pagar** en el carrito o solicitar una cita, la app pide el perfil de cliente y vuelve a la pantalla correspondiente. El carrito del invitado pasa a la cuenta en ese teléfono.
 
-EdMotor guarda cada envío de pedido en el teléfono antes de contactar al servidor. Si se pierde la respuesta, conserva el envío aunque cierres la app. Al volver a abrirla consulta si el servidor ya registró el pedido. Si el carrito muestra **Pedido por verificar**, **Reintentar envío** usa el mismo identificador y los mismos repuestos.
+En **Finalizar compra**, el cliente revisa sus repuestos y el total en COP. La modalidad disponible es **Pagar al recoger** en el taller. Al pulsar **Confirmar compra**, la API valida el precio y las unidades, registra el pedido y descuenta las existencias en una sola transacción. **Inicio** muestra el saldo de cada repuesto disponible. El dueño marca el pedido **Listo para recoger** y luego registra el cobro y la entrega. Si cancela un pedido pendiente de preparación, las unidades vuelven al inventario.
 
-El servidor permite la lectura pública de los repuestos activos y sus fotos. Comprueba la sesión y el rol para pedidos, citas, vehículos y cambios de inventario. El dueño administra repuestos, pedidos y citas. El cliente registra sus vehículos y consulta sus propios pedidos, citas e informes. El inventario se descuenta al confirmar el pedido. Cada cliente puede tener una sola cita activa y clientes distintos pueden reservar a la misma hora. La agenda usa la hora del taller en Colombia.
+EdMotor guarda el identificador de la compra, los repuestos y el total revisado antes de contactar al servidor. Si se pierde la respuesta, conserva esos datos aunque cierres la app. Al volver a abrirla, consulta si el servidor ya registró la compra. **Reintentar confirmación** usa los mismos datos para evitar pedidos y descuentos duplicados.
+
+El servidor permite la lectura pública de los repuestos activos y sus fotos. Comprueba la sesión y el rol para pedidos, citas, vehículos y cambios de inventario. El dueño administra repuestos, pedidos y citas. El cliente registra sus vehículos y consulta sus propios pedidos, citas e informes. Cada cliente puede tener una sola cita activa y clientes distintos pueden reservar a la misma hora. La agenda usa la hora del taller en Colombia.
 
 ## Probar desde Android Studio
 
@@ -27,8 +29,8 @@ El servidor permite la lectura pública de los repuestos activos y sus fotos. Co
    ```
 
 4. Sincroniza Gradle, selecciona **`onlineDebug`** en **Build Variants** y ejecuta la app. `10.0.2.2` es la dirección de tu computadora desde el emulador Android. Para un celular de pruebas conectado por USB, ejecuta `adb reverse tcp:8000 tcp:8000` y compila con `http://127.0.0.1:8000/api/v1/`.
-5. Desde un dispositivo, entra con la cuenta del dueño y crea un repuesto con foto. Desde otro, abre la app como invitado, consulta ese repuesto, agrégalo al carrito y pulsa **Continuar compra**. Crea un perfil de cliente, verifica que conserva el carrito y pulsa **Enviar pedido**.
-6. En el dueño, abre **Mi Garaje → Pedidos** y confirma el pedido. Comprueba el estado y las existencias desde el cliente. Luego registra un vehículo, solicita una cita y verifícala desde la agenda del dueño.
+5. Desde un dispositivo, entra con la cuenta del dueño y crea un repuesto con foto y tres unidades. Desde otro, abre la app como invitado y agrega dos al carrito. Pulsa **Ir a pagar**, entra con un perfil de cliente y comprueba que el carrito llega a **Finalizar compra**. Revisa el total y pulsa **Confirmar compra**. Vuelve a **Inicio** para ver que queda una unidad.
+6. En el dueño, abre **Mi Garaje → Pedidos** y marca el pedido como **Listo para recoger**. Registra el cobro y la entrega. Verifica que la cantidad sigue en una unidad en ambos perfiles. Después registra un vehículo, solicita una cita y verifícala desde la agenda del dueño.
 
 Las variantes tienen instalaciones separadas. El servidor en línea comienza con sus propios datos. Crea allí las cuentas y repuestos que quieras usar y registra los vehículos con el perfil correspondiente. Las bases y las cuentas de la práctica siguen accesibles desde sus respectivas variantes.
 

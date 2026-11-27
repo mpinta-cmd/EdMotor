@@ -26,13 +26,15 @@ class OnlineCartStoreTest {
     @Test
     fun retryUsesTheSavedRequestAcrossStoreInstancesAndKeepsAccountsSeparate() {
         val items = linkedMapOf(9L to 3, 2L to 1)
-        val beforeRestart = OnlineCartStore(context, project).prepareOrder(17L, items)
+        val total = 75_000L
+        val beforeRestart = OnlineCartStore(context, project).prepareOrder(17L, items, total)
         val reopened = OnlineCartStore(context, project)
 
         assertEquals(beforeRestart, reopened.pendingOrder(17L))
-        assertEquals(beforeRestart, reopened.prepareOrder(17L, linkedMapOf(2L to 1, 9L to 3)))
+        assertEquals(beforeRestart, reopened.prepareOrder(17L, linkedMapOf(2L to 1, 9L to 3), total))
+        assertThrows(OnlineInputError::class.java) { reopened.prepareOrder(17L, items, 80_000L) }
         assertNull(reopened.pendingOrder(18L))
-        assertNotEquals(beforeRestart.requestId, reopened.prepareOrder(18L, items).requestId)
+        assertNotEquals(beforeRestart.requestId, reopened.prepareOrder(18L, items, total).requestId)
         assertNull(OnlineCartStore(context, otherProject).pendingOrder(17L))
     }
 

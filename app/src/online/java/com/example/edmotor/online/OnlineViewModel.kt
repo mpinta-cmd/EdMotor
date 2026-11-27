@@ -208,7 +208,6 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
                 if (OnlineResource.ORDERS in resources) launch {
                     refreshResource(OnlineResource.ORDERS, { service.orders(session.auth) }) { copy(orders = it) }
-                    recoverPendingOrder(service, session)
                 }
                 if (OnlineResource.VEHICLES in resources) launch {
                     refreshResource(OnlineResource.VEHICLES, { service.vehicles(session.auth) }) { copy(vehicles = it) }
@@ -220,6 +219,7 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                     refreshResource(OnlineResource.MAINTENANCE, { service.maintenance(session.auth) }) { copy(maintenance = it) }
                 }
             }
+            if (OnlineResource.ORDERS in resources) recoverPendingOrder(service, session)
         } catch (error: HttpException) {
             if (!unauthorized(error)) throw error
             expireSession()
@@ -303,11 +303,15 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(cart = cart) }
     }
 
-    fun createOrder(items: Map<Long, Int>, expectedRequestId: String?, onCreated: () -> Unit = {}) {
+    fun confirmPurchase(items: Map<Long, Int>, expectedTotalCop: Long?, expectedRequestId: String?) {
         val selection = items.toMap()
-        mutate("Pedido enviado.", onCreated) { service, auth ->
+        val successMessage = if (expectedTotalCop == null) "Pedido enviado." else "Compra confirmada."
+        mutate(successMessage) { service, auth ->
             val client = requireSession().user
-            if (client.role != UserRole.CLIENT.name) throw OnlineInputError("Entra con tu perfil de cliente para enviar el pedido.")
+            if (client.role != UserRole.CLIENT.name) throw OnlineInputError("Entra con tu perfil de cliente para finalizar la compra.")
+            if (expectedRequestId == null && (expectedTotalCop == null || expectedTotalCop <= 0L)) {
+                throw OnlineInputError("Revisa el total antes de confirmar la compra.")
+            }
             val selected = _state.value.checkoutItems(selection, expectedRequestId)
             if (selected.isEmpty() || selected.size > 100 || selected.any { (id, count) -> id <= 0 || count <= 0 }) {
                 throw OnlineInputError("Agrega repuestos válidos al carrito.")
@@ -317,14 +321,14 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (store.pendingOrder(client.id)?.requestId != expectedRequestId) {
                     throw OnlineInputError("El estado de tu envío cambió. Revisa el carrito y Mis pedidos.")
                 }
-                store.prepareOrder(client.id, selected)
+                store.prepareOrder(client.id, selected, expectedTotalCop)
             }
             _state.update { it.copy(pendingOrder = pending) }
+            val lines = pending.items.map { (id, count) -> OnlineOrderLine(id, count) }
+            val total = pending.expectedTotalCop
             val order = try {
-                service.createOrder(
-                    auth,
-                    OnlineOrderWrite(pending.requestId, pending.items.map { (id, count) -> OnlineOrderLine(id, count) })
-                )
+                if (total == null) service.createOrder(auth, OnlineOrderWrite(pending.requestId, lines))
+                else service.checkout(auth, OnlineCheckoutWrite(pending.requestId, lines, total))
             } catch (error: HttpException) {
                 if (error.response()?.headers()?.get("EdMotor-Order-Result") == "rejected") {
                     withContext(Dispatchers.IO) { store.discardOrder(client.id, pending) }
@@ -349,25 +353,48 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun acknowledgeOrder(clientId: Long, pending: PendingOnlineOrder, order: OnlineOrder) {
-        if (order.items.associate { it.productId to it.quantity } != pending.items) {
+        if (order.items.associate { it.productId to it.quantity } != pending.items ||
+            (pending.expectedTotalCop != null && order.totalCop != pending.expectedTotalCop)
+        ) {
             throw OnlineInputError("Aún estamos verificando tu pedido. Conservamos los repuestos del envío.")
         }
         // A foreground action can cancel background recovery. Keep the disk update and visible cart together.
         withContext(NonCancellable) {
             val cart = withContext(Dispatchers.IO) { requireNotNull(cartStore).acknowledgeOrder(clientId, pending) }
+            val products = applyInventoryUpdates(order.inventoryUpdates)
             _state.update {
                 it.copy(
                     cart = cart,
                     pendingOrder = null,
+                    checkoutReceiptId = order.id,
+                    products = products ?: it.products,
                     orders = it.orders.withItem(order, OnlineOrder::id).sortedByDescending { row -> row.createdAtMillis }
                 )
             }
         }
     }
 
+    fun clearCheckoutReceipt() = _state.update { it.copy(checkoutReceiptId = null) }
+
+    private suspend fun applyInventoryUpdates(updates: List<OnlineProduct>?): List<OnlineProduct>? {
+        if (updates.isNullOrEmpty()) return null
+        val catalog = _state.value.products.associateBy(OnlineProduct::id).toMutableMap()
+        for (product in updates) {
+            val previous = catalog[product.id]
+            if (previous == null || product.version >= previous.version) catalog[product.id] = product
+        }
+        return storeCatalog(catalog.values.toList())
+    }
+
     fun decideOrder(orderId: Long, status: String) = mutate("Pedido actualizado.") { service, auth ->
         val order = service.decideOrder(auth, orderId, OnlineOrderDecision(status))
-        _state.update { it.copy(orders = it.orders.withItem(order, OnlineOrder::id).sortedByDescending { row -> row.createdAtMillis }) }
+        val products = applyInventoryUpdates(order.inventoryUpdates)
+        _state.update {
+            it.copy(
+                products = products ?: it.products,
+                orders = it.orders.withItem(order, OnlineOrder::id).sortedByDescending { row -> row.createdAtMillis }
+            )
+        }
     }
 
     fun createVehicle(brand: String, model: String, year: Int, plate: String, onCreated: () -> Unit = {}) =

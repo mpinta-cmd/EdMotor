@@ -36,9 +36,10 @@ PositiveId = Annotated[int, Path(gt=0, le=MAX_BIGINT)]
 PositiveLong = Annotated[StrictInt, Field(gt=0, le=MAX_BIGINT)]
 
 _PRODUCT_FIELDS = "id, version, name, description, category, price_cop, promotion_price_cop, stock, image_id"
-_ORDER_FIELDS = "id, status, client_name, total_cop, created_at"
+_ORDER_FIELDS = "id, status, client_name, total_cop, created_at, payment_method"
 _ORDER_ITEM_FIELDS = "order_id, product_id, product_name, quantity, unit_price_cop"
 _ORDER_REJECTED = {"EdMotor-Order-Result": "rejected"}
+PAY_ON_PICKUP = "PAY_ON_PICKUP"
 
 
 class CommerceBody(BaseModel):
@@ -69,8 +70,12 @@ class OrderRequest(CommerceBody):
     items: list[OrderLineRequest] = Field(min_length=1, max_length=100)
 
 
+class CheckoutRequest(OrderRequest):
+    expected_total_cop: PositiveLong
+
+
 class OrderDecision(CommerceBody):
-    status: Literal["CONFIRMED", "REJECTED"]
+    status: Literal["CONFIRMED", "REJECTED", "COMPLETED"]
 
 
 def product_dto(row: dict) -> dict:
@@ -319,6 +324,7 @@ def order_dto(row: dict, items: list[dict]) -> dict:
     return {
         "id": row["id"], "status": row["status"], "clientName": row["client_name"],
         "totalCop": row["total_cop"], "createdAtMillis": int(row["created_at"].timestamp() * 1000),
+        "paymentMethod": row["payment_method"],
         "items": [
             {
                 "productId": item["product_id"], "productName": item["product_name"],
@@ -337,6 +343,14 @@ def read_order_items(db: Connection, order_ids: list[int]) -> list[dict]:
     ).fetchall()
 
 
+def order_with_inventory(db: Connection, order: dict, items: list[dict]) -> dict:
+    products = db.execute(
+        f"SELECT {_PRODUCT_FIELDS} FROM products WHERE is_active AND id = ANY(%s::bigint[]) ORDER BY id",
+        ([item["product_id"] for item in items],),
+    ).fetchall()
+    return {**order_dto(order, items), "inventoryUpdates": [product_dto(row) for row in products]}
+
+
 @router.get("/orders")
 def list_orders(db: Db, user: User) -> list[dict]:
     rows = db.execute(
@@ -353,26 +367,62 @@ def list_orders(db: Db, user: User) -> list[dict]:
 
 def find_order_by_request(db: Connection, client_id: int, request_id: UUID) -> dict | None:
     return db.execute(
-        f"SELECT {_ORDER_FIELDS} FROM orders WHERE client_user_id = %s AND request_id = %s",
+        f"SELECT {_ORDER_FIELDS} FROM orders WHERE client_user_id = %s AND request_id = %s FOR SHARE",
         (client_id, request_id),
     ).fetchone()
 
 
 @router.get("/orders/requests/{request_id}")
 def get_order_by_request(request_id: UUID, db: Db, user: User) -> dict:
-    order = find_order_by_request(db, user["id"], request_id)
-    if order is None:
-        raise HTTPException(404, "No encontramos un pedido para esta solicitud.")
-    return order_dto(order, read_order_items(db, [order["id"]]))
+    with db.transaction():
+        order = find_order_by_request(db, user["id"], request_id)
+        if order is None:
+            raise HTTPException(404, "No encontramos un pedido para esta solicitud.")
+        items = read_order_items(db, [order["id"]])
+        if order["payment_method"] == PAY_ON_PICKUP:
+            return order_with_inventory(db, order, items)
+        return order_dto(order, items)
 
 
 @router.post("/orders", status_code=status.HTTP_201_CREATED)
 def create_order(body: OrderRequest, db: Db, user: User) -> dict:
+    return save_order(body, db, user)
+
+
+@router.post("/orders/checkout", status_code=status.HTTP_201_CREATED)
+def checkout_order(body: CheckoutRequest, db: Db, user: User) -> dict:
+    return save_order(body, db, user, expected_total_cop=body.expected_total_cop)
+
+
+def lock_order_products(
+    db: Connection, product_ids: list[int], *, for_update: bool = True, include_inactive: bool = False
+) -> list[dict]:
+    lock = "FOR NO KEY UPDATE" if for_update else "FOR SHARE"
+    return db.execute(
+        f"""SELECT id, name, stock, COALESCE(promotion_price_cop, price_cop) AS unit_price
+            FROM products WHERE (%s OR is_active) AND id = ANY(%s::bigint[]) ORDER BY id {lock}""",
+        (include_inactive, product_ids),
+    ).fetchall()
+
+
+def change_order_stock(db: Connection, order_id: int, *, direction: Literal[-1, 1]) -> None:
+    db.execute(
+        """UPDATE products p SET stock = p.stock + (%s * i.quantity),
+           version = p.version + 1, updated_at = now()
+           FROM order_items i WHERE i.order_id = %s AND p.id = i.product_id""",
+        (direction, order_id),
+    )
+
+
+def save_order(
+    body: OrderRequest, db: Connection, user: dict, *, expected_total_cop: int | None = None
+) -> dict:
     if user["role"] != "CLIENT":
         raise HTTPException(403, "Solo la cuenta de cliente puede solicitar compras.")
     quantities = {item.product_id: item.quantity for item in body.items}
     if len(quantities) != len(body.items):
         raise HTTPException(422, "Cada repuesto debe aparecer una sola vez en el pedido.")
+    checkout = expected_total_cop is not None
 
     with db.transaction():
         # Serialize submissions from this client to make retries safe across workers.
@@ -382,21 +432,23 @@ def create_order(body: OrderRequest, db: Db, user: User) -> dict:
             items = read_order_items(db, [previous["id"]])
             if quantities != {item["product_id"]: item["quantity"] for item in items}:
                 raise HTTPException(409, "Ese identificador de solicitud ya se usó con otro pedido.")
+            if checkout and previous["total_cop"] != expected_total_cop:
+                raise HTTPException(409, "Ese identificador de solicitud ya se usó con otro total.")
+            if checkout:
+                return order_with_inventory(db, previous, items)
             return order_dto(previous, items)
-        products = db.execute(
-            """SELECT id, name, stock, COALESCE(promotion_price_cop, price_cop) AS unit_price
-               FROM products WHERE is_active AND id = ANY(%s::bigint[]) ORDER BY id FOR SHARE""",
-            (list(quantities),),
-        ).fetchall()
+        products = lock_order_products(db, list(quantities), for_update=checkout)
         if len(products) != len(quantities) or any(row["stock"] < quantities[row["id"]] for row in products):
             raise HTTPException(409, "Cambió la disponibilidad. Revisa los repuestos del carrito.", headers=_ORDER_REJECTED)
         total_cop = sum(row["unit_price"] * quantities[row["id"]] for row in products)
         if total_cop > MAX_BIGINT:
             raise HTTPException(422, "El total del pedido se pasa del límite. Reduce las cantidades.", headers=_ORDER_REJECTED)
+        if checkout and total_cop != expected_total_cop:
+            raise HTTPException(409, "Cambió el precio. Revisa el nuevo total antes de confirmar.", headers=_ORDER_REJECTED)
         order = db.execute(
-            f"""INSERT INTO orders (client_user_id, request_id, client_name, total_cop)
-                VALUES (%s, %s, %s, %s) RETURNING {_ORDER_FIELDS}""",
-            (user["id"], body.request_id, user["display_name"], total_cop),
+            f"""INSERT INTO orders (client_user_id, request_id, client_name, total_cop, payment_method)
+                VALUES (%s, %s, %s, %s, %s) RETURNING {_ORDER_FIELDS}""",
+            (user["id"], body.request_id, user["display_name"], total_cop, PAY_ON_PICKUP if checkout else None),
         ).fetchone()
         with db.cursor() as cursor:
             cursor.executemany(
@@ -404,7 +456,11 @@ def create_order(body: OrderRequest, db: Db, user: User) -> dict:
                    VALUES (%s, %s, %s, %s, %s)""",
                 [(order["id"], row["id"], row["name"], quantities[row["id"]], row["unit_price"]) for row in products],
             )
-        return order_dto(order, read_order_items(db, [order["id"]]))
+        items = read_order_items(db, [order["id"]])
+        if checkout:
+            change_order_stock(db, order["id"], direction=-1)
+            return order_with_inventory(db, order, items)
+        return order_dto(order, items)
 
 
 @router.post("/orders/{order_id}/decision")
@@ -416,29 +472,37 @@ def decide_order(order_id: PositiveId, body: OrderDecision, db: Db, owner: Owner
         ).fetchone()
         if order is None:
             raise HTTPException(404, "El pedido no existe.")
-        if order["status"] not in ("PENDING", body.status):
-            raise HTTPException(409, "El pedido ya fue revisado.")
         items = read_order_items(db, [order_id])
+        pickup = order["payment_method"] == PAY_ON_PICKUP
+        confirms_legacy_order = body.status == "CONFIRMED" and not pickup
+        restores_pickup_order = body.status == "REJECTED" and pickup
         if order["status"] == body.status:
+            if confirms_legacy_order or restores_pickup_order:
+                return order_with_inventory(db, order, items)
             return order_dto(order, items)
-        if body.status == "CONFIRMED":
-            products = db.execute(
-                """SELECT id, stock FROM products WHERE is_active AND id = ANY(%s::bigint[])
-                   ORDER BY id FOR NO KEY UPDATE""",
-                ([item["product_id"] for item in items],),
-            ).fetchall()
+
+        if body.status == "COMPLETED":
+            if not pickup or order["status"] != "CONFIRMED":
+                raise HTTPException(409, "El pedido debe estar listo para registrar el cobro y la entrega.")
+        elif order["status"] != "PENDING":
+            raise HTTPException(409, "El pedido ya fue revisado.")
+        elif confirms_legacy_order:
+            products = lock_order_products(db, [item["product_id"] for item in items])
             available_stock = {row["id"]: row["stock"] for row in products}
             if not items or any(available_stock.get(i["product_id"], 0) < i["quantity"] for i in items):
                 raise HTTPException(409, "No hay existencias para completar el pedido.")
-            db.execute(
-                """UPDATE products p SET stock = p.stock - i.quantity,
-                   version = p.version + 1, updated_at = now()
-                   FROM order_items i WHERE i.order_id = %s AND p.id = i.product_id""",
-                (order_id,),
-            )
+            change_order_stock(db, order_id, direction=-1)
+        elif restores_pickup_order:
+            products = lock_order_products(db, [item["product_id"] for item in items], include_inactive=True)
+            quantities = {item["product_id"]: item["quantity"] for item in items}
+            if any(row["stock"] + quantities[row["id"]] > MAX_STOCK for row in products):
+                raise HTTPException(409, "Ajusta las existencias antes de devolver las unidades del pedido.")
+            change_order_stock(db, order_id, direction=1)
         order = db.execute(
             f"""UPDATE orders SET status = %s, reviewed_by = %s, reviewed_at = now()
                 WHERE id = %s RETURNING {_ORDER_FIELDS}""",
             (body.status, owner["id"], order_id),
         ).fetchone()
+        if confirms_legacy_order or restores_pickup_order:
+            return order_with_inventory(db, order, items)
         return order_dto(order, items)

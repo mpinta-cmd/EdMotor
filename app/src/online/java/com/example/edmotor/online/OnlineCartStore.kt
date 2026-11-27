@@ -3,7 +3,11 @@ package com.example.edmotor.online
 import android.content.Context
 import java.util.UUID
 
-data class PendingOnlineOrder(val requestId: String, val items: Map<Long, Int>)
+data class PendingOnlineOrder(
+    val requestId: String,
+    val items: Map<Long, Int>,
+    val expectedTotalCop: Long? = null
+)
 
 internal class OnlineCartStore(context: Context, project: String) {
     private val preferences = context.getSharedPreferences("edmotor_online_cart_$project", Context.MODE_PRIVATE)
@@ -30,22 +34,34 @@ internal class OnlineCartStore(context: Context, project: String) {
 
     fun pendingOrder(clientId: Long): PendingOnlineOrder? {
         val value = preferences.getString(pendingKey(clientId), null) ?: return null
-        val requestId = value.substringBefore('|')
-        val lines = value.substringAfter('|', "").split(',')
+        val fields = value.split('|', limit = 4)
+        val requestId = fields.first()
+        val lines = fields.getOrNull(1).orEmpty().split(',')
         val items = decodeItems(lines)
+        val encodedTotal = fields.getOrNull(2)
+        val total = encodedTotal?.toLongOrNull()?.takeIf { it > 0L }
         val validId = runCatching { UUID.fromString(requestId).toString() == requestId }.getOrDefault(false)
-        if (!validId || items.isEmpty() || items.size != lines.size) {
+        if (!validId || items.isEmpty() || items.size != lines.size ||
+            fields.size > 3 || (encodedTotal != null && total == null)
+        ) {
             throw OnlineInputError("No pudimos recuperar la solicitud guardada en este teléfono.")
         }
-        return PendingOnlineOrder(requestId, items)
+        return PendingOnlineOrder(requestId, items, total)
     }
 
-    fun prepareOrder(clientId: Long, items: Map<Long, Int>): PendingOnlineOrder = synchronized(preferences) {
-        if (items.isEmpty() || items.any { (id, quantity) -> id <= 0 || quantity <= 0 }) {
+    fun prepareOrder(
+        clientId: Long,
+        items: Map<Long, Int>,
+        expectedTotalCop: Long? = null
+    ): PendingOnlineOrder = synchronized(preferences) {
+        if (items.isEmpty() || items.any { (id, quantity) -> id <= 0 || quantity <= 0 } ||
+            (expectedTotalCop != null && expectedTotalCop <= 0L)
+        ) {
             throw OnlineInputError("Agrega repuestos válidos al carrito.")
         }
-        val order = pendingOrder(clientId) ?: PendingOnlineOrder(UUID.randomUUID().toString(), items.toSortedMap())
-        if (order.items != items) {
+        val order = pendingOrder(clientId)
+            ?: PendingOnlineOrder(UUID.randomUUID().toString(), items.toSortedMap(), expectedTotalCop)
+        if (order.items != items || order.expectedTotalCop != expectedTotalCop) {
             throw OnlineInputError("Primero verifica el resultado del pedido anterior.")
         }
         // Repeat the commit on retries in case an earlier attempt only changed the in-memory preferences.
@@ -96,8 +112,10 @@ internal class OnlineCartStore(context: Context, project: String) {
     private fun encode(cart: Map<Long, Int>): Set<String> =
         cart.mapTo(mutableSetOf()) { (id, quantity) -> "$id:$quantity" }
 
-    private fun encodeOrder(order: PendingOnlineOrder): String =
-        "${order.requestId}|${encode(order.items).joinToString(",")}"
+    private fun encodeOrder(order: PendingOnlineOrder): String {
+        val request = "${order.requestId}|${encode(order.items).joinToString(",")}"
+        return order.expectedTotalCop?.let { "$request|$it" } ?: request
+    }
 
     private fun decodeItems(entries: Iterable<String>): Map<Long, Int> = entries.mapNotNull { entry ->
         val id = entry.substringBefore(':').toLongOrNull()
