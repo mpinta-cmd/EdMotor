@@ -96,6 +96,7 @@ fun AppointmentsScreen(
     onViewMaintenance: ((Int) -> Unit)? = null,
     requestedCalendarDay: Long? = null,
     timeZone: TimeZone = TimeZone.getDefault(),
+    onOpenGarage: (() -> Unit)? = null,
     onCalendarDayHandled: () -> Unit = {}
 ) {
     var selectedSection by rememberSaveable(isWorkshop) { mutableStateOf(AppointmentSection.REQUESTS) }
@@ -353,6 +354,7 @@ fun AppointmentsScreen(
                                 nowMillis = nowMillis,
                                 isProcessing = isProcessing,
                                 timeZone = timeZone,
+                                onOpenGarage = onOpenGarage,
                                 onCreateAppointment = onCreateAppointment
                             )
                         }

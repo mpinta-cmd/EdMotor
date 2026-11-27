@@ -2,12 +2,14 @@
 
 `onlineDebug` y `onlineRelease` usan la API REST de `server/`. PostgreSQL guarda cuentas, vehículos, citas, repuestos, fotos, pedidos y el informe de cada cita terminada. Android usa Retrofit para intercambiar JSON y Room para conservar una copia local del catálogo. La app vuelve a consultar el servidor al abrirse, después de guardar un cambio y cada 20 segundos mientras está en pantalla.
 
-El servidor comprueba la sesión y el rol en cada operación. El dueño administra repuestos, pedidos y citas. El cliente registra sus vehículos y consulta sus propios pedidos, citas e informes. El inventario se descuenta al confirmar el pedido. Cada cliente puede tener una sola cita activa y clientes distintos pueden reservar a la misma hora. La agenda usa la hora del taller en Colombia.
+Al abrir la app se puede explorar el catálogo, ver fotos, consultar Testigos y añadir repuestos al carrito como invitado. El perfil de la barra superior permite iniciar sesión o crear una cuenta. Al continuar una compra o solicitar una cita, la app pide el perfil de cliente y vuelve a la pantalla correspondiente. El carrito del invitado pasa a la cuenta en ese teléfono. El pedido se envía cuando el cliente confirma.
+
+El servidor permite la lectura pública de los repuestos activos y sus fotos. Comprueba la sesión y el rol para pedidos, citas, vehículos y cambios de inventario. El dueño administra repuestos, pedidos y citas. El cliente registra sus vehículos y consulta sus propios pedidos, citas e informes. El inventario se descuenta al confirmar el pedido. Cada cliente puede tener una sola cita activa y clientes distintos pueden reservar a la misma hora. La agenda usa la hora del taller en Colombia.
 
 ## Probar desde Android Studio
 
 1. Instala Docker con Compose. Abre la terminal en `server/`, copia `.env.example` como `.env` y establece una contraseña aleatoria en `EDMOTOR_DB_PASSWORD`.
-2. Levanta el servidor y configura la cuenta del propietario. El segundo comando pide la contraseña en la terminal.
+2. Levanta el servidor. Si quieres crear el primer dueño desde la app, usa la activación explicada en la siguiente sección. Si prefieres hacerlo por terminal, el segundo comando pide la contraseña.
 
    ```text
    docker compose up --build -d
@@ -21,10 +23,14 @@ El servidor comprueba la sesión y el rol en cada operación. El dueño administ
    ```
 
 4. Sincroniza Gradle, selecciona **`onlineDebug`** en **Build Variants** y ejecuta la app. `10.0.2.2` es la dirección de tu computadora desde el emulador Android. Para un celular de pruebas conectado por USB, ejecuta `adb reverse tcp:8000 tcp:8000` y compila con `http://127.0.0.1:8000/api/v1/`.
-5. Desde un dispositivo, entra como **EdMotor**. Desde otro, crea una cuenta de cliente. Registra un vehículo y agenda una cita. Pulsa **Actualizar datos** en el teléfono del dueño para verla. Confírmala y comprueba que el cliente recibe el cambio.
-6. Crea un repuesto con foto como dueño. Desde el cliente, ponlo en el carrito y envía un pedido. En el dueño, abre **Mi Garaje → Pedidos** y confirma el pedido. Comprueba el estado y las existencias desde el cliente.
+5. Desde un dispositivo, entra con la cuenta del dueño y crea un repuesto con foto. Desde otro, abre la app como invitado, consulta ese repuesto, agrégalo al carrito y pulsa **Continuar compra**. Crea un perfil de cliente, verifica que conserva el carrito y pulsa **Enviar pedido**.
+6. En el dueño, abre **Mi Garaje → Pedidos** y confirma el pedido. Comprueba el estado y las existencias desde el cliente. Luego registra un vehículo, solicita una cita y verifícala desde la agenda del dueño.
 
 Las variantes tienen instalaciones separadas. El servidor en línea comienza con sus propios datos. Crea allí las cuentas y repuestos que quieras usar y registra los vehículos con el perfil correspondiente. Las bases y las cuentas de la práctica siguen accesibles desde sus respectivas variantes.
+
+## Activar al primer dueño desde Android
+
+Genera un código con `python -c "import secrets; print(secrets.token_urlsafe(32))"` y guarda el resultado en `EDMOTOR_OWNER_ACTIVATION_CODE` dentro del archivo privado `server/.env`. Arranca o recrea el servicio `api` con `docker compose up -d --build api`. En la app selecciona **Perfil → Crear cuenta de dueño** e introduce el código junto a los datos de la cuenta. Una vez activado el dueño, elimina el código del archivo de entorno y recrea el servicio. Un taller con un dueño existente accede con **Iniciar sesión**.
 
 ## Instalar el servidor para un piloto
 

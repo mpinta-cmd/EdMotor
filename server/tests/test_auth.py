@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from edmotor.auth import bootstrap_owner, reset_password
+from edmotor.auth import _matches_owner_activation_code, bootstrap_owner, reset_password
 from edmotor.db import SQL_DIRECTORY, migrate, open_database
 
 PREFIX = "/api/v1/auth"
@@ -124,3 +124,42 @@ def test_validation_response_does_not_echo_input_or_let_clients_select_a_role(cl
     assert wrong.headers["cache-control"] == "no-store"
     assert invalid_length not in wrong.text
     assert isinstance(wrong.json()["detail"], str)
+
+
+def test_owner_activation_requires_a_configured_urlsafe_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    code = secrets.token_urlsafe(32)
+    monkeypatch.delenv("EDMOTOR_OWNER_ACTIVATION_CODE", raising=False)
+    assert not _matches_owner_activation_code(code)
+    monkeypatch.setenv("EDMOTOR_OWNER_ACTIVATION_CODE", "codigo-corto")
+    assert not _matches_owner_activation_code("codigo-corto")
+    monkeypatch.setenv("EDMOTOR_OWNER_ACTIVATION_CODE", code)
+    assert not _matches_owner_activation_code("á" * len(code))
+    assert _matches_owner_activation_code(f" {code} ")
+
+
+def test_owner_activation_creates_a_single_workshop_and_limits_attempts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code = secrets.token_urlsafe(32)
+    monkeypatch.setenv("EDMOTOR_OWNER_ACTIVATION_CODE", code)
+    endpoint = f"{PREFIX}/register-owner"
+    owner_data = {
+        "username": " edmotor ", "displayName": "EdMotor", "password": OWNER_PASSWORD,
+        "activationCode": code,
+    }
+
+    wrong = client.post(endpoint, json={**owner_data, "activationCode": secrets.token_urlsafe(32)})
+    assert wrong.status_code == 403
+    registered = client.post(endpoint, json=owner_data)
+    assert registered.status_code == 201
+    assert registered.headers["cache-control"] == "no-store"
+    session = registered.json()
+    assert session["user"]["role"] == "WORKSHOP"
+    assert client.get(f"{PREFIX}/me", headers=authorize(session["token"])).json() == session["user"]
+    assert register_client(client)["user"]["role"] == "CLIENT"
+
+    for _ in range(3):
+        assert client.post(endpoint, json={**owner_data, "username": "otro_dueno"}).status_code == 409
+    limited = client.post(endpoint, json=owner_data)
+    assert limited.status_code == 429
+    assert int(limited.headers["retry-after"]) > 0

@@ -50,11 +50,14 @@ import java.util.Locale
 internal fun OnlineCartScreen(
     vm: OnlineViewModel,
     state: OnlineState,
-    cart: Map<Long, Int>,
     onQuantityChange: (Long, Int) -> Unit,
+    onAuthenticate: () -> Unit,
+    onBrowseCatalog: () -> Unit,
     onOrderCreated: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val guest = state.user == null
+    val cart = state.cart
     val productsById = remember(state.products) { state.products.associateBy { it.id } }
     val cartEntries = cart.entries.toList()
     val unavailable = cartEntries.any { (id, quantity) ->
@@ -78,10 +81,17 @@ internal fun OnlineCartScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "title") { OnlineSectionTitle("Carrito de compras", Icons.Outlined.ShoppingCart) }
-        if (state.user?.role != UserRole.CLIENT.name) {
+        if (state.user?.role == UserRole.WORKSHOP.name) {
             item(key = "unavailable") { OnlineListNote("El carrito está disponible en el perfil de cliente.") }
         } else if (cart.isEmpty()) {
-            item(key = "empty") { OnlineListNote("Tu carrito está vacío. Selecciona repuestos del catálogo.") }
+            item(key = "empty") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OnlineListNote("Tu carrito está vacío. Selecciona repuestos del catálogo.")
+                    OutlinedButton(onClick = onBrowseCatalog, modifier = Modifier.fillMaxWidth()) {
+                        Text("Explorar repuestos")
+                    }
+                }
+            }
         } else {
             items(cartEntries, key = { it.key }) { (id, quantity) ->
                 OnlineCartLine(
@@ -104,18 +114,25 @@ internal fun OnlineCartScreen(
                         Text("Total del pedido", style = MaterialTheme.typography.labelLarge)
                         Text(onlinePrice(total), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
                         Text(
-                            restriction ?: "El taller revisará el pedido. Puedes consultar su estado en Pedidos.",
+                            restriction ?: if (guest) "Crea tu perfil o inicia sesión para enviar el pedido."
+                                else "El taller revisará el pedido. Puedes consultar su estado en Pedidos.",
                             color = if (restriction == null) colors.onPrimaryContainer else colors.error,
                             style = MaterialTheme.typography.bodySmall
                         )
                         Button(
-                            onClick = { vm.createOrder(cart.toMap(), onCreated = onOrderCreated) },
+                            onClick = {
+                                if (guest) onAuthenticate() else vm.createOrder(cart, onCreated = onOrderCreated)
+                            },
                             enabled = !state.busy && restriction == null,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(if (state.busy) "Guardando…" else "Guardar pedido")
+                            Text(when {
+                                state.busy -> "Enviando…"
+                                guest -> "Continuar compra"
+                                else -> "Enviar pedido"
+                            })
                         }
                     }
                 }

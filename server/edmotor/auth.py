@@ -21,7 +21,7 @@ CLIENT = "CLIENT"
 WORKSHOP = "WORKSHOP"
 DEFAULT_OWNER_USERNAME = "edmotor"
 USERNAME = re.compile(r"[a-z0-9_]{3,20}")
-BEARER_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
+URLSAFE_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
 PASSWORD_MAX_BYTES = 128
 HASHER = PasswordHasher(time_cost=3, memory_cost=65_536, parallelism=1, hash_len=32, salt_len=16, type=Type.ID)
 HASH_SLOTS = BoundedSemaphore(value=4)
@@ -41,6 +41,10 @@ class LoginRequest(BaseModel):
 
 class RegisterRequest(LoginRequest):
     display_name: str = Field(alias="displayName", max_length=80)
+
+
+class OwnerRegisterRequest(RegisterRequest):
+    activation_code: str = Field(alias="activationCode", repr=False, max_length=80)
 
 
 class UserResponse(BaseModel):
@@ -102,7 +106,7 @@ def _token_hash(token: str) -> bytes:
 
 
 def _bearer_hash(credentials: HTTPAuthorizationCredentials | None) -> bytes:
-    if credentials is None or BEARER_TOKEN.fullmatch(credentials.credentials) is None:
+    if credentials is None or URLSAFE_TOKEN.fullmatch(credentials.credentials) is None:
         _unauthorized()
     return _token_hash(credentials.credentials)
 
@@ -189,6 +193,27 @@ def _matches_password(entered: str, stored_hash: str | None) -> bool:
     return stored_hash is not None and matched
 
 
+def _matches_owner_activation_code(entered: str) -> bool:
+    configured = os.environ.get("EDMOTOR_OWNER_ACTIVATION_CODE", "")
+    entered = entered.strip()
+    return (
+        URLSAFE_TOKEN.fullmatch(configured) is not None
+        and URLSAFE_TOKEN.fullmatch(entered) is not None
+        and secrets.compare_digest(configured, entered)
+    )
+
+
+def _insert_owner(db: Database, username: str, display_name: str, password_hash: str) -> User | None:
+    return db.execute(
+        """
+        INSERT INTO users (username, display_name, password_hash, role)
+        VALUES (%s, %s, %s, 'WORKSHOP') ON CONFLICT DO NOTHING
+        RETURNING id, username, display_name, role
+        """,
+        (username, display_name, password_hash),
+    ).fetchone()
+
+
 @router.post("/register", status_code=201, response_model=SessionResponse)
 def register(body: RegisterRequest, request: Request, db: Db) -> SessionResponse:
     _rate_limit(db, "register_ip", _client_host(request), maximum=10, seconds=3600)
@@ -214,6 +239,25 @@ def register(body: RegisterRequest, request: Request, db: Db) -> SessionResponse
         ).fetchone()
         if user is None:
             raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese usuario.")
+        return _new_session(db, user)
+
+
+@router.post("/register-owner", status_code=201, response_model=SessionResponse)
+def register_owner(body: OwnerRegisterRequest, request: Request, db: Db) -> SessionResponse:
+    _rate_limit(db, "register_ip", f"owner|{_client_host(request)}", maximum=5, seconds=3600)
+    if not _matches_owner_activation_code(body.activation_code):
+        raise HTTPException(status_code=403, detail="La activación de dueño no está disponible o el código es inválido.")
+
+    try:
+        username, display_name = _registration_details(body.username, body.display_name, body.password)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    password_hash = _hash_password(body.password)
+    with db.transaction():
+        user = _insert_owner(db, username, display_name, password_hash)
+        if user is None:
+            raise HTTPException(status_code=409, detail="El taller ya tiene dueño o el usuario está ocupado.")
         return _new_session(db, user)
 
 
@@ -264,13 +308,7 @@ def _prompt_new_password() -> str:
 
 def bootstrap_owner(db: Database, username: str, display_name: str, password: str) -> None:
     username, display_name = _registration_details(username, display_name, password)
-    owner = db.execute(
-        """
-        INSERT INTO users (username, display_name, password_hash, role)
-        VALUES (%s, %s, %s, 'WORKSHOP') ON CONFLICT DO NOTHING RETURNING id
-        """,
-        (username, display_name, _hash_password(password)),
-    ).fetchone()
+    owner = _insert_owner(db, username, display_name, _hash_password(password))
     if owner is None:
         raise ValueError("El taller ya tiene dueño o el usuario está ocupado.")
 

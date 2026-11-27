@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
-from .auth import require_owner, require_user
+from .auth import Bearer, WORKSHOP, require_owner, require_user
 from .db import get_db
 
 router = APIRouter(tags=["inventario y pedidos"])
@@ -107,7 +107,7 @@ def product_values(db: Connection, body: ProductDraft) -> tuple:
 
 
 @router.get("/products")
-def list_products(db: Db, _user: User) -> list[dict]:
+def list_products(db: Db) -> list[dict]:
     rows = db.execute(
         f"""SELECT {_PRODUCT_FIELDS} FROM products WHERE is_active
             ORDER BY (promotion_price_cop IS NOT NULL) DESC, lower(name), id"""
@@ -292,19 +292,25 @@ def save_image(db: Connection, owner_id: int, data: bytes) -> dict:
 
 
 @router.get("/products/images/{image_id}", response_class=Response)
-def product_image(image_id: UUID, db: Db, user: User) -> Response:
+def product_image(image_id: UUID, db: Db, credentials: Bearer) -> Response:
+    user = require_user(credentials, db) if credentials is not None else None
+    can_preview = user is not None and user["role"] == WORKSHOP
     image = db.execute(
         """SELECT data FROM product_images im WHERE im.id = %s AND (
               %s OR EXISTS (SELECT 1 FROM products p WHERE p.image_id = im.id AND p.is_active)
            )""",
-        (image_id, user["role"] == "WORKSHOP"),
+        (image_id, can_preview),
     ).fetchone()
     if image is None:
         raise HTTPException(404, "La imagen no está disponible.")
     return Response(
         content=bytes(image["data"]),
         media_type="image/webp",
-        headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"},
+        headers={
+            "Cache-Control": "no-store" if can_preview else "private, max-age=300",
+            "Vary": "Authorization",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

@@ -41,6 +41,7 @@ internal fun OnlineAppointmentsScreen(
     vm: OnlineViewModel,
     state: OnlineState,
     requestedCalendarDay: Long? = null,
+    onOpenGarage: (() -> Unit)? = null,
     onCalendarDayHandled: () -> Unit = {}
 ) {
     val user = state.user ?: return
@@ -149,6 +150,7 @@ internal fun OnlineAppointmentsScreen(
         onRegisterMaintenance = { appointment -> reportAppointmentId = resolveAppointment(appointment)?.id },
         requestedCalendarDay = requestedCalendarDay,
         timeZone = onlineWorkshopTimeZone,
+        onOpenGarage = onOpenGarage,
         onCalendarDayHandled = onCalendarDayHandled
     )
 

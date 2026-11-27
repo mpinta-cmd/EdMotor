@@ -133,18 +133,24 @@ class SharedWorkflows(unittest.TestCase):
         image = self.call("POST", "/products/images", self.owner, raw=multipart,
                           content_type=f"multipart/form-data; boundary={boundary}", expected=201)
         image_path = image["imagePath"].removeprefix("/api/v1")
+        self.assertTrue(self.call("GET", image_path, self.owner).startswith(b"RIFF"))
+        self.call("GET", image_path, expected=404)
         product_data = {
             "name": "Filtro de prueba " + uuid4().hex[:8], "description": "Repuesto de prueba",
             "category": "Filtros", "priceCop": 65_000, "promotionPriceCop": 55_000,
             "stock": 1, "imagePath": image["imagePath"],
         }
         self.call("POST", "/products", first, body=product_data, expected=403)
+        self.call("POST", "/products", body=product_data, expected=401)
         product = self.call("POST", "/products", self.owner, body=product_data, expected=201)
         self.assertIn(product, self.call("GET", "/products", first))
+        self.assertIn(product, self.call("GET", "/products"))
         self.assertTrue(self.call("GET", image_path, first).startswith(b"RIFF"))
-        self.call("GET", image_path, expected=401)
+        self.assertTrue(self.call("GET", image_path).startswith(b"RIFF"))
 
         order_data = {"requestId": str(uuid4()), "items": [{"productId": product["id"], "quantity": 1}]}
+        self.call("POST", "/orders", body=order_data, expected=401)
+        self.call("GET", "/orders", expected=401)
         first_order = self.call("POST", "/orders", first, body=order_data, expected=201)
         self.assertEqual(first_order, self.call("POST", "/orders", first, body=order_data, expected=201))
         second_order = self.call("POST", "/orders", second, body={**order_data, "requestId": str(uuid4())}, expected=201)
@@ -167,4 +173,6 @@ class SharedWorkflows(unittest.TestCase):
         self.call("PUT", path, self.owner, body={**product_data, "version": product["version"]}, expected=409)
         self.call("DELETE", f"{path}?version={latest['version']}", self.owner, expected=204)
         self.assertNotIn(product["id"], [item["id"] for item in self.call("GET", "/products", first)])
+        self.assertNotIn(product["id"], [item["id"] for item in self.call("GET", "/products")])
+        self.call("GET", image_path, expected=404)
         self.assertIn(confirmed_order, self.call("GET", "/orders", self.owner))

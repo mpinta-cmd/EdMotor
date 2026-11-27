@@ -37,7 +37,6 @@ import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -100,11 +99,10 @@ private fun searchTerm(value: String): String =
 internal fun OnlineCatalogScreen(
     vm: OnlineViewModel,
     state: OnlineState,
-    cart: Map<Long, Int>,
-    onAddToCart: (Long) -> Unit,
-    onOpenCart: () -> Unit
+    onAddToCart: (Long) -> Unit
 ) {
     val workshop = state.user?.role == UserRole.WORKSHOP.name
+    val cart = state.cart
     var query by rememberSaveable { mutableStateOf("") }
     var showingEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<OnlineProduct?>(null) }
@@ -152,12 +150,6 @@ internal fun OnlineCatalogScreen(
                         Icon(Icons.Outlined.Add, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("Agregar repuesto")
-                    }
-                } else if (cart.isNotEmpty()) {
-                    OutlinedButton(onClick = onOpenCart, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Outlined.ShoppingCart, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Ver carrito")
                     }
                 }
             }

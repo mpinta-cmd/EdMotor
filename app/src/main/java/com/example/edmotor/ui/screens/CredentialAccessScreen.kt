@@ -56,7 +56,7 @@ import com.example.edmotor.session.LocalCredentialValidation
 import com.example.edmotor.ui.components.EdMotorMark
 import com.example.edmotor.ui.theme.EdMotorHeroNavy
 
-private enum class CredentialMode { SIGN_IN, REGISTER_CLIENT, SETUP_OWNER }
+private enum class CredentialMode { SIGN_IN, REGISTER_CLIENT, SETUP_OWNER, REGISTER_ONLINE_OWNER }
 
 @Composable
 fun CredentialAccessScreen(
@@ -72,25 +72,36 @@ fun CredentialAccessScreen(
     onClearMessage: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
-    isOnlineMode: Boolean = false
+    isOnlineMode: Boolean = false,
+    initiallyRegisterClient: Boolean = false,
+    accessReason: String? = null,
+    onDismiss: (() -> Unit)? = null,
+    onRegisterOnlineOwner: ((username: String, displayName: String, password: String, activationCode: String) -> Unit)? = null
 ) {
-    var requestedMode by rememberSaveable { mutableStateOf(CredentialMode.SIGN_IN) }
+    var requestedMode by rememberSaveable(initiallyRegisterClient) {
+        mutableStateOf(if (initiallyRegisterClient) CredentialMode.REGISTER_CLIENT else CredentialMode.SIGN_IN)
+    }
     var displayName by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var passwordInput by remember { mutableStateOf("") }
+    var activationCode by remember { mutableStateOf("") }
     var validationMessage by remember { mutableStateOf<String?>(null) }
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
     val canSetupOwner = ownerConfigured == false
-    val mode = if (requestedMode == CredentialMode.SETUP_OWNER && !canSetupOwner) {
+    val mode = if ((requestedMode == CredentialMode.SETUP_OWNER && !canSetupOwner) ||
+        (requestedMode == CredentialMode.REGISTER_ONLINE_OWNER && onRegisterOnlineOwner == null)
+    ) {
         CredentialMode.SIGN_IN
     } else requestedMode
+    val registeringOwner = mode == CredentialMode.REGISTER_ONLINE_OWNER
+    val needsDisplayName = registeringOwner || mode == CredentialMode.REGISTER_CLIENT
     val usesFixedOwnerUsername = mode == CredentialMode.SETUP_OWNER && !isPrivateMode
     val cleanUsername = if (usesFixedOwnerUsername) DemoOwnerProfile.USERNAME else username.trim()
     val cleanName = displayName.trim()
     val canEdit = ownerConfigured != null && !isSubmitting
     val canSubmit = canEdit && cleanUsername.isNotEmpty() && passwordInput.isNotEmpty() &&
-        (mode != CredentialMode.REGISTER_CLIENT || cleanName.isNotEmpty())
+        (!needsDisplayName || cleanName.isNotEmpty()) && (!registeringOwner || activationCode.isNotBlank())
 
     LaunchedEffect(mode) { scrollState.scrollTo(0) }
 
@@ -103,6 +114,7 @@ fun CredentialAccessScreen(
         focusManager.clearFocus()
         clearFeedback()
         passwordInput = ""
+        activationCode = ""
         requestedMode = nextMode
     }
 
@@ -110,23 +122,32 @@ fun CredentialAccessScreen(
         if (!canSubmit) return
         validationMessage = when (mode) {
             CredentialMode.SIGN_IN -> LocalCredentialValidation.loginError(cleanUsername, passwordInput)
-            CredentialMode.REGISTER_CLIENT -> LocalCredentialValidation.registrationError(cleanUsername, cleanName, passwordInput)
+            CredentialMode.REGISTER_CLIENT, CredentialMode.REGISTER_ONLINE_OWNER ->
+                LocalCredentialValidation.registrationError(cleanUsername, cleanName, passwordInput)
             CredentialMode.SETUP_OWNER -> LocalCredentialValidation.ownerError(cleanUsername, passwordInput)
         }
         if (validationMessage != null) return
 
         focusManager.clearFocus()
         val submittedPassword = passwordInput
+        val submittedCode = activationCode.trim()
         passwordInput = ""
+        activationCode = ""
         when (mode) {
             CredentialMode.SIGN_IN -> onSignIn(cleanUsername, submittedPassword)
             CredentialMode.REGISTER_CLIENT -> onRegisterClient(cleanUsername, cleanName, submittedPassword)
             CredentialMode.SETUP_OWNER -> onSetupOwner(cleanUsername, submittedPassword)
+            CredentialMode.REGISTER_ONLINE_OWNER ->
+                onRegisterOnlineOwner?.invoke(cleanUsername, cleanName, submittedPassword, submittedCode)
         }
     }
 
-    BackHandler(enabled = mode != CredentialMode.SIGN_IN) {
-        if (canEdit) selectMode(CredentialMode.SIGN_IN)
+    BackHandler(enabled = mode != CredentialMode.SIGN_IN || onDismiss != null) {
+        if (mode == CredentialMode.SIGN_IN) {
+            if (!isSubmitting) onDismiss?.invoke()
+        } else if (canEdit) {
+            selectMode(CredentialMode.SIGN_IN)
+        }
     }
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -173,13 +194,16 @@ fun CredentialAccessScreen(
                             CredentialMode.SIGN_IN -> "Accede a tu cuenta"
                             CredentialMode.REGISTER_CLIENT -> "Crear cuenta de cliente"
                             CredentialMode.SETUP_OWNER -> "Configura la cuenta del dueño"
+                            CredentialMode.REGISTER_ONLINE_OWNER -> "Crear cuenta de dueño"
                         },
                         modifier = Modifier.semantics { heading() },
                         style = MaterialTheme.typography.titleLarge
                     )
                     Text(
                         when {
-                            isOnlineMode -> "Entra con la misma cuenta desde cualquiera de tus celulares."
+                            registeringOwner -> "Usa el código de activación del taller para administrar el inventario, los pedidos y las citas."
+                            !accessReason.isNullOrBlank() -> accessReason
+                            isOnlineMode -> "Entra con tu cuenta de EdMotor desde cualquiera de tus celulares."
                             mode == CredentialMode.SETUP_OWNER ->
                                 "La cuenta de EdMotor permite administrar el inventario, los pedidos y el mantenimiento."
                             !isPrivateMode && mode == CredentialMode.REGISTER_CLIENT ->
@@ -203,7 +227,7 @@ fun CredentialAccessScreen(
                     if (canRetry) {
                         TextButton(onClick = onRetry, enabled = !isSubmitting) { Text("Reintentar") }
                     }
-                    if (mode == CredentialMode.REGISTER_CLIENT) {
+                    if (needsDisplayName) {
                         OutlinedTextField(
                             value = displayName,
                             onValueChange = {
@@ -253,9 +277,31 @@ fun CredentialAccessScreen(
                         enabled = canEdit,
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { submit() })
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = if (registeringOwner) ImeAction.Next else ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = { focusManager.moveFocus(FocusDirection.Down) },
+                            onDone = { submit() }
+                        )
                     )
+                    if (registeringOwner) {
+                        OutlinedTextField(
+                            value = activationCode,
+                            onValueChange = {
+                                activationCode = it
+                                clearFeedback()
+                            },
+                            label = { Text("Código de activación") },
+                            modifier = Modifier.fillMaxWidth().semantics { password() },
+                            enabled = canEdit,
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { submit() })
+                        )
+                    }
                     Button(
                         onClick = ::submit,
                         enabled = canSubmit,
@@ -273,6 +319,7 @@ fun CredentialAccessScreen(
                                 CredentialMode.SIGN_IN -> if (isSubmitting) "Iniciando sesión…" else "Iniciar sesión"
                                 CredentialMode.REGISTER_CLIENT -> if (isSubmitting) "Creando cuenta…" else "Crear cuenta"
                                 CredentialMode.SETUP_OWNER -> if (isSubmitting) "Guardando cuenta…" else "Crear cuenta del dueño"
+                                CredentialMode.REGISTER_ONLINE_OWNER -> if (isSubmitting) "Creando cuenta…" else "Activar cuenta del dueño"
                             },
                             fontWeight = FontWeight.Bold
                         )
@@ -283,7 +330,13 @@ fun CredentialAccessScreen(
                             enabled = canEdit,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("Crear cuenta de cliente") }
-                        if (canSetupOwner) {
+                        if (onRegisterOnlineOwner != null) {
+                            TextButton(
+                                onClick = { selectMode(CredentialMode.REGISTER_ONLINE_OWNER) },
+                                enabled = canEdit,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Crear cuenta de dueño") }
+                        } else if (canSetupOwner) {
                             TextButton(
                                 onClick = { selectMode(CredentialMode.SETUP_OWNER) },
                                 enabled = canEdit,
@@ -295,7 +348,14 @@ fun CredentialAccessScreen(
                             onClick = { selectMode(CredentialMode.SIGN_IN) },
                             enabled = canEdit,
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Volver al inicio de sesión") }
+                        ) { Text(if (isOnlineMode) "Ya tengo cuenta" else "Volver al inicio de sesión") }
+                    }
+                    if (onDismiss != null) {
+                        TextButton(
+                            onClick = onDismiss,
+                            enabled = !isSubmitting,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Volver a EdMotor") }
                     }
                 }
             }

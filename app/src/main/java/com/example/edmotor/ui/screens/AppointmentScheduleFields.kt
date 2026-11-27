@@ -59,6 +59,7 @@ internal fun AppointmentRequestForm(
     nowMillis: Long,
     isProcessing: Boolean,
     timeZone: TimeZone = TimeZone.getDefault(),
+    onOpenGarage: (() -> Unit)? = null,
     onCreateAppointment: (Vehicle, Long, String) -> Unit
 ) {
     var vehicleId by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -100,6 +101,11 @@ internal fun AppointmentRequestForm(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (onOpenGarage != null) {
+                    OutlinedButton(onClick = onOpenGarage, enabled = !isProcessing) {
+                        Text("Ir a Mi Garaje")
+                    }
+                }
             }
             AppointmentOptionMenu(
                 label = availableService ?: "Seleccionar tipo de servicio",

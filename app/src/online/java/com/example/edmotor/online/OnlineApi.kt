@@ -36,6 +36,9 @@ internal interface OnlineService {
     @POST("auth/register")
     suspend fun register(@Body body: OnlineRegistration): OnlineAuthResponse
 
+    @POST("auth/register-owner")
+    suspend fun registerOwner(@Body body: OnlineOwnerRegistration): OnlineAuthResponse
+
     @GET("auth/me")
     suspend fun me(@Header("Authorization") auth: String): OnlineUser
 
@@ -43,7 +46,7 @@ internal interface OnlineService {
     suspend fun logout(@Header("Authorization") auth: String)
 
     @GET("products")
-    suspend fun products(@Header("Authorization") auth: String): List<OnlineProduct>
+    suspend fun products(@Header("Authorization") auth: String? = null): List<OnlineProduct>
 
     @POST("products")
     suspend fun createProduct(@Header("Authorization") auth: String, @Body body: OnlineProductWrite): OnlineProduct
@@ -62,7 +65,7 @@ internal interface OnlineService {
 
     @Streaming
     @GET("products/images/{id}")
-    suspend fun productImage(@Header("Authorization") auth: String, @Path("id") id: String): ResponseBody
+    suspend fun productImage(@Header("Authorization") auth: String?, @Path("id") id: String): ResponseBody
 
     @GET("orders")
     suspend fun orders(@Header("Authorization") auth: String): List<OnlineOrder>
