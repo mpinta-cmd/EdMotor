@@ -379,8 +379,40 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     internal suspend fun findVehicleModels(brand: String, year: Int): List<VehicleModelSuggestion> =
         vehicleModelLookup.findModels(brand, year)
 
-    internal fun dashboardEvidenceScope(userId: Long?): String =
+    internal fun onlineProfileScope(userId: Long?): String =
         "online:${api?.project.orEmpty()}:${userId ?: "guest"}"
+
+    internal fun inventoryOwnerSession(userId: Long?): Any? =
+        liveSession?.takeIf { it.user.id == userId && it.user.role == UserRole.WORKSHOP.name }
+
+    internal fun isInventoryOwnerSession(sessionIdentity: Any): Boolean = liveSession === sessionIdentity
+
+    internal suspend fun confirmInventoryOwnerPassword(sessionIdentity: Any, password: String) {
+        val current = liveSession?.takeIf { it === sessionIdentity && it.user.role == UserRole.WORKSHOP.name }
+            ?: throw OnlineInputError("Vuelve a iniciar sesión como dueño.")
+        val service = requireNotNull(api).service
+        val confirmation = try {
+            service.login(OnlineCredentials(current.user.username, password))
+        } catch (error: HttpException) {
+            if (error.code() == 401) {
+                closeErrorResponse(error)
+                throw OnlineInputError("La contraseña de EdMotor no coincide.")
+            }
+            throw error
+        }
+        val confirmationAuth = "Bearer ${confirmation.token}"
+        val temporary = validOnlineToken(confirmation.token) && confirmationAuth != current.auth
+        if (temporary) {
+            viewModelScope.launch {
+                closeErrorResponse(capture { service.logout(confirmationAuth) }.exceptionOrNull())
+            }
+        }
+        if (!temporary || liveSession !== current || confirmation.user.id != current.user.id ||
+            confirmation.user.role != UserRole.WORKSHOP.name
+        ) {
+            throw OnlineInputError("No se pudo confirmar la cuenta del dueño. Vuelve a iniciar sesión.")
+        }
+    }
 
     fun createAppointment(vehicleId: Long, scheduledAtMillis: Long, serviceType: String) =
         mutateSession("Solicitud de cita enviada.") { session ->

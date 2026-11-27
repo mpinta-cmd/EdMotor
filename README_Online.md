@@ -72,6 +72,19 @@ Room guarda juntos los datos y la imagen en el dispositivo. Los registros del in
 
 El acelerómetro da una referencia de estabilidad del celular. El sensor de luz mide la iluminación ambiental cerca del dispositivo. Ambos funcionan localmente y la foto se sigue guardando desde **Foto del tablero**.
 
+## Buscar repuestos por voz
+
+En **Inicio**, pulsa el micrófono junto a **Buscar repuestos** y di el nombre del producto. Revisa o corrige la frase reconocida y pulsa **Buscar** para aplicarla al catálogo. El reconocimiento usa el servicio de voz de Android. Si el dispositivo carece de un servicio compatible, puedes usar el mismo buscador escribiendo.
+
+Si dictas desde un Inventario protegido y Android deja EdMotor en segundo plano, desbloquéalo al volver para revisar la frase reconocida.
+
+## Proteger el Inventario con huella
+
+1. Inicia sesión como dueño y abre **Tu perfil → Huella para Inventario** en un Android compatible con una huella registrada.
+2. Pulsa **Activar con huella** y confirma en el diálogo de Android. La protección se guarda para esa cuenta en ese celular.
+3. Sal de Inventario o deja EdMotor en segundo plano. Al volver, pulsa **Desbloquear con huella**. También puedes usar **Usar contraseña de EdMotor**. La verificación de Android puede ofrecer la credencial del dispositivo según la versión del sistema.
+4. Para retirar la protección, abre el mismo ajuste y confirma con Android o con tu contraseña de EdMotor.
+
 ## Activar al primer dueño desde Android
 
 Genera un código con `python -c "import secrets; print(secrets.token_urlsafe(32))"` y guarda el resultado en `EDMOTOR_OWNER_ACTIVATION_CODE` dentro del archivo privado `server/.env`. Arranca o recrea el servicio `api` con `docker compose up -d --build api`. En la app selecciona **Perfil → Crear cuenta de dueño** e introduce el código junto a los datos de la cuenta. Una vez activado el dueño, elimina el código del archivo de entorno y recrea el servicio. Un taller con un dueño existente accede con **Iniciar sesión**.

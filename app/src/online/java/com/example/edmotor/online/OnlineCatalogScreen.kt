@@ -36,7 +36,6 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -100,12 +99,13 @@ internal fun OnlineCatalogScreen(
     vm: OnlineViewModel,
     state: OnlineState,
     onAddToCart: (Long) -> Unit,
+    voiceSearch: OnlineVoiceSearchState,
     onReviewOrder: () -> Unit
 ) {
     val workshop = state.user?.role == UserRole.WORKSHOP.name
     val cart = state.cart
     val pending = state.pendingOrder != null
-    var query by rememberSaveable { mutableStateOf("") }
+    val query = voiceSearch.query
     var showingEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<OnlineProduct?>(null) }
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -135,14 +135,7 @@ internal fun OnlineCatalogScreen(
                     title = if (workshop) "Inventario de repuestos" else "Catálogo de repuestos",
                     icon = Icons.Outlined.Inventory2
                 )
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Buscar repuestos") },
-                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                    singleLine = true
-                )
+                OnlineVoiceSearchField(voiceSearch)
                 if (workshop) {
                     Button(
                         onClick = { editing = null; showingEditor = true },
@@ -182,6 +175,8 @@ internal fun OnlineCatalogScreen(
             )
         }
     }
+
+    OnlineVoiceSearchDialogs(voiceSearch)
 
     val selected = state.products.firstOrNull { it.id == selectedId }
     if (selected != null) {

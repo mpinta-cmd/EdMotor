@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.Badge
@@ -108,6 +109,16 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
         user == null && route == Routes.ORDER_MANAGEMENT -> Routes.PROFILE
         else -> route
     }
+    val ownerSession = vm.inventoryOwnerSession(user?.id)
+    val inventoryAccess = if (ownerSession != null) {
+        rememberOwnerInventoryAccess(
+            sessionIdentity = ownerSession,
+            profileScope = vm.onlineProfileScope(user?.id),
+            inventoryOpen = activeRoute == Routes.HOME,
+            isCurrentSession = vm::isInventoryOwnerSession,
+            confirmPassword = vm::confirmInventoryOwnerPassword
+        )
+    } else null
     val catalogSync = state.syncStatus(OnlineResource.CATALOG)
     val syncNotice = when (activeRoute) {
         Routes.HOME, Routes.CAR -> "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
@@ -228,6 +239,13 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                                     text = { Text("Mi Garaje") },
                                     onClick = { profileMenu = false; route = Routes.PROFILE }
                                 )
+                                if (inventoryAccess != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Huella para Inventario") },
+                                        leadingIcon = { Icon(Icons.Outlined.Fingerprint, contentDescription = null) },
+                                        onClick = { profileMenu = false; inventoryAccess.openSettings() }
+                                    )
+                                }
                                 if (!workshop) {
                                     DropdownMenuItem(
                                         text = { Text("Mis pedidos") },
@@ -274,7 +292,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
             Box(Modifier.weight(1f).fillMaxSize()) {
                 screenState.SaveableStateProvider("${user?.id ?: "guest"}:$activeRoute") { when (activeRoute) {
                     Routes.DASHBOARD -> DashboardScreen(
-                        evidenceScope = vm.dashboardEvidenceScope(user?.id),
+                        evidenceScope = vm.onlineProfileScope(user?.id),
                         vehicles = if (user == null) emptyList() else state.vehicles
                             .filter { workshop || it.clientId == user.id }
                             .map { vehicle ->
@@ -312,13 +330,18 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
                         onBrowseCatalog = { route = Routes.HOME },
                         onOrderCreated = { route = Routes.ORDER_MANAGEMENT }
                     )
-                    else -> when {
-                        state.configurationError != null -> OnlineConnectionNotice(state.configurationError)
-                        catalogSync.waitingForFirstData && state.products.isEmpty() -> OnlineConnectionNotice(
-                            if (catalogSync.retrying) "Volviendo a conectar con el catálogo…" else "Consultando repuestos…",
-                            working = true
-                        )
-                        else -> OnlineCatalogScreen(vm, state, vm::addToCart) { route = Routes.CAR }
+                    else -> {
+                        val voiceSearch = rememberOnlineVoiceSearch()
+                        when {
+                            state.configurationError != null -> OnlineConnectionNotice(state.configurationError)
+                            workshop && inventoryAccess == null -> OnlineConnectionNotice("Verificando el perfil del dueño…", working = true)
+                            inventoryAccess?.locked == true -> OwnerInventoryLockedScreen(inventoryAccess)
+                            catalogSync.waitingForFirstData && state.products.isEmpty() -> OnlineConnectionNotice(
+                                if (catalogSync.retrying) "Volviendo a conectar con el catálogo…" else "Consultando repuestos…",
+                                working = true
+                            )
+                            else -> OnlineCatalogScreen(vm, state, vm::addToCart, voiceSearch = voiceSearch) { route = Routes.CAR }
+                        }
                     }
                 } }
             }
