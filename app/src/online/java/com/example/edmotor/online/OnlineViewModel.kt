@@ -30,6 +30,7 @@ import retrofit2.HttpException
 
 class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
     private val api = OnlineApi.fromUrl(BuildConfig.EDMOTOR_ONLINE_URL, BuildConfig.DEBUG)
+    private val vehicleModelLookup by lazy { VehicleModelLookupRepository.create() }
     private val sessionStore = api?.let { OnlineSession(app, it.project) }
     private val cartStore = api?.let { OnlineCartStore(app, it.project) }
     private val catalogDatabase = Room.databaseBuilder(
@@ -374,6 +375,9 @@ class OnlineViewModel(private val app: Application) : AndroidViewModel(app) {
             val vehicle = service.createVehicle(auth, OnlineVehicleWrite(brand.trim(), model.trim(), year, plate.trim()))
             _state.update { it.copy(vehicles = it.vehicles.withItem(vehicle, OnlineVehicle::id)) }
         }
+
+    internal suspend fun findVehicleModels(brand: String, year: Int): List<VehicleModelSuggestion> =
+        vehicleModelLookup.findModels(brand, year)
 
     fun createAppointment(vehicleId: Long, scheduledAtMillis: Long, serviceType: String) =
         mutateSession("Solicitud de cita enviada.") { session ->

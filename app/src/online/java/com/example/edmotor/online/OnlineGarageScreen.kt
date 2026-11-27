@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ShoppingBag
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -44,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -229,6 +231,7 @@ internal fun OnlineGarageScreen(
         AddOnlineVehicleDialog(
             submitting = state.busy,
             message = state.message?.takeIf { submittedVehicle && it.isError }?.text,
+            findModels = vm::findVehicleModels,
             onDismiss = { showVehicleForm = false },
             onAdd = { brand, model, year, plate ->
                 vm.clearMessage()
@@ -279,6 +282,7 @@ private fun OnlineVehicleCard(vehicle: OnlineVehicle, onOpenHistory: () -> Unit)
 private fun AddOnlineVehicleDialog(
     submitting: Boolean,
     message: String?,
+    findModels: suspend (String, Int) -> List<VehicleModelSuggestion>,
     onDismiss: () -> Unit,
     onAdd: (String, String, Int, String) -> Unit
 ) {
@@ -286,35 +290,79 @@ private fun AddOnlineVehicleDialog(
     var model by rememberSaveable { mutableStateOf("") }
     var year by rememberSaveable { mutableStateOf("") }
     var plate by rememberSaveable { mutableStateOf("") }
+    var showModelLookup by rememberSaveable { mutableStateOf(false) }
     val maxYear = remember { Calendar.getInstance(onlineWorkshopTimeZone).get(Calendar.YEAR) + 1 }
     val vehicleYear = year.toIntOrNull()?.takeIf { it in 1886..maxYear }
+    val lookupYear = vehicleYear?.takeIf { it >= 1996 }
+    val searchYear = lookupYear?.takeIf { showModelLookup && brand.isNotBlank() }
+
     AlertDialog(
-        onDismissRequest = { if (!submitting) onDismiss() },
-        title = { Text("Registrar mi vehículo") },
+        onDismissRequest = {
+            if (searchYear != null) showModelLookup = false
+            else if (!submitting) onDismiss()
+        },
+        title = { Text(if (searchYear == null) "Registrar mi vehículo" else "Modelos de vehículo") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(brand, { brand = it.take(80) }, label = { Text("Marca") }, singleLine = true, enabled = !submitting)
-                OutlinedTextField(model, { model = it.take(80) }, label = { Text("Modelo") }, singleLine = true, enabled = !submitting)
-                OutlinedTextField(
-                    year,
-                    { year = it.filter { char -> char in '0'..'9' }.take(4) },
-                    label = { Text("Año") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    isError = year.length == 4 && vehicleYear == null,
-                    enabled = !submitting
-                )
-                OutlinedTextField(plate, { plate = it.take(20) }, label = { Text("Placa (opcional)") }, singleLine = true, enabled = !submitting)
-                message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (searchYear != null) {
+                VehicleModelLookupContent(brand.trim(), searchYear, findModels, onSelect = { suggestion ->
+                    brand = suggestion.make
+                    model = suggestion.model
+                    showModelLookup = false
+                })
+            } else {
+                val focus = LocalFocusManager.current
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(brand, { brand = it.take(80) }, label = { Text("Marca") }, singleLine = true, enabled = !submitting)
+                    OutlinedTextField(
+                        year,
+                        { year = it.filter { char -> char in '0'..'9' }.take(4) },
+                        label = { Text("Año") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        isError = year.length == 4 && vehicleYear == null,
+                        enabled = !submitting
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            focus.clearFocus()
+                            showModelLookup = true
+                        },
+                        enabled = !submitting && brand.isNotBlank() && lookupYear != null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text("Buscar modelos", modifier = Modifier.padding(start = 8.dp))
+                    }
+                    Text(
+                        if (vehicleYear != null && lookupYear == null) {
+                            "Para vehículos anteriores a 1996, escribe el modelo."
+                        } else {
+                            "Consulta NHTSA vPIC por marca y año o escribe el modelo."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(model, { model = it.take(80) }, label = { Text("Modelo") }, singleLine = true, enabled = !submitting)
+                    OutlinedTextField(plate, { plate = it.take(20) }, label = { Text("Placa (opcional)") }, singleLine = true, enabled = !submitting)
+                    message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
             }
         },
         confirmButton = {
-            Button(
-                onClick = { vehicleYear?.let { onAdd(brand.trim(), model.trim(), it, plate.trim().uppercase(Locale.ROOT)) } },
-                enabled = !submitting && brand.isNotBlank() && model.isNotBlank() && vehicleYear != null
-            ) { Text(if (submitting) "Guardando vehículo" else "Registrar vehículo") }
+            if (searchYear != null) {
+                TextButton(onClick = { showModelLookup = false }) { Text("Volver al formulario") }
+            } else {
+                Button(
+                    onClick = { vehicleYear?.let { onAdd(brand.trim(), model.trim(), it, plate.trim().uppercase(Locale.ROOT)) } },
+                    enabled = !submitting && brand.isNotBlank() && model.isNotBlank() && vehicleYear != null
+                ) { Text(if (submitting) "Guardando vehículo" else "Registrar vehículo") }
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !submitting) { Text("Cerrar") } }
+        dismissButton = {
+            if (searchYear == null) {
+                TextButton(onClick = onDismiss, enabled = !submitting) { Text("Cerrar") }
+            }
+        }
     )
 }
 

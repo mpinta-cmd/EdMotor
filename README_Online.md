@@ -45,6 +45,16 @@ En `onlineDebug`, inicia sesión como cliente y registra un vehículo en **Mi Ga
 
 Cierra y vuelve a abrir la app después de reagendar o cancelar. En **Todas las citas**, comprueba que la lista consultada al servidor refleja el cambio. La pantalla de Compose envía cada acción a `OnlineViewModel`. El ViewModel usa `OnlineAppointmentRepository` para acceder a los endpoints y modelos de Retrofit.
 
+## Demostrar la consulta externa de modelos
+
+EdMotor consulta el catálogo público **NHTSA vPIC** para elegir un modelo al registrar un vehículo. Android hace un `GET` por HTTPS a `/api/vehicles/GetModelsForMakeYear/make/{marca}/modelyear/{año}?format=json` y solo envía la marca y el año. vPIC cubre principalmente el mercado estadounidense. Puedes escribir el modelo directamente si tu vehículo no aparece en el catálogo o es anterior a 1996. [Documentación de vPIC](https://vpic.nhtsa.dot.gov/api/) · [Cobertura y acceso público](https://vpic.nhtsa.dot.gov/api/home/index/faq)
+
+1. En `onlineDebug`, entra con una cuenta de cliente y abre **Mi Garaje → Registrar mi vehículo**.
+2. Escribe **Toyota** en **Marca** y **2021** en **Año**. Pulsa **Buscar modelos**. La app indica que está consultando y muestra las coincidencias cuando responde vPIC.
+3. Elige **Corolla** para completar la marca y el modelo. Pulsa **Registrar vehículo** para guardarlo con la API propia de EdMotor y comprueba que aparece en **Mis vehículos**.
+4. Prueba con **Renault** y **2021** para mostrar qué sucede cuando no hay coincidencias. Puedes registrar el vehículo con el modelo escrito a mano.
+5. Con la sesión iniciada, desactiva la conexión del dispositivo antes de hacer otra búsqueda. Comprueba que aparece el aviso de error y que el formulario conserva los datos. Restablece la conexión y pulsa **Reintentar**.
+
 ## Activar al primer dueño desde Android
 
 Genera un código con `python -c "import secrets; print(secrets.token_urlsafe(32))"` y guarda el resultado en `EDMOTOR_OWNER_ACTIVATION_CODE` dentro del archivo privado `server/.env`. Arranca o recrea el servicio `api` con `docker compose up -d --build api`. En la app selecciona **Perfil → Crear cuenta de dueño** e introduce el código junto a los datos de la cuenta. Una vez activado el dueño, elimina el código del archivo de entorno y recrea el servicio. Un taller con un dueño existente accede con **Iniciar sesión**.
