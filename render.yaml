@@ -14,7 +14,7 @@ services:
           name: edmotor-piloto-db
           property: connectionString
       - key: EDMOTOR_PILOT_OWNER_PASSWORD
-        generateValue: true
+        sync: false
 
 databases:
   - name: edmotor-piloto-db
