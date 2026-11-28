@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -96,7 +95,7 @@ fun EdMotorTopBar(themeMode: AppThemeMode, onThemeModeChange: (AppThemeMode) -> 
     }
 
     if (showAppearanceDialog) {
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { showAppearanceDialog = false },
             title = { Text("Apariencia de EdMotor") },
             text = {
@@ -127,8 +126,7 @@ fun EdMotorTopBar(themeMode: AppThemeMode, onThemeModeChange: (AppThemeMode) -> 
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showAppearanceDialog = false }) { Text("Cerrar") } },
-            shape = MaterialTheme.shapes.extraLarge
+            confirmButton = { TextButton(onClick = { showAppearanceDialog = false }) { Text("Cerrar") } }
         )
     }
 }

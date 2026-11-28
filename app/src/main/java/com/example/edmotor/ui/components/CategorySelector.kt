@@ -2,7 +2,6 @@ package com.example.edmotor.ui.components
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -81,7 +80,8 @@ fun CategorySelector(
     }
 
     if (showCreateDialog) {
-        AlertDialog(
+        EdMotorBottomSheet(
+            dismissEnabled = !isCreating,
             onDismissRequest = {
                 if (!isCreating) showCreateDialog = false
             },

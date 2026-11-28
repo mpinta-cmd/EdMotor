@@ -5,7 +5,6 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +43,7 @@ import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.Vehicle
 import com.example.edmotor.model.appointmentDateUtcMillis
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 
 import com.example.edmotor.ui.screens.CartScreen
 import com.example.edmotor.ui.screens.ClientGarageScreen
@@ -1130,8 +1130,9 @@ private fun AppointmentVehiclePicker(
     onSelect: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    EdMotorBottomSheet(
         onDismissRequest = onDismiss,
+        scrollBody = false,
         title = { Text("Registrar mantenimiento") },
         text = {
             if (vehicles.isEmpty()) {

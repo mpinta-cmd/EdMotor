@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -34,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.data.local.MaintenanceWithParts
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.text.NumberFormat
@@ -154,7 +154,7 @@ fun MaintenanceHistoryScreen(
     }
 
     if (pendingDeleteId != null) {
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { pendingDeleteId = null },
             title = { Text("Eliminar mantenimiento") },
             text = { Text("¿Seguro que deseas eliminar este registro y sus repuestos asociados? Esta acción no se puede deshacer.") },

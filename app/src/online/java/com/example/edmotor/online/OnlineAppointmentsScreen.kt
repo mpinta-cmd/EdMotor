@@ -3,10 +3,7 @@ package com.example.edmotor.online
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -31,6 +28,7 @@ import com.example.edmotor.model.Appointment
 import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.Vehicle
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import com.example.edmotor.ui.screens.AppointmentsScreen
 import java.util.TimeZone
 
@@ -179,12 +177,12 @@ private fun MaintenanceReportDialog(
     var summary by rememberSaveable(appointment.id) { mutableStateOf("") }
     var mileage by rememberSaveable(appointment.id) { mutableStateOf("") }
     val kilometers = mileage.toIntOrNull()
-    AlertDialog(
+    EdMotorBottomSheet(
         onDismissRequest = { if (!saving) onDismiss() },
+        dismissEnabled = !saving,
         title = { Text("Registrar mantenimiento") },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text("${appointment.vehicleBrand} ${appointment.vehicleModel} · ${appointment.vehicleYear}")

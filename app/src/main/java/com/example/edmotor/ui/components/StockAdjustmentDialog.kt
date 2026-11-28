@@ -3,7 +3,6 @@ package com.example.edmotor.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -46,7 +45,7 @@ fun StockAdjustmentDialog(
             resultingStock <= Int.MAX_VALUE
 
     if (!showConfirmation) {
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = onDismiss,
             title = {
                 Text(if (increase) "Aumentar existencias" else "Disminuir existencias")
@@ -91,7 +90,7 @@ fun StockAdjustmentDialog(
             }
         )
     } else {
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = onDismiss,
             title = { Text("Confirmar movimiento") },
             text = {

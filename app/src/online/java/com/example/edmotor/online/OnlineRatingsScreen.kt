@@ -18,7 +18,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -43,6 +42,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -167,8 +167,9 @@ private fun OnlineRatingDialog(
 ) {
     val colors = MaterialTheme.colorScheme
     var selected by rememberSaveable(rating.productId) { mutableIntStateOf(rating.myRating ?: 0) }
-    AlertDialog(
+    EdMotorBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
+        dismissEnabled = !busy,
         title = { Text(if (rating.myRating == null) "Califica este repuesto" else "Editar calificación") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

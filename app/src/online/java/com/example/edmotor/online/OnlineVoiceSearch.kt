@@ -17,7 +17,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 
 private const val NO_VOICE_RESULT = "No se reconoció una búsqueda. Puedes volver a dictarla o escribirla."
 
@@ -126,7 +126,7 @@ internal fun OnlineVoiceSearchDialogs(voiceSearch: OnlineVoiceSearchState) {
             voiceSearch.query = text.trim()
             voiceSearch.draft = null
         }
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { voiceSearch.draft = null },
             icon = { Icon(Icons.Outlined.Mic, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             title = { Text("Revisa tu búsqueda") },
@@ -150,7 +150,7 @@ internal fun OnlineVoiceSearchDialogs(voiceSearch: OnlineVoiceSearchState) {
     }
 
     voiceSearch.error?.let { message ->
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { voiceSearch.error = null },
             title = { Text("Búsqueda por voz") },
             text = { Text(message) },

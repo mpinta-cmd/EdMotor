@@ -24,7 +24,6 @@ import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material.icons.outlined.ShoppingCartCheckout
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,6 +46,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.model.OrderStatus
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -383,7 +383,7 @@ private fun OnlineOrderCard(
         }
     }
     if (confirmingCancellation && order.status == OrderStatus.PENDING) {
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { confirmingCancellation = false },
             title = { Text("Cancelar compra") },
             text = { Text("Las unidades reservadas volverán al inventario.") },

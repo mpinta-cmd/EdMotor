@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -51,6 +50,7 @@ import com.example.edmotor.model.Category
 import com.example.edmotor.model.MaintenancePartDraft
 import com.example.edmotor.ui.components.ProductImage
 import com.example.edmotor.ui.components.CategorySelector
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import java.io.Serializable
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -494,8 +494,9 @@ fun MaintenanceFormScreen(
         val productsToShow = availableProducts.filter { product ->
             product.isActive && (product.stock > 0 || product.id == currentPart?.catalogProductId)
         }
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { productPickerIndex = null },
+            scrollBody = false,
             title = { Text("Seleccionar repuesto") },
             text = {
                 Column(
@@ -558,8 +559,10 @@ fun MaintenanceFormScreen(
     }
 
     if (showNewProductDialog) {
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { if (!isCreatingProduct) showNewProductDialog = false },
+            dismissEnabled = !isCreatingProduct,
+            scrollBody = false,
             title = { Text("Agregar repuesto al inventario") },
             text = {
                 Column(

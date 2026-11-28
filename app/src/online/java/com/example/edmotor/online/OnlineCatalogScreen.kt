@@ -29,12 +29,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Star
@@ -47,7 +45,6 @@ import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Remove
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
@@ -96,6 +93,7 @@ import com.example.edmotor.data.productList
 import com.example.edmotor.model.Category
 import com.example.edmotor.model.UserRole
 import com.example.edmotor.ui.components.CategoryBadge
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import com.example.edmotor.ui.components.ProductImage
 import com.example.edmotor.ui.components.ProductImageChoice
 import com.example.edmotor.ui.components.ProductImagePicker
@@ -709,12 +707,12 @@ internal fun OnlineProductEditor(
         }
     }
 
-    AlertDialog(
+    EdMotorBottomSheet(
         onDismissRequest = { if (!state.busy) onDismiss() },
+        dismissEnabled = !state.busy,
         title = { Text(if (product == null) "Registrar repuesto" else "Editar repuesto") },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(9.dp)
             ) {
                 OnlineProductField(name, { name = it.take(180) }, "Nombre", !state.busy)

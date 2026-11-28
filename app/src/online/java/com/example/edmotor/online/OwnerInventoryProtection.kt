@@ -17,7 +17,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Fingerprint
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -50,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -193,8 +193,9 @@ internal fun rememberOwnerInventoryAccess(
                 finishVerification(passwordRequest, entered)
             }
         }
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { if (!busy) { closePassword(); notice = null } },
+            dismissEnabled = !busy,
             title = { Text("Confirma tu contraseña") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -223,8 +224,9 @@ internal fun rememberOwnerInventoryAccess(
             }
         )
     } else if (settingsOpen) {
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { if (!busy) { settingsOpen = false; notice = null } },
+            dismissEnabled = !busy,
             icon = { Icon(Icons.Outlined.Fingerprint, contentDescription = null) },
             title = { Text("Huella para Inventario") },
             text = {

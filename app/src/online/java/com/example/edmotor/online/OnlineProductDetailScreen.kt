@@ -22,7 +22,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.AddShoppingCart
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ShoppingCart
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -51,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import com.example.edmotor.ui.screens.ProductHeaderContent
 import com.example.edmotor.ui.theme.EdMotorHeroAmber
 import com.example.edmotor.ui.theme.EdMotorHeroNavy
@@ -253,7 +253,7 @@ internal fun OnlineProductDetailScreen(
             OnlineProductEditor(vm, state, product, onDismiss = { editing = false })
         }
         if (workshop && confirmingRemoval) {
-            AlertDialog(
+            EdMotorBottomSheet(
                 onDismissRequest = { confirmingRemoval = false },
                 title = { Text("Desactivar repuesto") },
                 text = { Text("${product.name} dejará de estar disponible en el catálogo.") },

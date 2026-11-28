@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,6 +30,7 @@ import com.example.edmotor.BuildConfig
 import com.example.edmotor.app.EdMotorApplication
 import com.example.edmotor.navigation.EdMotorNavHost
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import com.example.edmotor.ui.components.EdMotorScaffold
 import com.example.edmotor.ui.screens.CredentialAccessScreen
 import com.example.edmotor.ui.theme.AppThemeMode
@@ -161,7 +161,7 @@ fun EdMotorApp(
             }
 
             logoutError?.let { error ->
-                AlertDialog(
+                EdMotorBottomSheet(
                     onDismissRequest = authViewModel::clearLogoutError,
                     title = { Text("Cerrar sesión") },
                     text = { Text(error) },

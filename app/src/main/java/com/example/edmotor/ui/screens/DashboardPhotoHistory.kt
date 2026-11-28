@@ -27,7 +27,6 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -62,6 +61,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.edmotor.dashboard.DashboardEvidence
 import com.example.edmotor.dashboard.DashboardEvidenceRepository
 import com.example.edmotor.dashboard.dashboardIndicators
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
@@ -164,8 +164,9 @@ internal fun DashboardPhotoHistory(
         }
 
         if (confirmDelete && selected != null) {
-            AlertDialog(
+            EdMotorBottomSheet(
                 onDismissRequest = { if (!deleting) confirmDelete = false },
+                dismissEnabled = !deleting,
                 title = { Text("¿Eliminar esta foto?") },
                 text = { Text("Se eliminarán la imagen y su registro de este dispositivo.") },
                 confirmButton = {

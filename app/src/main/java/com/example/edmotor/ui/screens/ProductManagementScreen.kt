@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -53,6 +52,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.edmotor.data.local.ProductEntity
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import com.example.edmotor.ui.components.ProductImage
 import com.example.edmotor.ui.components.StockAdjustmentDialog
 import com.example.edmotor.ui.theme.EdMotorHeroNavy
@@ -256,7 +256,7 @@ fun ProductManagementScreen(
     }
 
     deleteProduct?.let { product ->
-        AlertDialog(
+        EdMotorBottomSheet(
             onDismissRequest = { deleteProduct = null },
             title = { Text("Eliminar repuesto") },
             text = {
