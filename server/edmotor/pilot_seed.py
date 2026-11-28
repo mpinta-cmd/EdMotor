@@ -7,7 +7,7 @@ from zipfile import BadZipFile, ZipFile
 
 from psycopg import Error, sql
 
-from .auth import bootstrap_owner
+from .auth import _matches_password, bootstrap_owner, reset_password
 from .commerce import IMAGE_PREFIX, MAX_IMAGE_BYTES
 from .db import Database, open_database
 
@@ -78,6 +78,14 @@ def seed(database: Database, owner_password: str | None) -> bool:
                )"""
         )
         if database.execute("SELECT 1 FROM pilot_catalog_seed").fetchone():
+            if owner_password:
+                owner = database.execute(
+                    "SELECT username, password_hash FROM users WHERE role = 'WORKSHOP' FOR UPDATE"
+                ).fetchone()
+                if owner is None:
+                    raise ValueError("La base del piloto no tiene una cuenta de dueño que se pueda actualizar.")
+                if not _matches_password(owner_password, owner["password_hash"]):
+                    reset_password(database, owner["username"], owner_password)
             return False
 
         tables = sql.SQL(", ").join(map(sql.Identifier, DATA_TABLES))
