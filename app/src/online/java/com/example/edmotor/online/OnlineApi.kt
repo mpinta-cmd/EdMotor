@@ -36,6 +36,7 @@ import retrofit2.http.Query
 import retrofit2.http.Streaming
 
 private const val CHECKOUT_PATH = "orders/checkout"
+private const val RENDER_COLD_START_TIMEOUT_SECONDS = 90L
 
 internal interface OnlineService {
     @POST("auth/login")
@@ -147,11 +148,15 @@ internal class OnlineApi private constructor(val project: String, val service: O
             val baseUrl = url.newBuilder().encodedPath("/api/v1/").build()
             val project = MessageDigest.getInstance("SHA-256").digest(baseUrl.toString().toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val renderHosted = baseUrl.host.endsWith(".onrender.com")
             val client = OkHttpClient.Builder()
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .retryOnConnectionFailure(false)
-                .callTimeout(20, TimeUnit.SECONDS)
+                .callTimeout(if (renderHosted) RENDER_COLD_START_TIMEOUT_SECONDS else 20, TimeUnit.SECONDS)
+                .apply {
+                    if (renderHosted) readTimeout(RENDER_COLD_START_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                }
                 .addInterceptor { chain ->
                     val request = chain.request()
                     if (request.method in setOf("POST", "PUT", "PATCH", "DELETE")) {

@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: edmotor-piloto
+    runtime: docker
+    plan: free
+    region: virginia
+    branch: edmotor-acceso-invitado
+    rootDir: server
+    healthCheckPath: /api/v1/health
+    dockerCommand: >-
+      /bin/sh -c 'python -m edmotor.db migrate &&
+      python -m edmotor.pilot_seed &&
+      exec uvicorn edmotor.main:app --host 0.0.0.0 --port "${PORT:-8000}"'
+    envVars:
+      - key: EDMOTOR_DATABASE_URL
+        fromDatabase:
+          name: edmotor-piloto-db
+          property: connectionString
+      - key: EDMOTOR_PILOT_OWNER_PASSWORD
+        generateValue: true
+
+databases:
+  - name: edmotor-piloto-db
+    databaseName: edmotor
+    user: edmotor
+    plan: free
+    region: virginia
+    ipAllowList: []
