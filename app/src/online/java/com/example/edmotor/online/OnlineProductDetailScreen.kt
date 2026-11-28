@@ -132,6 +132,12 @@ internal fun OnlineProductDetailScreen(
             return@Column
         }
 
+        OnlineStockQuantity(
+            stock = product.stock,
+            isReference = isReference,
+            modifier = Modifier.widthIn(max = 680.dp).fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp)
+        )
+
         Column(
             modifier = Modifier.weight(1f).widthIn(max = 680.dp).fillMaxWidth()
                 .verticalScroll(rememberScrollState()).padding(16.dp),
@@ -195,11 +201,6 @@ internal fun OnlineProductDetailScreen(
                         style = MaterialTheme.typography.labelMedium
                     )
                     OnlineProductPrice(product, prominent = true)
-                    Text("Disponibilidad", style = MaterialTheme.typography.labelSmall)
-                    Text(stockLabel(product.stock, isReference = isReference), fontWeight = FontWeight.Bold)
-                    if (isReference) {
-                        Text("Conéctate al taller para confirmar existencias y comprar.", color = colors.onSurfaceVariant)
-                    }
                 }
             }
 

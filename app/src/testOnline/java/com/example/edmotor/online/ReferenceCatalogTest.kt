@@ -32,15 +32,14 @@ class ReferenceCatalogTest {
     }
 
     @Test
-    fun showsOriginalStockWithReferenceLabels() {
+    fun showsOriginalStockWithExplicitQuantities() {
         val inStock = requireNotNull(referenceCatalogProduct(-2))
         val soldOut = requireNotNull(referenceCatalogProduct(-3))
         assertEquals("Filtro de aceite A-111", soldOut.name)
         assertEquals(39, referenceCatalog.count { it.stock == 10 })
         assertEquals(1, referenceCatalog.count { it.stock == 0 })
-        assertEquals("10 unidades de referencia", stockLabel(inStock.stock, isReference = true))
-        assertEquals("0 unidades de referencia · Agotado", stockLabel(soldOut.stock, isReference = true))
-        assertEquals("10 disponibles", stockLabel(inStock.stock))
-        assertEquals("Agotado", stockLabel(soldOut.stock))
+        assertEquals("10 unidades", stockQuantityText(inStock.stock))
+        assertEquals("0 unidades · Agotado", stockQuantityText(soldOut.stock))
+        assertEquals("1 unidad", stockQuantityText(1))
     }
 }

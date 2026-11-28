@@ -135,7 +135,7 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
     val showingReferenceDetail = inProductDetail && (detailProductId ?: 0L) < 0L
     val syncNotice = when (activeRoute) {
         Routes.HOME -> if (showingReferenceCatalog) {
-            "Catálogo incluido · Precios y cantidades de referencia. Conéctate al taller para confirmar existencias y comprar."
+            "Catálogo incluido · Precios y cantidades de referencia"
         } else {
             "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
         }

@@ -402,6 +402,7 @@ private fun OnlineProductCard(
         border = BorderStroke(1.dp, colors.outline)
     ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            OnlineStockQuantity(product.stock, isReference, Modifier.fillMaxWidth())
             Box {
                 OnlineProductPhoto(
                     vm,
@@ -443,11 +444,6 @@ private fun OnlineProductCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Text(
-                stockLabel(product.stock, isReference = isReference),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (product.stock <= 0) colors.error else colors.onSurfaceVariant
-            )
             if (isReference) return@Column
 
             if (workshop) {
@@ -558,13 +554,36 @@ internal fun OnlineCatalogQuantityControls(
     }
 }
 
-internal fun stockLabel(stock: Int, isReference: Boolean = false): String = when {
-    isReference && stock <= 0 -> "0 unidades de referencia · Agotado"
-    isReference && stock == 1 -> "1 unidad de referencia"
-    isReference -> "$stock unidades de referencia"
-    stock <= 0 -> "Agotado"
-    stock == 1 -> "Última unidad"
-    else -> "$stock disponibles"
+internal fun stockQuantityText(stock: Int): String = when {
+    stock <= 0 -> "0 unidades · Agotado"
+    stock == 1 -> "1 unidad"
+    else -> "$stock unidades"
+}
+
+@Composable
+internal fun OnlineStockQuantity(stock: Int, isReference: Boolean, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        color = if (stock <= 0) colors.errorContainer else colors.primaryContainer,
+        contentColor = if (stock <= 0) colors.onErrorContainer else colors.onPrimaryContainer
+    ) {
+        Column(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                if (isReference) "Cantidad de referencia" else "Cantidad disponible",
+                style = MaterialTheme.typography.labelSmall
+            )
+            Text(
+                stockQuantityText(stock),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
 }
 
 @Composable
