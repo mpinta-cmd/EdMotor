@@ -3,6 +3,7 @@ package com.example.edmotor.model
 object OrderStatus {
     const val PENDING = "PENDING"
     const val CONFIRMED = "CONFIRMED"
+    const val COMPLETED = "COMPLETED"
     const val REJECTED = "REJECTED"
 }
 

@@ -11,6 +11,7 @@ import java.util.PriorityQueue
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 internal data class DashboardBounds(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
@@ -23,20 +24,45 @@ internal data class DashboardMatch(
 internal data class DashboardScanResult(
     val matches: List<DashboardMatch>,
     val unresolvedCount: Int,
-    val unresolvedRedCount: Int = 0
+    val unresolvedRedCount: Int = 0,
+    val needsReframe: Boolean = false
 )
+
+internal val dashboardCaptureFrame = DashboardBounds(left = .10f, top = .16f, right = .90f, bottom = .84f)
+
+/** El fotograma ya tiene la orientación y el encuadre que se muestran en la vista de cámara. */
+internal fun scanFramedDashboard(bitmap: Bitmap): DashboardScanResult {
+    if (bitmap.isRecycled || min(bitmap.width, bitmap.height) < 16) {
+        return DashboardScanResult(emptyList(), 0, needsReframe = true)
+    }
+    val left = (bitmap.width * dashboardCaptureFrame.left).roundToInt()
+    val right = (bitmap.width * dashboardCaptureFrame.right).roundToInt()
+    val top = (bitmap.height * dashboardCaptureFrame.top).roundToInt()
+    val bottom = (bitmap.height * dashboardCaptureFrame.bottom).roundToInt()
+    val framed = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+    return try {
+        scanDashboard(framed)
+    } finally {
+        if (framed !== bitmap) framed.recycle()
+    }
+}
 
 /** Compara las formas de los testigos iluminados dentro de la foto. */
 internal fun scanDashboard(bitmap: Bitmap): DashboardScanResult {
-    if (bitmap.isRecycled || min(bitmap.width, bitmap.height) < 8) return DashboardScanResult(emptyList(), 0)
+    if (bitmap.isRecycled || min(bitmap.width, bitmap.height) < 8) {
+        return DashboardScanResult(emptyList(), 0, needsReframe = true)
+    }
 
     val image = readDashboardPixels(bitmap)
+    val brightBackground = hasBrightBackground(image)
     val (labels, components) = segmentDashboard(image)
-    if (components.isEmpty()) return DashboardScanResult(emptyList(), 0)
+    if (components.isEmpty()) return DashboardScanResult(emptyList(), 0, needsReframe = brightBackground)
 
     val regions = groupDashboardComponents(components)
     val matches = mutableListOf<MatchCandidate>()
     for (region in regions) {
+        // Un símbolo cortado por el marco podría coincidir con la forma de otro testigo.
+        if (region.bounds.touchesFrameEdge(image)) continue
         val shape = sampledShape(region.bounds) { x, y ->
             val label = labels[y * image.width + x]
             region.parts.any { it.label == label }
@@ -58,6 +84,17 @@ internal fun scanDashboard(bitmap: Bitmap): DashboardScanResult {
             unresolved.add(region)
         }
     }
+    // En una toma con demasiadas zonas de color, algunas formas pueden coincidir por azar.
+    val cluttered = unresolved.size >= MIN_CLUTTER_REGIONS && unresolved.size > 2 * selected.size
+    if (brightBackground || cluttered) {
+        return DashboardScanResult(
+            matches = emptyList(),
+            unresolvedCount = unresolved.size + selected.size,
+            unresolvedRedCount = unresolved.count { it.color == DashboardLightColor.RED } +
+                selected.count { it.region.color == DashboardLightColor.RED },
+            needsReframe = true
+        )
+    }
     return DashboardScanResult(
         matches = selected.sortedWith(compareBy({ it.region.bounds.top }, { it.region.bounds.left })).map { match ->
             DashboardMatch(match.indicator, match.region.bounds.normalized(image.width, image.height), match.score)
@@ -68,6 +105,18 @@ internal fun scanDashboard(bitmap: Bitmap): DashboardScanResult {
 }
 
 private data class DashboardPixels(val width: Int, val height: Int, val values: IntArray)
+
+private fun hasBrightBackground(image: DashboardPixels): Boolean {
+    val brightNeutralPixels = image.values.count { pixel ->
+        val red = pixel shr 16 and 255
+        val green = pixel shr 8 and 255
+        val blue = pixel and 255
+        val lowest = minOf(red, green, blue)
+        lowest >= BRIGHT_BACKGROUND_MIN_CHANNEL &&
+            maxOf(red, green, blue) - lowest <= BRIGHT_BACKGROUND_MAX_CHROMA
+    }
+    return brightNeutralPixels >= image.values.size * BRIGHT_BACKGROUND_MIN_FRACTION
+}
 
 private fun readDashboardPixels(source: Bitmap): DashboardPixels {
     val scale = (MAX_IMAGE_SIDE.toFloat() / max(source.width, source.height)).coerceAtMost(1f)
@@ -108,6 +157,9 @@ private data class PixelBox(val left: Int, val top: Int, val right: Int, val bot
     fun isNear(other: PixelBox, distance: Int): Boolean =
         left - distance <= other.right && right + distance >= other.left &&
             top - distance <= other.bottom && bottom + distance >= other.top
+
+    fun touchesFrameEdge(image: DashboardPixels): Boolean =
+        left == 0 || top == 0 || right == image.width || bottom == image.height
 
     fun normalized(imageWidth: Int, imageHeight: Int) = DashboardBounds(
         left.toFloat() / imageWidth, top.toFloat() / imageHeight,
@@ -478,6 +530,10 @@ private const val MAX_IMAGE_SIDE = 640
 private const val MAX_COMPONENTS = 160
 private const val MAX_ANCHORS = 36
 private const val MAX_MATCHES = 12
+private const val MIN_CLUTTER_REGIONS = 4
+private const val BRIGHT_BACKGROUND_MIN_CHANNEL = 148
+private const val BRIGHT_BACKGROUND_MAX_CHROMA = 55
+private const val BRIGHT_BACKGROUND_MIN_FRACTION = 0.30f
 private const val MIN_COMPONENT_PIXELS = 4
 private const val MIN_REGION_PIXELS = 18
 private const val MIN_REGION_SIDE = 8

@@ -64,6 +64,8 @@ android {
         create("online") {
             dimension = "access"
             applicationIdSuffix = ".online"
+            versionCode = 3
+            versionName = "1.0.2"
             manifestPlaceholders["edMotorAllowBackup"] = "false"
             buildConfigField("boolean", "EDMOTOR_PRIVATE_MODE", "false")
             buildConfigField("String", "EDMOTOR_ONLINE_URL", JsonOutput.toJson(onlineUrl.get()))

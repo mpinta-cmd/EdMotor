@@ -4,6 +4,9 @@ package com.example.edmotor.data
 import com.example.edmotor.R
 import com.example.edmotor.model.Product
 
+internal val Product.catalogSeedStock: Int
+    get() = if (badge.equals("Agotado", ignoreCase = true)) 0 else 10
+
 val productList = listOf(
 
     // ==========================================

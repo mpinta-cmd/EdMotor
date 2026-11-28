@@ -56,7 +56,13 @@ import com.example.edmotor.session.LocalCredentialValidation
 import com.example.edmotor.ui.components.EdMotorMark
 import com.example.edmotor.ui.theme.EdMotorHeroNavy
 
-private enum class CredentialMode { SIGN_IN, REGISTER_CLIENT, SETUP_OWNER }
+private enum class CredentialMode {
+    SIGN_IN,
+    REGISTER_CLIENT,
+    SETUP_OWNER,
+    // Older Android saved-state bundles can still contain this enum value.
+    REGISTER_ONLINE_OWNER
+}
 
 @Composable
 fun CredentialAccessScreen(
@@ -72,9 +78,14 @@ fun CredentialAccessScreen(
     onClearMessage: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
-    isOnlineMode: Boolean = false
+    isOnlineMode: Boolean = false,
+    initiallyRegisterClient: Boolean = false,
+    accessReason: String? = null,
+    onDismiss: (() -> Unit)? = null
 ) {
-    var requestedMode by rememberSaveable { mutableStateOf(CredentialMode.SIGN_IN) }
+    var requestedMode by rememberSaveable(initiallyRegisterClient) {
+        mutableStateOf(if (initiallyRegisterClient) CredentialMode.REGISTER_CLIENT else CredentialMode.SIGN_IN)
+    }
     var displayName by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var passwordInput by remember { mutableStateOf("") }
@@ -82,7 +93,9 @@ fun CredentialAccessScreen(
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
     val canSetupOwner = ownerConfigured == false
-    val mode = if (requestedMode == CredentialMode.SETUP_OWNER && !canSetupOwner) {
+    val mode = if (requestedMode == CredentialMode.REGISTER_ONLINE_OWNER ||
+        (requestedMode == CredentialMode.SETUP_OWNER && !canSetupOwner)
+    ) {
         CredentialMode.SIGN_IN
     } else requestedMode
     val usesFixedOwnerUsername = mode == CredentialMode.SETUP_OWNER && !isPrivateMode
@@ -109,8 +122,10 @@ fun CredentialAccessScreen(
     fun submit() {
         if (!canSubmit) return
         validationMessage = when (mode) {
-            CredentialMode.SIGN_IN -> LocalCredentialValidation.loginError(cleanUsername, passwordInput)
-            CredentialMode.REGISTER_CLIENT -> LocalCredentialValidation.registrationError(cleanUsername, cleanName, passwordInput)
+            CredentialMode.SIGN_IN, CredentialMode.REGISTER_ONLINE_OWNER ->
+                LocalCredentialValidation.loginError(cleanUsername, passwordInput)
+            CredentialMode.REGISTER_CLIENT ->
+                LocalCredentialValidation.registrationError(cleanUsername, cleanName, passwordInput)
             CredentialMode.SETUP_OWNER -> LocalCredentialValidation.ownerError(cleanUsername, passwordInput)
         }
         if (validationMessage != null) return
@@ -119,14 +134,18 @@ fun CredentialAccessScreen(
         val submittedPassword = passwordInput
         passwordInput = ""
         when (mode) {
-            CredentialMode.SIGN_IN -> onSignIn(cleanUsername, submittedPassword)
+            CredentialMode.SIGN_IN, CredentialMode.REGISTER_ONLINE_OWNER -> onSignIn(cleanUsername, submittedPassword)
             CredentialMode.REGISTER_CLIENT -> onRegisterClient(cleanUsername, cleanName, submittedPassword)
             CredentialMode.SETUP_OWNER -> onSetupOwner(cleanUsername, submittedPassword)
         }
     }
 
-    BackHandler(enabled = mode != CredentialMode.SIGN_IN) {
-        if (canEdit) selectMode(CredentialMode.SIGN_IN)
+    BackHandler(enabled = mode != CredentialMode.SIGN_IN || onDismiss != null) {
+        if (mode == CredentialMode.SIGN_IN) {
+            if (!isSubmitting) onDismiss?.invoke()
+        } else if (canEdit) {
+            selectMode(CredentialMode.SIGN_IN)
+        }
     }
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -170,7 +189,7 @@ fun CredentialAccessScreen(
                 ) {
                     Text(
                         when (mode) {
-                            CredentialMode.SIGN_IN -> "Accede a tu cuenta"
+                            CredentialMode.SIGN_IN, CredentialMode.REGISTER_ONLINE_OWNER -> "Accede a tu cuenta"
                             CredentialMode.REGISTER_CLIENT -> "Crear cuenta de cliente"
                             CredentialMode.SETUP_OWNER -> "Configura la cuenta del dueño"
                         },
@@ -179,7 +198,8 @@ fun CredentialAccessScreen(
                     )
                     Text(
                         when {
-                            isOnlineMode -> "Entra con la misma cuenta desde cualquiera de tus celulares."
+                            !accessReason.isNullOrBlank() -> accessReason
+                            isOnlineMode -> "Entra con tu cuenta de EdMotor desde cualquiera de tus celulares."
                             mode == CredentialMode.SETUP_OWNER ->
                                 "La cuenta de EdMotor permite administrar el inventario, los pedidos y el mantenimiento."
                             !isPrivateMode && mode == CredentialMode.REGISTER_CLIENT ->
@@ -270,7 +290,8 @@ fun CredentialAccessScreen(
                         }
                         Text(
                             when (mode) {
-                                CredentialMode.SIGN_IN -> if (isSubmitting) "Iniciando sesión…" else "Iniciar sesión"
+                                CredentialMode.SIGN_IN, CredentialMode.REGISTER_ONLINE_OWNER ->
+                                    if (isSubmitting) "Iniciando sesión…" else "Iniciar sesión"
                                 CredentialMode.REGISTER_CLIENT -> if (isSubmitting) "Creando cuenta…" else "Crear cuenta"
                                 CredentialMode.SETUP_OWNER -> if (isSubmitting) "Guardando cuenta…" else "Crear cuenta del dueño"
                             },
@@ -295,7 +316,14 @@ fun CredentialAccessScreen(
                             onClick = { selectMode(CredentialMode.SIGN_IN) },
                             enabled = canEdit,
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Volver al inicio de sesión") }
+                        ) { Text(if (isOnlineMode) "Ya tengo cuenta" else "Volver al inicio de sesión") }
+                    }
+                    if (onDismiss != null) {
+                        TextButton(
+                            onClick = onDismiss,
+                            enabled = !isSubmitting,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Volver a EdMotor") }
                     }
                 }
             }

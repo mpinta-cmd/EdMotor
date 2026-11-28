@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Button
@@ -61,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -86,12 +88,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.edmotor.dashboard.DashboardCamera
+import com.example.edmotor.dashboard.DashboardEvidenceRepository
 import com.example.edmotor.dashboard.DashboardIndicator
 import com.example.edmotor.dashboard.DashboardLightColor
 import com.example.edmotor.dashboard.DashboardScanResult
+import com.example.edmotor.dashboard.DashboardStability
 import com.example.edmotor.dashboard.DashboardUrgency
+import com.example.edmotor.dashboard.dashboardCaptureFrame
 import com.example.edmotor.dashboard.dashboardIndicators
-import com.example.edmotor.dashboard.scanDashboard
+import com.example.edmotor.dashboard.encodeDashboardPhoto
+import com.example.edmotor.dashboard.rememberDashboardSensorGuidance
+import com.example.edmotor.dashboard.scanFramedDashboard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -102,12 +109,16 @@ import java.text.Normalizer
 import java.util.Locale
 
 @Composable
-fun DashboardScreen() {
+internal fun DashboardScreen(
+    evidenceScope: String,
+    vehicles: List<DashboardEvidenceVehicle>
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val activity = remember(context) { context.findDashboardActivity() }
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
+    val evidence = remember(context) { DashboardEvidenceRepository.create(context) }
     val hasCamera = remember(context) { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
     var permissionGranted by remember { mutableStateOf(context.hasDashboardCameraPermission()) }
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
@@ -119,6 +130,12 @@ fun DashboardScreen() {
     var analysisJob by remember { mutableStateOf<Job?>(null) }
     var issue by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<DashboardScanResult?>(null) }
+    var photoDraft by remember(evidenceScope) { mutableStateOf<DashboardPhotoDraft?>(null) }
+    var savingPhoto by remember(evidenceScope) { mutableStateOf(false) }
+    var saveIssue by remember(evidenceScope) { mutableStateOf<String?>(null) }
+    var savedPhotoId by remember(evidenceScope) { mutableStateOf<Long?>(null) }
+    var historyOpen by rememberSaveable(evidenceScope) { mutableStateOf(false) }
+    var initialHistoryPhotoId by rememberSaveable(evidenceScope) { mutableStateOf<Long?>(null) }
     var guideOpen by rememberSaveable { mutableStateOf(false) }
     var guideQuery by rememberSaveable { mutableStateOf("") }
     var selectedGuideId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -136,10 +153,26 @@ fun DashboardScreen() {
         awaitingFrame = false
     }
 
+    fun openCamera() {
+        result = null
+        photoDraft = null
+        saveIssue = null
+        savedPhotoId = null
+        cameraOpen = true
+    }
+
+    fun openHistory(photoId: Long? = null) {
+        closeCamera()
+        analysisJob?.cancel()
+        savedPhotoId = null
+        initialHistoryPhotoId = photoId
+        historyOpen = true
+    }
+
     val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionGranted = granted
         permissionDenied = !granted
-        if (granted && hasCamera) cameraOpen = true
+        if (granted && hasCamera) openCamera()
     }
 
     DisposableEffect(lifecycleOwner, context) {
@@ -162,12 +195,19 @@ fun DashboardScreen() {
     val permissionBlocked = !permissionGranted && permissionDenied &&
         activity?.let { !ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.CAMERA) } == true
 
+    if (historyOpen) {
+        DashboardPhotoHistory(evidenceScope, evidence, initialHistoryPhotoId, onBack = { historyOpen = false })
+        return
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item(key = "intro") { DashboardHeader() }
+        if (!cameraOpen) {
+            item(key = "intro") { DashboardHeader(historyEnabled = !savingPhoto, onHistory = { openHistory() }) }
+        }
         item(key = "scan") {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -180,6 +220,18 @@ fun DashboardScreen() {
                     when {
                         !hasCamera -> Text("No hay una cámara disponible en este dispositivo. Puedes consultar la guía de testigos.")
                         cameraOpen && permissionGranted -> {
+                            val sensorGuidance = rememberDashboardSensorGuidance(active = true)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Cámara de Testigos",
+                                    modifier = Modifier.weight(1f).semantics { heading() },
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(onClick = { closeCamera() }) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Cerrar cámara")
+                                }
+                            }
                             Box(
                                 modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f)
                                     .clip(RoundedCornerShape(14.dp)).background(Color(0xFF0A1120))
@@ -192,11 +244,26 @@ fun DashboardScreen() {
                                     },
                                     onFrame = { bitmap ->
                                         if (cameraOpen && awaitingFrame) {
+                                            val capturedAt = System.currentTimeMillis()
                                             closeCamera()
                                             analyzing = true
                                             analysisJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                                                 try {
-                                                    result = withContext(Dispatchers.Default) { scanDashboard(bitmap) }
+                                                    val (reading, jpeg) = withContext(Dispatchers.Default) {
+                                                        val scan = try {
+                                                            scanFramedDashboard(bitmap)
+                                                        } catch (_: RuntimeException) {
+                                                            null
+                                                        }
+                                                        scan to encodeDashboardPhoto(bitmap)
+                                                    }
+                                                    result = reading
+                                                    photoDraft = jpeg?.let { DashboardPhotoDraft(it, capturedAt) }
+                                                    issue = when {
+                                                        jpeg == null -> "No pudimos preparar la foto. Repite la toma para guardarla."
+                                                        reading == null -> "No pudimos analizar el tablero. Puedes guardar la foto y elegir un testigo."
+                                                        else -> null
+                                                    }
                                                 } catch (cancelled: CancellationException) {
                                                     throw cancelled
                                                 } catch (_: Exception) {
@@ -216,7 +283,10 @@ fun DashboardScreen() {
                                     },
                                     modifier = Modifier.matchParentSize()
                                 )
-                                DashboardCaptureGuide(Modifier.matchParentSize())
+                                DashboardCaptureGuide(
+                                    modifier = Modifier.matchParentSize(),
+                                    stability = if (cameraReady) sensorGuidance.stability else DashboardStability.Waiting
+                                )
                                 if (!cameraReady) {
                                     Surface(
                                         modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp),
@@ -231,8 +301,9 @@ fun DashboardScreen() {
                                     }
                                 }
                             }
+                            if (cameraReady) DashboardCaptureHints(sensorGuidance)
                             Text(
-                                "Centra los testigos en la guía. Acerca el teléfono lo suficiente para ver los símbolos y evita reflejos.",
+                                "Solo se analiza el área clara. Acerca la cámara a los testigos y evita los reflejos.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurfaceVariant
                             )
@@ -246,7 +317,6 @@ fun DashboardScreen() {
                                 enabled = cameraReady && !awaitingFrame,
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text(if (awaitingFrame) "Capturando…" else "Escanear tablero") }
-                            TextButton(onClick = { closeCamera() }) { Text("Cerrar cámara") }
                         }
                         analyzing -> {
                             Text(
@@ -270,7 +340,7 @@ fun DashboardScreen() {
                                     issue = null
                                     permissionGranted = context.hasDashboardCameraPermission()
                                     when {
-                                        permissionGranted -> cameraOpen = true
+                                        permissionGranted -> openCamera()
                                         permissionBlocked -> {
                                             val target = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                                                 data = Uri.fromParts("package", context.packageName, null)
@@ -285,11 +355,16 @@ fun DashboardScreen() {
                                         else -> requestPermission.launch(Manifest.permission.CAMERA)
                                     }
                                 },
+                                enabled = !savingPhoto,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(Icons.Outlined.CameraAlt, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Text(
-                                    if (permissionBlocked) "Abrir ajustes" else "Activar cámara",
+                                    when {
+                                        permissionBlocked -> "Abrir ajustes"
+                                        result != null -> "Escanear de nuevo"
+                                        else -> "Activar cámara"
+                                    },
                                     modifier = Modifier.padding(start = 8.dp)
                                 )
                             }
@@ -300,6 +375,47 @@ fun DashboardScreen() {
         }
         result?.let { scan ->
             item(key = "scanSummary") { DashboardResultSummary(scan) }
+        }
+        photoDraft?.let { draft ->
+            item(key = "photo_${draft.capturedAtMillis}") {
+                DashboardPhotoDraftCard(
+                    draft = draft,
+                    scan = result,
+                    vehicles = vehicles,
+                    saving = savingPhoto,
+                    issue = saveIssue,
+                    onSave = { indicatorId, vehicle ->
+                        if (!savingPhoto) {
+                            savingPhoto = true
+                            saveIssue = null
+                            scope.launch {
+                                try {
+                                    savedPhotoId = evidence.save(
+                                        scope = evidenceScope,
+                                        indicatorId = indicatorId,
+                                        vehicleId = vehicle?.id,
+                                        vehicleLabel = vehicle?.label,
+                                        capturedAtMillis = draft.capturedAtMillis,
+                                        jpeg = draft.jpeg
+                                    )
+                                    photoDraft = null
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    saveIssue = "No pudimos guardar la foto en el dispositivo. Vuelve a intentarlo."
+                                } finally {
+                                    savingPhoto = false
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+        }
+        savedPhotoId?.let { id ->
+            item(key = "savedPhoto_$id") { DashboardPhotoSavedCard(onOpen = { openHistory(id) }) }
+        }
+        result?.let { scan ->
             val matches = scan.matches.distinctBy { it.indicator.id }.sortedBy { it.indicator.urgency }
             items(matches, key = { "match_${it.indicator.id}" }) { match ->
                 DashboardIndicatorCard(match.indicator, expanded = true)
@@ -371,7 +487,7 @@ private fun DashboardGuideSearch(query: String, onQueryChange: (String) -> Unit,
 }
 
 @Composable
-private fun DashboardHeader() {
+private fun DashboardHeader(historyEnabled: Boolean, onHistory: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -390,28 +506,42 @@ private fun DashboardHeader() {
                 )
             }
             Text("Usa la cámara con el vehículo detenido en un lugar seguro.", style = MaterialTheme.typography.bodyMedium)
-            Text("El análisis se hace en el dispositivo. La imagen se descarta al terminar.", style = MaterialTheme.typography.bodySmall)
+            Text("Guarda una foto del tablero para consultarla en este dispositivo.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onHistory, enabled = historyEnabled) {
+                Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("Historial de fotos", modifier = Modifier.padding(start = 8.dp))
+            }
         }
     }
 }
 
 @Composable
-private fun DashboardCaptureGuide(modifier: Modifier) {
+private fun DashboardCaptureGuide(modifier: Modifier, stability: DashboardStability) {
+    val cornerColor = when (stability) {
+        DashboardStability.Stable -> Color(0xFF9AEBC4)
+        DashboardStability.Moving -> Color(0xFFFFCF80)
+        DashboardStability.Waiting, DashboardStability.Unavailable -> Color.White
+    }
     Canvas(modifier) {
-        val x = size.width * .1f
-        val y = size.height * .16f
-        val w = size.width - x
-        val h = size.height - y
-        val length = size.minDimension * .09f
+        val left = size.width * dashboardCaptureFrame.left
+        val top = size.height * dashboardCaptureFrame.top
+        val right = size.width * dashboardCaptureFrame.right
+        val bottom = size.height * dashboardCaptureFrame.bottom
+        val shade = Color.Black.copy(alpha = .48f)
+        drawRect(shade, size = Size(size.width, top))
+        drawRect(shade, topLeft = Offset(0f, bottom), size = Size(size.width, size.height - bottom))
+        drawRect(shade, topLeft = Offset(0f, top), size = Size(left, bottom - top))
+        drawRect(shade, topLeft = Offset(right, top), size = Size(size.width - right, bottom - top))
+        val length = size.minDimension * .08f
         val stroke = 2.dp.toPx()
         listOf(
-            Offset(x, y) to Offset(length, length),
-            Offset(w, y) to Offset(-length, length),
-            Offset(x, h) to Offset(length, -length),
-            Offset(w, h) to Offset(-length, -length)
+            Offset(left, top) to Offset(length, length),
+            Offset(right, top) to Offset(-length, length),
+            Offset(left, bottom) to Offset(length, -length),
+            Offset(right, bottom) to Offset(-length, -length)
         ).forEach { (corner, direction) ->
-            drawLine(Color.White, corner, corner + Offset(direction.x, 0f), stroke, StrokeCap.Round)
-            drawLine(Color.White, corner, corner + Offset(0f, direction.y), stroke, StrokeCap.Round)
+            drawLine(cornerColor, corner, corner + Offset(direction.x, 0f), stroke, StrokeCap.Round)
+            drawLine(cornerColor, corner, corner + Offset(0f, direction.y), stroke, StrokeCap.Round)
         }
     }
 }
@@ -419,11 +549,6 @@ private fun DashboardCaptureGuide(modifier: Modifier) {
 @Composable
 private fun DashboardResultSummary(result: DashboardScanResult) {
     val found = result.matches.distinctBy { it.indicator.id }.size
-    val redSignalMessage = if (result.unresolvedRedCount > 0) {
-        "Se detectó una zona roja sin identificar. Si corresponde a un testigo, conserva el vehículo detenido en un lugar seguro y consulta el manual o solicita asistencia."
-    } else {
-        "Si ves un testigo rojo sin identificar, conserva el vehículo detenido en un lugar seguro y consulta el manual o solicita asistencia."
-    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "Resultado del escaneo",
@@ -435,25 +560,33 @@ private fun DashboardResultSummary(result: DashboardScanResult) {
             fontWeight = FontWeight.Bold
         )
         Text(
-            when (found) {
-                0 -> "No se encontraron coincidencias con la guía. Revisa el tablero y prueba con una imagen más nítida."
-                1 -> "1 coincidencia orientativa. Compárala con el manual de tu vehículo."
+            when {
+                result.needsReframe -> "La imagen no permite una lectura fiable. Acerca la cámara al tablero, encuadra los testigos y evita reflejos."
+                found == 0 -> "No encontramos coincidencias con la guía. Prueba con otra toma o busca el símbolo en el manual de tu vehículo."
+                found == 1 -> "1 coincidencia orientativa. Compárala con el manual de tu vehículo."
                 else -> "$found coincidencias orientativas. Compáralas con el manual de tu vehículo."
             },
             style = MaterialTheme.typography.bodyMedium
         )
-        Text(
-            "Al dar contacto, algunos testigos se encienden durante el chequeo. La urgencia depende de si siguen encendidos o parpadean y del estado del vehículo, como el freno de estacionamiento o el cinturón.",
-            style = MaterialTheme.typography.bodyMedium
-        )
-        if (result.unresolvedCount > 0) {
+        if (found > 0) {
+            Text(
+                "Al dar contacto, algunos testigos se encienden durante el chequeo. La urgencia depende de si siguen encendidos o parpadean y del estado del vehículo.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        if (result.unresolvedCount > 0 && !result.needsReframe) {
             Text(
                 if (result.unresolvedCount == 1) "Quedó una señal sin identificar."
                 else "Quedaron ${result.unresolvedCount} señales sin identificar.",
                 style = MaterialTheme.typography.bodyMedium
             )
         }
-        DashboardNotice(redSignalMessage, urgent = result.unresolvedRedCount > 0)
+        if (result.unresolvedRedCount > 0) {
+            DashboardNotice(
+                "Hay una zona roja sin identificar. Si ves un testigo rojo, mantén el vehículo detenido en un lugar seguro y consulta el manual o solicita asistencia.",
+                urgent = true
+            )
+        }
     }
 }
 

@@ -1,32 +1,64 @@
 package com.example.edmotor.online
 
 import androidx.room.Dao
+import androidx.room.ColumnInfo
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 data class OnlineUser(val id: Long, val username: String, val displayName: String, val role: String)
 
 data class OnlineMessage(val text: String, val isError: Boolean)
 
+enum class OnlineResource { CATALOG, ORDERS, VEHICLES, APPOINTMENTS, MAINTENANCE, RATINGS }
+
+data class OnlineSyncStatus(val loaded: Boolean = false, val failures: Int = 0) {
+    val retrying: Boolean get() = failures == 1
+    val unavailable: Boolean get() = failures >= 2
+    val waitingForFirstData: Boolean get() = !loaded && !unavailable
+
+    internal fun result(success: Boolean) =
+        if (success) OnlineSyncStatus(loaded = true) else copy(failures = (failures + 1).coerceAtMost(2))
+}
+
 data class OnlineState(
     val user: OnlineUser? = null,
-    val restoring: Boolean = true,
-    val loading: Boolean = false,
     val busy: Boolean = false,
     val message: OnlineMessage? = null,
     val configurationError: String? = null,
-    val lastSyncAtMillis: Long? = null,
-    val isStale: Boolean = false,
+    val sync: Map<OnlineResource, OnlineSyncStatus> = emptyMap(),
     val products: List<OnlineProduct> = emptyList(),
+    val cart: Map<Long, Int> = emptyMap(),
+    val favoriteProductIds: Set<Long> = emptySet(),
+    val pendingOrder: PendingOnlineOrder? = null,
+    val checkoutReceiptId: Long? = null,
     val orders: List<OnlineOrder> = emptyList(),
+    val eligibleRatings: List<OnlineRatingItem> = emptyList(),
     val vehicles: List<OnlineVehicle> = emptyList(),
     val appointments: List<OnlineAppointment> = emptyList(),
     val maintenance: List<OnlineMaintenance> = emptyList()
-)
+) {
+    internal val hasReferenceCatalog: Boolean get() = (products.firstOrNull()?.id ?: 0L) < 0L
+
+    fun syncStatus(resource: OnlineResource): OnlineSyncStatus = sync[resource] ?: OnlineSyncStatus()
+
+    internal fun checkoutItems(selection: Map<Long, Int>, expectedRequestId: String?): Map<Long, Int> {
+        if (pendingOrder?.requestId != expectedRequestId) {
+            throw OnlineInputError("El estado de tu envío cambió. Revisa el carrito y Mis pedidos.")
+        }
+        if (pendingOrder == null && cart != selection) {
+            throw OnlineInputError("Tu carrito cambió. Revísalo antes de confirmar la compra.")
+        }
+        return pendingOrder?.items ?: selection
+    }
+}
 
 data class OnlineProduct(
     val id: Long,
@@ -37,7 +69,24 @@ data class OnlineProduct(
     val priceCop: Long,
     val promotionPriceCop: Long?,
     val stock: Int,
-    val imagePath: String?
+    val imagePath: String?,
+    val averageRating: Double? = null,
+    val ratingCount: Long = 0
+)
+
+data class OnlineRatingItem(
+    val productId: Long,
+    val productName: String,
+    val imagePath: String?,
+    val deliveredAtMillis: Long,
+    val myRating: Int?
+)
+
+internal data class OnlineRatingResult(
+    val productId: Long,
+    val myRating: Int,
+    val averageRating: Double?,
+    val ratingCount: Long
 )
 
 data class OnlineProductDraft(
@@ -56,7 +105,9 @@ data class OnlineOrder(
     val clientName: String,
     val totalCop: Long,
     val createdAtMillis: Long,
-    val items: List<OnlineOrderItem>
+    val items: List<OnlineOrderItem>,
+    val paymentMethod: String? = null,
+    val inventoryUpdates: List<OnlineProduct>? = null
 )
 
 data class OnlineOrderItem(val productId: Long, val productName: String, val quantity: Int, val unitPriceCop: Long)
@@ -114,8 +165,10 @@ internal data class OnlineProductWrite(
 
 internal data class OnlineImageUpload(val imagePath: String)
 internal data class OnlineOrderWrite(val requestId: String, val items: List<OnlineOrderLine>)
+internal data class OnlineCheckoutWrite(val requestId: String, val items: List<OnlineOrderLine>, val expectedTotalCop: Long)
 internal data class OnlineOrderLine(val productId: Long, val quantity: Int)
 internal data class OnlineOrderDecision(val status: String)
+internal data class OnlineRatingWrite(val stars: Int)
 internal data class OnlineVehicleWrite(val brand: String, val model: String, val year: Int, val plate: String)
 internal data class OnlineAppointmentWrite(
     val requestId: String,
@@ -138,14 +191,21 @@ internal data class OnlineProductCacheEntity(
     val priceCop: Long,
     val promotionPriceCop: Long?,
     val stock: Int,
-    val imagePath: String?
+    val imagePath: String?,
+    val averageRating: Double?,
+    @ColumnInfo(defaultValue = "0") val ratingCount: Long
 ) {
-    fun toModel() = OnlineProduct(id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath)
+    fun toModel() = OnlineProduct(
+        id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath, averageRating, ratingCount
+    )
 }
 
 internal fun OnlineProduct.toCache(project: String) = OnlineProductCacheEntity(
-    project, id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath
+    project, id, version, name, description, category, priceCop, promotionPriceCop, stock, imagePath, averageRating, ratingCount
 )
+
+@Entity(tableName = "online_catalog_empty_snapshots")
+internal data class OnlineEmptyCatalogSnapshot(@PrimaryKey val project: String)
 
 @Dao
 internal abstract class OnlineCatalogDao {
@@ -158,16 +218,43 @@ internal abstract class OnlineCatalogDao {
     @Insert
     protected abstract suspend fun insert(products: List<OnlineProductCacheEntity>)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM online_catalog_empty_snapshots WHERE project = :project)")
+    protected abstract suspend fun hasEmptySnapshot(project: String): Boolean
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    protected abstract suspend fun recordEmptySnapshot(snapshot: OnlineEmptyCatalogSnapshot)
+
+    @Transaction
+    open suspend fun readSnapshot(project: String): List<OnlineProductCacheEntity>? {
+        val rows = read(project)
+        return rows.takeIf { it.isNotEmpty() || hasEmptySnapshot(project) }
+    }
+
     @Transaction
     open suspend fun replace(project: String, products: List<OnlineProductCacheEntity>) {
         val ordered = products.sortedBy { it.id }
+        if (ordered.isEmpty()) recordEmptySnapshot(OnlineEmptyCatalogSnapshot(project))
         if (ordered == read(project)) return
         clear(project)
         if (ordered.isNotEmpty()) insert(ordered)
     }
 }
 
-@Database(entities = [OnlineProductCacheEntity::class], version = 1, exportSchema = false)
+@Database(entities = [OnlineProductCacheEntity::class, OnlineEmptyCatalogSnapshot::class], version = 3, exportSchema = false)
 internal abstract class OnlineCatalogDatabase : RoomDatabase() {
     abstract fun catalog(): OnlineCatalogDao
+
+    companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE online_catalog ADD COLUMN averageRating REAL")
+                db.execSQL("ALTER TABLE online_catalog ADD COLUMN ratingCount INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS online_catalog_empty_snapshots (project TEXT NOT NULL PRIMARY KEY)")
+            }
+        }
+    }
 }

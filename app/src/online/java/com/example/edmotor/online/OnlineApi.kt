@@ -2,15 +2,21 @@ package com.example.edmotor.online
 
 import com.google.gson.JsonParser
 import java.io.ByteArrayOutputStream
+import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okhttp3.ResponseBody
 import okio.BufferedSink
 import retrofit2.HttpException
@@ -29,6 +35,9 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.Streaming
 
+private const val CHECKOUT_PATH = "orders/checkout"
+private const val RENDER_COLD_START_TIMEOUT_SECONDS = 90L
+
 internal interface OnlineService {
     @POST("auth/login")
     suspend fun login(@Body body: OnlineCredentials): OnlineAuthResponse
@@ -43,7 +52,7 @@ internal interface OnlineService {
     suspend fun logout(@Header("Authorization") auth: String)
 
     @GET("products")
-    suspend fun products(@Header("Authorization") auth: String): List<OnlineProduct>
+    suspend fun products(@Header("Authorization") auth: String? = null): List<OnlineProduct>
 
     @POST("products")
     suspend fun createProduct(@Header("Authorization") auth: String, @Body body: OnlineProductWrite): OnlineProduct
@@ -62,18 +71,36 @@ internal interface OnlineService {
 
     @Streaming
     @GET("products/images/{id}")
-    suspend fun productImage(@Header("Authorization") auth: String, @Path("id") id: String): ResponseBody
+    suspend fun productImage(@Header("Authorization") auth: String?, @Path("id") id: String): ResponseBody
 
     @GET("orders")
     suspend fun orders(@Header("Authorization") auth: String): List<OnlineOrder>
 
+    @GET("orders/requests/{requestId}")
+    suspend fun orderByRequest(
+        @Header("Authorization") auth: String, @Path("requestId") requestId: String
+    ): OnlineOrder
+
     @POST("orders")
     suspend fun createOrder(@Header("Authorization") auth: String, @Body body: OnlineOrderWrite): OnlineOrder
+
+    @POST(CHECKOUT_PATH)
+    suspend fun checkout(@Header("Authorization") auth: String, @Body body: OnlineCheckoutWrite): OnlineOrder
 
     @POST("orders/{id}/decision")
     suspend fun decideOrder(
         @Header("Authorization") auth: String, @Path("id") id: Long, @Body body: OnlineOrderDecision
     ): OnlineOrder
+
+    @GET("ratings/eligible")
+    suspend fun eligibleRatings(@Header("Authorization") auth: String): List<OnlineRatingItem>
+
+    @PUT("products/{id}/rating")
+    suspend fun rateProduct(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+        @Body body: OnlineRatingWrite
+    ): OnlineRatingResult
 
     @GET("vehicles")
     suspend fun vehicles(@Header("Authorization") auth: String): List<OnlineVehicle>
@@ -121,11 +148,15 @@ internal class OnlineApi private constructor(val project: String, val service: O
             val baseUrl = url.newBuilder().encodedPath("/api/v1/").build()
             val project = MessageDigest.getInstance("SHA-256").digest(baseUrl.toString().toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val renderHosted = baseUrl.host.endsWith(".onrender.com")
             val client = OkHttpClient.Builder()
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .retryOnConnectionFailure(false)
-                .callTimeout(20, TimeUnit.SECONDS)
+                .callTimeout(if (renderHosted) RENDER_COLD_START_TIMEOUT_SECONDS else 20, TimeUnit.SECONDS)
+                .apply {
+                    if (renderHosted) readTimeout(RENDER_COLD_START_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                }
                 .addInterceptor { chain ->
                     val request = chain.request()
                     if (request.method in setOf("POST", "PUT", "PATCH", "DELETE")) {
@@ -136,7 +167,17 @@ internal class OnlineApi private constructor(val project: String, val service: O
                             override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
                             override fun isOneShot() = true
                         }
-                        chain.proceed(request.newBuilder().method(request.method, oneShot).build())
+                        val write = request.newBuilder().method(request.method, oneShot).build()
+                        if (request.method == "POST" && request.url.encodedPath == "/api/v1/$CHECKOUT_PATH" &&
+                            request.body != null && !body.isOneShot()
+                        ) {
+                            // Checkout persists this request ID before sending and the server deduplicates it.
+                            chain.proceedWithRetry(write, retryUnavailable = false)
+                        } else {
+                            chain.proceed(write)
+                        }
+                    } else if (request.method == "GET") {
+                        chain.proceedWithRetry(request, retryUnavailable = true)
                     } else {
                         chain.proceed(request)
                     }
@@ -149,6 +190,27 @@ internal class OnlineApi private constructor(val project: String, val service: O
         }
     }
 }
+
+private val transientReadStatusCodes = setOf(502, 503, 504)
+
+private fun Interceptor.Chain.proceedWithRetry(request: Request, retryUnavailable: Boolean): Response {
+    val response = try {
+        proceed(request)
+    } catch (error: IOException) {
+        if (call().isCanceled() || !error.isTransientConnectionFailure()) throw error
+        return proceed(request)
+    }
+    if (!retryUnavailable || response.code !in transientReadStatusCodes || response.header("Retry-After") != null ||
+        response.priorResponse != null || call().isCanceled()
+    ) return response
+
+    response.close()
+    return proceed(request)
+}
+
+private fun IOException.isTransientConnectionFailure(): Boolean =
+    this is EOFException || this is SocketException || this is SocketTimeoutException ||
+        cause is EOFException
 
 private val productImagePath = Regex("/api/v1/products/images/([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})")
 

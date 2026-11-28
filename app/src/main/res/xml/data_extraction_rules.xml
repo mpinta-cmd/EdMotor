@@ -2,8 +2,16 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="datastore/edmotor_selected_profile.preferences_pb" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db-journal" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db-wal" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db-shm" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="datastore/edmotor_selected_profile.preferences_pb" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db-journal" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db-wal" />
+        <exclude domain="database" path="edmotor_dashboard_evidence.db-shm" />
     </device-transfer>
 </data-extraction-rules>

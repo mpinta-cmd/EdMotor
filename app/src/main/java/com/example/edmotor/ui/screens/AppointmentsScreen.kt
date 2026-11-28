@@ -26,7 +26,6 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -63,6 +62,7 @@ import com.example.edmotor.model.AppointmentStatus
 import com.example.edmotor.model.AppointmentSyncState
 import com.example.edmotor.model.Vehicle
 import com.example.edmotor.model.appointmentDateUtcMillis
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -96,6 +96,7 @@ fun AppointmentsScreen(
     onViewMaintenance: ((Int) -> Unit)? = null,
     requestedCalendarDay: Long? = null,
     timeZone: TimeZone = TimeZone.getDefault(),
+    onOpenGarage: (() -> Unit)? = null,
     onCalendarDayHandled: () -> Unit = {}
 ) {
     var selectedSection by rememberSaveable(isWorkshop) { mutableStateOf(AppointmentSection.REQUESTS) }
@@ -353,6 +354,7 @@ fun AppointmentsScreen(
                                 nowMillis = nowMillis,
                                 isProcessing = isProcessing,
                                 timeZone = timeZone,
+                                onOpenGarage = onOpenGarage,
                                 onCreateAppointment = onCreateAppointment
                             )
                         }
@@ -382,7 +384,7 @@ fun AppointmentsScreen(
         orderedAppointments.firstOrNull { it.identity() == requested.identity() && it.canBeChanged() }
     }
     if (appointmentToCancel != null) {
-        AlertDialog(
+        EdMotorBottomSheet(
             icon = { Icon(Icons.Outlined.EventAvailable, contentDescription = null) },
             title = { Text("Cancelar cita") },
             text = { Text("Al cancelar se eliminará la cita del ${formatAppointmentDateTime(appointmentToCancel.scheduledAtMillis, timeZone)}.") },
@@ -406,7 +408,7 @@ fun AppointmentsScreen(
         }
     }
     if (isWorkshop && appointmentToFinish != null) {
-        AlertDialog(
+        EdMotorBottomSheet(
             icon = { Icon(Icons.Outlined.EventAvailable, contentDescription = null) },
             title = { Text("Terminar la cita") },
             text = { Text("El cliente verá que su vehículo está listo para recoger. Después podrás registrar el mantenimiento realizado.") },

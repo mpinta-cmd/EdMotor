@@ -12,10 +12,17 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material.icons.outlined.ShoppingCart
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -23,10 +30,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -35,16 +43,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.edmotor.model.UserRole
 import com.example.edmotor.model.appointmentDateUtcMillis
 import com.example.edmotor.navigation.Routes
 import com.example.edmotor.ui.components.EdMotorBottomBar
 import com.example.edmotor.ui.screens.CredentialAccessScreen
+import com.example.edmotor.ui.screens.DashboardEvidenceVehicle
 import com.example.edmotor.ui.screens.DashboardScreen
 import com.example.edmotor.ui.theme.EdMotorTheme
 import java.util.TimeZone
@@ -63,108 +74,289 @@ class OnlineActivity : ComponentActivity() {
 private fun OnlineEdMotor(vm: OnlineViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val user = state.user
-    LaunchedEffect(lifecycle, user?.id) {
-        if (user != null) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 vm.refresh()
                 delay(20_000)
             }
         }
     }
+    OnlineWorkspace(vm, state)
+}
 
-    when {
-        state.configurationError != null -> OnlineConnectionNotice(requireNotNull(state.configurationError))
-        state.restoring -> OnlineConnectionNotice("Comprobando tu sesión…", working = true)
-        user == null -> CredentialAccessScreen(
+private enum class AccessEntry(val reason: String? = null) {
+    PROFILE,
+    CART("Crea tu perfil de cliente o inicia sesión para finalizar tu compra. Tu carrito se conserva."),
+    APPOINTMENTS("Crea tu perfil de cliente o inicia sesión para solicitar una cita y consultar su estado."),
+    GARAGE("Crea tu perfil de cliente para guardar tus vehículos y consultar su historial.")
+}
+
+private const val CHECKOUT_ROUTE = "finalizarCompra"
+private const val PURCHASE_RECEIPT_ROUTE = "compraConfirmada"
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState) {
+    val user = state.user
+    val workshop = user?.role == UserRole.WORKSHOP.name
+    val client = user?.role == UserRole.CLIENT.name
+    var route by rememberSaveable { mutableStateOf(Routes.HOME) }
+    var detailProductId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var cartReturnsToProduct by rememberSaveable { mutableStateOf(false) }
+    var receiptOrderId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var calendarDay by rememberSaveable { mutableStateOf<Long?>(null) }
+    var accessEntry by rememberSaveable { mutableStateOf<AccessEntry?>(null) }
+    var profileMenu by remember { mutableStateOf(false) }
+    val snackbars = remember { SnackbarHostState() }
+    val screenState = rememberSaveableStateHolder()
+    val cartCount = state.cart.values.sumOf { it.toLong() }
+    val activeRoute = when {
+        !client && route == Routes.RATINGS -> Routes.HOME
+        route == Routes.PRODUCT_DETAIL && detailProductId == null -> Routes.HOME
+        workshop && (route == Routes.CAR || route == CHECKOUT_ROUTE || route == PURCHASE_RECEIPT_ROUTE) -> Routes.HOME
+        user == null && route == CHECKOUT_ROUTE -> Routes.CAR
+        user == null && (route == Routes.ORDER_MANAGEMENT || route == PURCHASE_RECEIPT_ROUTE) -> Routes.PROFILE
+        else -> route
+    }
+    val inProductDetail = activeRoute == Routes.PRODUCT_DETAIL
+    val ownerSession = vm.inventoryOwnerSession(user?.id)
+    val inventoryAccess = if (ownerSession != null) {
+        rememberOwnerInventoryAccess(
+            sessionIdentity = ownerSession,
+            profileScope = vm.onlineProfileScope(user?.id),
+            inventoryOpen = activeRoute == Routes.HOME || inProductDetail,
+            isCurrentSession = vm::isInventoryOwnerSession,
+            confirmPassword = vm::confirmInventoryOwnerPassword
+        )
+    } else null
+    val catalogSync = state.syncStatus(OnlineResource.CATALOG)
+    val showingReferenceCatalog = activeRoute == Routes.HOME && state.hasReferenceCatalog
+    val showingReferenceDetail = inProductDetail && (detailProductId ?: 0L) < 0L
+    val syncNotice = when (activeRoute) {
+        Routes.HOME -> if (showingReferenceCatalog) {
+            "Catálogo incluido · Precios y cantidades de referencia"
+        } else {
+            "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable }
+        }
+        Routes.PRODUCT_DETAIL, Routes.CAR, CHECKOUT_ROUTE ->
+            "No pudimos actualizar el catálogo.".takeIf { catalogSync.unavailable && !showingReferenceDetail }
+        Routes.ORDER_MANAGEMENT -> "No pudimos actualizar los pedidos."
+            .takeIf { state.syncStatus(OnlineResource.ORDERS).unavailable }
+        Routes.RATINGS -> "No pudimos actualizar los repuestos para calificar."
+            .takeIf { state.syncStatus(OnlineResource.RATINGS).unavailable }
+        Routes.PROFILE -> when {
+            state.syncStatus(OnlineResource.VEHICLES).unavailable -> "No pudimos actualizar los vehículos."
+            state.syncStatus(OnlineResource.MAINTENANCE).unavailable -> "No pudimos actualizar el historial de mantenimiento."
+            else -> null
+        }
+        Routes.APPOINTMENTS -> "No pudimos actualizar los vehículos para la cita."
+            .takeIf { user != null && !workshop && state.syncStatus(OnlineResource.VEHICLES).unavailable }
+        else -> null
+    }
+
+    fun openAccess(entry: AccessEntry) {
+        vm.clearMessage()
+        accessEntry = entry
+    }
+
+    fun openCart(fromProductDetail: Boolean = false) {
+        cartReturnsToProduct = fromProductDetail
+        route = Routes.CAR
+    }
+
+    LaunchedEffect(user?.id) {
+        val enteringCheckout = accessEntry == AccessEntry.CART
+        if (enteringCheckout && user?.role == UserRole.CLIENT.name) {
+            route = CHECKOUT_ROUTE
+        } else if (activeRoute != route && (!enteringCheckout || user != null)) {
+            route = activeRoute
+        }
+        if (user != null) accessEntry = null
+        profileMenu = false
+    }
+    LaunchedEffect(activeRoute) {
+        if (activeRoute in setOf(Routes.HOME, CHECKOUT_ROUTE, Routes.RATINGS)) vm.refresh()
+    }
+    LaunchedEffect(state.checkoutReceiptId) {
+        val orderId = state.checkoutReceiptId ?: return@LaunchedEffect
+        if (activeRoute == CHECKOUT_ROUTE) {
+            receiptOrderId = orderId
+            route = PURCHASE_RECEIPT_ROUTE
+        }
+        vm.clearCheckoutReceipt()
+    }
+    LaunchedEffect(state.message, accessEntry) {
+        if (accessEntry != null) return@LaunchedEffect
+        val message = state.message ?: return@LaunchedEffect
+        snackbars.showSnackbar(message.text, withDismissAction = true)
+        vm.clearMessage()
+    }
+
+    val entry = accessEntry
+    if (entry != null && user == null) {
+        CredentialAccessScreen(
             isSubmitting = state.busy,
-            message = state.message?.text,
-            isError = state.message?.isError == true,
-            canRetry = state.isStale,
-            ownerConfigured = true,
+            message = state.configurationError ?: state.message?.text,
+            isError = state.configurationError != null || state.message?.isError == true,
+            canRetry = false,
+            ownerConfigured = if (state.configurationError == null) true else null,
             isPrivateMode = false,
             onSignIn = vm::login,
             onRegisterClient = vm::register,
             onSetupOwner = { _, _ -> },
             onClearMessage = vm::clearMessage,
             onRetry = vm::refresh,
-            isOnlineMode = true
+            isOnlineMode = true,
+            initiallyRegisterClient = entry != AccessEntry.PROFILE,
+            accessReason = entry.reason,
+            onDismiss = {
+                vm.clearMessage()
+                if (entry == AccessEntry.CART) route = Routes.CAR
+                accessEntry = null
+            }
         )
-        else -> key(user.id) { OnlineWorkspace(vm, state, user) }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState, user: OnlineUser) {
-    val workshop = user.role == "WORKSHOP"
-    var route by rememberSaveable { mutableStateOf(Routes.HOME) }
-    var calendarDay by rememberSaveable { mutableStateOf<Long?>(null) }
-    var cart by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
-    val snackbars = remember { SnackbarHostState() }
-    val screenState = rememberSaveableStateHolder()
-
-    fun changeQuantity(id: Long, quantity: Int) {
-        val available = state.products.firstOrNull { it.id == id }?.stock ?: 0
-        val count = quantity.coerceIn(0, available.coerceAtLeast(0))
-        cart = if (count == 0) cart - id else cart + (id to count)
+        return
     }
 
-    LaunchedEffect(state.message) {
-        val message = state.message ?: return@LaunchedEffect
-        snackbars.showSnackbar(message.text, withDismissAction = true)
-        vm.clearMessage()
-    }
-    BackHandler(route != Routes.HOME) {
-        route = if (route == Routes.ORDER_MANAGEMENT) Routes.PROFILE else Routes.HOME
+    BackHandler(activeRoute != Routes.HOME) {
+        route = when (activeRoute) {
+            CHECKOUT_ROUTE -> Routes.CAR
+            Routes.CAR -> if (cartReturnsToProduct && detailProductId != null) Routes.PRODUCT_DETAIL else Routes.HOME
+            PURCHASE_RECEIPT_ROUTE -> Routes.ORDER_MANAGEMENT
+            Routes.ORDER_MANAGEMENT -> Routes.PROFILE
+            else -> Routes.HOME
+        }
     }
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
+            if (!inProductDetail) TopAppBar(
                 title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("EdMotor Automotriz", style = MaterialTheme.typography.titleMedium)
+                    Column {
                         Text(
-                            if (workshop) "Panel del taller" else user.displayName,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
+                            "EdMotor Automotriz",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        if (workshop) {
+                            Text(
+                                "Panel del taller",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 },
                 actions = {
-                    IconButton(onClick = vm::refresh, enabled = !state.busy) {
-                        Icon(Icons.Outlined.Refresh, "Actualizar datos")
+                    if (!workshop) {
+                        IconButton(onClick = { openCart() }) {
+                            BadgedBox(badge = {
+                                if (cartCount > 0) Badge { Text(if (cartCount > 99) "99+" else cartCount.toString()) }
+                            }) {
+                                Icon(
+                                    Icons.Outlined.ShoppingCart,
+                                    when (cartCount) {
+                                        0L -> "Carrito"
+                                        1L -> "Carrito, 1 unidad"
+                                        else -> "Carrito, $cartCount unidades"
+                                    }
+                                )
+                            }
+                        }
+                    } else {
+                        IconButton(onClick = vm::refresh, enabled = !state.busy) {
+                            Icon(Icons.Outlined.Refresh, "Actualizar datos")
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = {
+                            if (user == null) openAccess(AccessEntry.PROFILE) else profileMenu = true
+                        }) {
+                            Icon(Icons.Outlined.AccountCircle, if (user == null) "Tu perfil, iniciar sesión o registrarte" else "Tu perfil")
+                        }
+                        if (user != null) {
+                            DropdownMenu(expanded = profileMenu, onDismissRequest = { profileMenu = false }) {
+                                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                    Text(user.displayName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (workshop) "Dueño del taller" else "Cliente", style = MaterialTheme.typography.bodySmall)
+                                }
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Mi Garaje") },
+                                    onClick = { profileMenu = false; route = Routes.PROFILE }
+                                )
+                                if (inventoryAccess != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Huella para Inventario") },
+                                        leadingIcon = { Icon(Icons.Outlined.Fingerprint, contentDescription = null) },
+                                        onClick = { profileMenu = false; inventoryAccess.openSettings() }
+                                    )
+                                }
+                                if (!workshop) {
+                                    DropdownMenuItem(
+                                        text = { Text("Mis pedidos") },
+                                        onClick = { profileMenu = false; route = Routes.ORDER_MANAGEMENT }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Actualizar datos") },
+                                        enabled = !state.busy,
+                                        onClick = { profileMenu = false; vm.refresh() }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Cerrar sesión") },
+                                    enabled = !state.busy,
+                                    onClick = { profileMenu = false; route = Routes.HOME; vm.logout() }
+                                )
+                            }
+                        }
                     }
                 }
             )
         },
         bottomBar = {
-            EdMotorBottomBar(
-                currentRoute = if (route == Routes.CAR) Routes.HOME else route,
+            if (!inProductDetail) EdMotorBottomBar(
+                currentRoute = activeRoute,
                 pendingOrderCount = if (workshop) state.orders.count { it.status == "PENDING" } else 0,
                 pendingAppointmentCount = if (workshop) state.appointments.count { it.status == "PENDING" } else 0,
+                showRatings = client,
                 onNavigate = { route = it }
             )
         },
         snackbarHost = { SnackbarHost(snackbars) }
     ) { insets ->
         Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
-            if (state.isStale && route != Routes.DASHBOARD) {
-                Text(
-                    "No se pudieron actualizar todos los datos. Parte de la información puede estar desactualizada.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+            if (syncNotice != null) {
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    Text(
+                        syncNotice,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (!showingReferenceCatalog || (state.configurationError == null && catalogSync.unavailable)) {
+                        TextButton(onClick = vm::refresh, enabled = !state.busy) { Text("Reintentar") }
+                    }
+                }
             }
             Box(Modifier.weight(1f).fillMaxSize()) {
-                if (route != Routes.DASHBOARD && state.loading && state.lastSyncAtMillis == null && state.products.isEmpty()) {
-                    OnlineConnectionNotice("Consultando EdMotor…", working = true)
-                } else screenState.SaveableStateProvider(route) { when (route) {
-                    Routes.DASHBOARD -> DashboardScreen()
-                    Routes.PROFILE -> OnlineGarageScreen(
+                val screenKey = if (inProductDetail) "$activeRoute:$detailProductId" else activeRoute
+                screenState.SaveableStateProvider("${user?.id ?: "guest"}:$screenKey") { when (activeRoute) {
+                    Routes.DASHBOARD -> DashboardScreen(
+                        evidenceScope = vm.onlineProfileScope(user?.id),
+                        vehicles = if (user == null) emptyList() else state.vehicles
+                            .filter { workshop || it.clientId == user.id }
+                            .map { vehicle ->
+                                val label = listOf("${vehicle.brand} ${vehicle.model}", vehicle.year.toString(), vehicle.plate)
+                                    .filter(String::isNotBlank).joinToString(" · ")
+                                DashboardEvidenceVehicle(vehicle.id.toString(), label)
+                            }
+                    )
+                    Routes.PROFILE -> if (user == null) GuestGarageScreen(
+                        onCreateAccount = { openAccess(AccessEntry.GARAGE) },
+                        onBrowseCatalog = { route = Routes.HOME }
+                    ) else OnlineGarageScreen(
                         vm = vm,
                         state = state,
                         onOpenAppointment = { appointment ->
@@ -176,22 +368,94 @@ private fun OnlineWorkspace(vm: OnlineViewModel, state: OnlineState, user: Onlin
                         },
                         onOpenOrders = { route = Routes.ORDER_MANAGEMENT }
                     )
-                    Routes.APPOINTMENTS -> OnlineAppointmentsScreen(vm, state, calendarDay) { calendarDay = null }
-                    Routes.ORDER_MANAGEMENT -> OnlineOrdersScreen(vm, state)
-                    Routes.CAR -> OnlineCartScreen(vm, state, cart, ::changeQuantity) {
-                        cart = emptyMap()
-                        route = Routes.ORDER_MANAGEMENT
+                    Routes.APPOINTMENTS -> if (user == null) {
+                        GuestAppointmentsScreen(onAuthenticate = { openAccess(AccessEntry.APPOINTMENTS) })
+                    } else {
+                        OnlineAppointmentsScreen(vm, state, calendarDay, onOpenGarage = { route = Routes.PROFILE }) {
+                            calendarDay = null
+                        }
                     }
-                    else -> OnlineCatalogScreen(
-                        vm = vm,
-                        state = state,
-                        cart = cart,
-                        onAddToCart = { id ->
-                            val count = cart[id] ?: 0
-                            if (count < Int.MAX_VALUE) changeQuantity(id, count + 1)
-                        },
-                        onOpenCart = { route = Routes.CAR }
+                    Routes.ORDER_MANAGEMENT -> OnlineOrdersScreen(vm, state)
+                    Routes.RATINGS -> OnlineRatingsScreen(
+                        state,
+                        onRate = vm::rateProduct,
+                        onOpenOrders = { route = Routes.ORDER_MANAGEMENT }
                     )
+                    Routes.PRODUCT_DETAIL -> when {
+                        workshop && inventoryAccess == null -> OnlineConnectionNotice("Verificando el perfil del dueño…", working = true)
+                        inventoryAccess?.locked == true -> OwnerInventoryLockedScreen(inventoryAccess)
+                        else -> OnlineProductDetailScreen(
+                            vm = vm,
+                            state = state,
+                            productId = requireNotNull(detailProductId),
+                            onBack = { route = Routes.HOME },
+                            onOpenCart = { openCart(fromProductDetail = true) }
+                        )
+                    }
+                    Routes.CAR -> OnlineCartScreen(
+                        vm, state, vm::changeCartQuantity,
+                        onCheckout = {
+                            route = CHECKOUT_ROUTE
+                            if (user == null) openAccess(AccessEntry.CART)
+                        },
+                        onBrowseCatalog = { route = Routes.HOME }
+                    )
+                    CHECKOUT_ROUTE -> OnlineCheckoutScreen(
+                        state,
+                        onConfirmPurchase = vm::confirmPurchase,
+                        onBackToCart = { route = Routes.CAR }
+                    )
+                    PURCHASE_RECEIPT_ROUTE -> {
+                        val order = state.orders.firstOrNull { it.id == receiptOrderId }
+                        if (order != null) {
+                            OnlinePurchaseReceipt(
+                                order,
+                                onViewOrders = { route = Routes.ORDER_MANAGEMENT },
+                                onBrowseCatalog = { route = Routes.HOME }
+                            )
+                        } else {
+                            val ordersSync = state.syncStatus(OnlineResource.ORDERS)
+                            val loading = ordersSync.waitingForFirstData
+                            Column(
+                                modifier = Modifier.fillMaxSize().padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    if (loading) "Consultando la compra…" else "Consulta el estado de tu compra en Mis pedidos.",
+                                    textAlign = TextAlign.Center
+                                )
+                                TextButton(onClick = { route = Routes.ORDER_MANAGEMENT }) { Text("Ir a Mis pedidos") }
+                            }
+                        }
+                    }
+                    else -> {
+                        val voiceSearch = rememberOnlineVoiceSearch()
+                        when {
+                            state.configurationError != null && !state.hasReferenceCatalog ->
+                                OnlineConnectionNotice(state.configurationError)
+                            workshop && inventoryAccess == null -> OnlineConnectionNotice("Verificando el perfil del dueño…", working = true)
+                            inventoryAccess?.locked == true -> OwnerInventoryLockedScreen(inventoryAccess)
+                            catalogSync.waitingForFirstData && state.products.isEmpty() -> OnlineConnectionNotice(
+                                if (catalogSync.retrying) "Volviendo a conectar con el catálogo…" else "Consultando repuestos…",
+                                working = true
+                            )
+                            else -> OnlineCatalogScreen(
+                                vm = vm,
+                                state = state,
+                                onAddToCart = vm::addToCart,
+                                onRemoveFromCart = vm::removeFromCart,
+                                onToggleFavorite = vm::toggleFavorite,
+                                voiceSearch = voiceSearch,
+                                onOpenAppointments = { route = Routes.APPOINTMENTS },
+                                onReviewOrder = { openCart() },
+                                onOpenProduct = { productId ->
+                                    detailProductId = productId
+                                    route = Routes.PRODUCT_DETAIL
+                                }
+                            )
+                        }
+                    }
                 } }
             }
         }

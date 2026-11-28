@@ -13,6 +13,7 @@ object Routes {
     const val DASHBOARD = "Servicios"
     const val PROFILE = "Mi Garaje"
     const val APPOINTMENTS = "Citas"
+    const val RATINGS = "Calificar"
 
     // ==========================================
     // PRODUCTOS

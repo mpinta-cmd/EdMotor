@@ -2,6 +2,7 @@ package com.example.edmotor.data.repository
 
 import androidx.room.withTransaction
 import com.example.edmotor.data.categoryList
+import com.example.edmotor.data.catalogSeedStock
 import com.example.edmotor.data.productList
 import com.example.edmotor.data.local.EdMotorDatabase
 import com.example.edmotor.data.local.ProductCategoryDao
@@ -84,7 +85,7 @@ class ProductRepository(
                         imageRes = product.imageRes,
                         contentDescription = product.contentDescription,
                         rating = product.rating,
-                        stock = if (product.badge.equals("Agotado", ignoreCase = true)) 0 else 10,
+                        stock = product.catalogSeedStock,
                         isNew = product.badge.equals("Nuevo", ignoreCase = true),
                         isOnPromotion = false,
                         isActive = true

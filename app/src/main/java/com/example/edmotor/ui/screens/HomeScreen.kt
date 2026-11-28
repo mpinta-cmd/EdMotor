@@ -254,7 +254,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun CatalogCover(isWorkshop: Boolean, onOpen: () -> Unit) {
+internal fun CatalogCover(isWorkshop: Boolean, onOpen: () -> Unit) {
     val coverColor = EdMotorHeroNavy
     Box(
         modifier = Modifier

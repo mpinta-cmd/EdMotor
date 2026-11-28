@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,27 +22,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.AddShoppingCart
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.HideImage
-import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.ShoppingCart
-import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -54,6 +62,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,24 +70,40 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.edmotor.data.FAVORITES_FILTER_KEY
+import com.example.edmotor.data.catalogCategoryFilterKey
+import com.example.edmotor.data.categoryList
 import com.example.edmotor.data.productList
+import com.example.edmotor.model.Category
 import com.example.edmotor.model.UserRole
+import com.example.edmotor.ui.components.CategoryBadge
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import com.example.edmotor.ui.components.ProductImage
 import com.example.edmotor.ui.components.ProductImageChoice
 import com.example.edmotor.ui.components.ProductImagePicker
+import com.example.edmotor.ui.components.StockAdjustmentDialog
+import com.example.edmotor.ui.screens.CatalogCover
 import com.example.edmotor.ui.theme.EdMotorPhotoMatte
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.math.RoundingMode
 import java.text.Collator
 import java.text.Normalizer
 import java.text.NumberFormat
@@ -100,50 +125,93 @@ private fun searchTerm(value: String): String =
 internal fun OnlineCatalogScreen(
     vm: OnlineViewModel,
     state: OnlineState,
-    cart: Map<Long, Int>,
     onAddToCart: (Long) -> Unit,
-    onOpenCart: () -> Unit
+    onRemoveFromCart: (Long) -> Unit,
+    onToggleFavorite: (Long) -> Unit,
+    voiceSearch: OnlineVoiceSearchState,
+    onOpenAppointments: () -> Unit,
+    onReviewOrder: () -> Unit,
+    onOpenProduct: (Long) -> Unit
 ) {
     val workshop = state.user?.role == UserRole.WORKSHOP.name
-    var query by rememberSaveable { mutableStateOf("") }
+    val cart = state.cart
+    val pending = state.pendingOrder != null
+    val query = voiceSearch.query.trim()
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    var selectedCategory by rememberSaveable { mutableStateOf<String?>(null) }
+    var appliedQuery by rememberSaveable { mutableStateOf(query) }
+    var appliedCategory by rememberSaveable { mutableStateOf(selectedCategory) }
     var showingEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<OnlineProduct?>(null) }
-    var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var deactivating by remember { mutableStateOf<OnlineProduct?>(null) }
-    val products = remember(query, state.products) {
-        val term = searchTerm(query.trim())
+    var stockAdjustmentId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var increasingStock by rememberSaveable { mutableStateOf(true) }
+    val hasFilters = query.isNotEmpty() || selectedCategory != null
+    val categories = remember(state.products) {
+        (categoryList + state.products.map { Category(emoji = "", nombre = it.category) })
+            .distinctBy { catalogCategoryFilterKey(it.nombre) }
+    }
+    val products = remember(query, selectedCategory, state.products, state.favoriteProductIds) {
+        val term = searchTerm(query)
         val alphabet = Collator.getInstance(localeColombia).apply { strength = Collator.PRIMARY }
         state.products.filter { product ->
-            term.isEmpty() || searchTerm("${product.name} ${product.category} ${product.description}").contains(term)
+            val matchesCategory = when (selectedCategory) {
+                null -> true
+                FAVORITES_FILTER_KEY -> product.id in state.favoriteProductIds
+                else -> catalogCategoryFilterKey(product.category) == selectedCategory
+            }
+            val matchesQuery = term.isEmpty() ||
+                searchTerm("${product.name} ${product.category} ${product.description}").contains(term) ||
+                (product.currentPriceCop < product.priceCop && "oferta".contains(term))
+            matchesCategory && matchesQuery
         }.sortedWith(
             compareByDescending<OnlineProduct> { it.currentPriceCop < it.priceCop }
                 .thenComparator { first, second -> alphabet.compare(first.name, second.name) }
                 .thenBy { it.id }
         )
     }
+    val selectedCategoryName = categories.firstOrNull { catalogCategoryFilterKey(it.nombre) == selectedCategory }?.nombre
+    val catalogTitle = when {
+        selectedCategory == FAVORITES_FILTER_KEY -> "Favoritos"
+        selectedCategoryName != null -> selectedCategoryName
+        query.isNotEmpty() -> "Resultados"
+        workshop -> "Inventario de repuestos"
+        else -> "Catálogo de repuestos"
+    }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(if (LocalDensity.current.fontScale > 1.4f) 230.dp else 155.dp),
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OnlineSectionTitle(
-                    title = if (workshop) "Inventario de repuestos" else "Catálogo de repuestos",
-                    icon = Icons.Outlined.Inventory2
-                )
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Buscar repuestos") },
-                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                    singleLine = true
-                )
-                if (workshop) {
+    LaunchedEffect(query, selectedCategory) {
+        if (query != appliedQuery || selectedCategory != appliedCategory) {
+            gridState.scrollToItem(0)
+            appliedQuery = query
+            appliedCategory = selectedCategory
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Box(Modifier.padding(horizontal = 16.dp)) {
+                OnlineVoiceSearchField(voiceSearch)
+            }
+            OnlineCatalogCategoryFilters(categories, selectedCategory) { selectedCategory = it }
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(if (LocalDensity.current.fontScale > 1.4f) 230.dp else 155.dp),
+            state = gridState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (!hasFilters) {
+                item(key = "catalog-cover", span = { GridItemSpan(maxLineSpan) }) {
+                    CatalogCover(isWorkshop = workshop) {
+                        if (workshop) scope.launch { gridState.animateScrollToItem(1) }
+                        else onOpenAppointments()
+                    }
+                }
+            }
+            if (workshop && !state.hasReferenceCatalog) {
+                item(key = "catalog-create", span = { GridItemSpan(maxLineSpan) }) {
                     Button(
                         onClick = { editing = null; showingEditor = true },
                         enabled = !state.busy,
@@ -153,81 +221,57 @@ internal fun OnlineCatalogScreen(
                         Spacer(Modifier.width(6.dp))
                         Text("Agregar repuesto")
                     }
-                } else if (cart.isNotEmpty()) {
-                    OutlinedButton(onClick = onOpenCart, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Outlined.ShoppingCart, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Ver carrito")
+                }
+            } else if (pending) {
+                item(key = "catalog-pending", span = { GridItemSpan(maxLineSpan) }) {
+                    OutlinedButton(onClick = onReviewOrder, modifier = Modifier.fillMaxWidth()) {
+                        Text("Revisar envío pendiente")
                     }
                 }
             }
-        }
-        if (!state.loading && products.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                OnlineListNote(
-                    if (query.isNotBlank()) "No encontramos repuestos con esa búsqueda."
-                    else "Todavía no hay repuestos en el catálogo."
-                )
+            item(key = "catalog-count", span = { GridItemSpan(maxLineSpan) }) {
+                OnlineCatalogResults(catalogTitle, products.size)
             }
-        }
-        items(products, key = { it.id }) { product ->
-            val quantity = cart[product.id] ?: 0
-            OnlineProductCard(
-                vm = vm,
-                product = product,
-                workshop = workshop,
-                quantity = quantity,
-                busy = state.busy,
-                onOpen = { selectedId = product.id },
-                onAdd = { onAddToCart(product.id) },
-                onEdit = { editing = product; showingEditor = true }
-            )
-        }
-    }
-
-    val selected = state.products.firstOrNull { it.id == selectedId }
-    if (selected != null) {
-        AlertDialog(
-            onDismissRequest = { selectedId = null },
-            title = { Text(selected.name) },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OnlineProductPhoto(vm, selected.imagePath, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
-                    OnlineProductPrice(selected)
-                    Text(selected.category, style = MaterialTheme.typography.labelLarge)
-                    if (selected.description.isNotBlank()) Text(selected.description)
-                    Text(stockLabel(selected.stock), style = MaterialTheme.typography.bodySmall)
-                    if (workshop) {
-                        TextButton(
-                            onClick = { selectedId = null; deactivating = selected },
-                            enabled = !state.busy
-                        ) {
-                            Icon(Icons.Outlined.VisibilityOff, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(5.dp))
-                            Text("Desactivar repuesto")
+            if (products.isEmpty() && (state.products.isNotEmpty() || state.syncStatus(OnlineResource.CATALOG).loaded)) {
+                item(key = "catalog-empty", span = { GridItemSpan(maxLineSpan) }) {
+                    val message = when {
+                        selectedCategory == FAVORITES_FILTER_KEY -> "Aún no tienes favoritos."
+                        hasFilters -> "No encontramos repuestos con esos filtros."
+                        else -> "Todavía no hay repuestos en el catálogo."
+                    }
+                    Column {
+                        OnlineListNote(message)
+                        if (hasFilters) {
+                            TextButton(onClick = { voiceSearch.query = ""; selectedCategory = null }) {
+                                Text("Ver todos los repuestos")
+                            }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                if (workshop) {
-                    Button(
-                        enabled = !state.busy,
-                        onClick = { selectedId = null; editing = selected; showingEditor = true }
-                    ) { Text("Editar repuesto") }
-                } else {
-                    Button(
-                        enabled = !state.busy && (cart[selected.id] ?: 0) < selected.stock,
-                        onClick = { onAddToCart(selected.id); selectedId = null }
-                    ) { Text("Agregar al carrito") }
-                }
-            },
-            dismissButton = { TextButton(onClick = { selectedId = null }) { Text("Cerrar") } }
-        )
+            }
+            gridItems(products, key = { it.id }) { product ->
+                OnlineProductCard(
+                    vm = vm,
+                    product = product,
+                    workshop = workshop,
+                    quantity = cart[product.id] ?: 0,
+                    busy = state.busy || pending,
+                    isFavorite = product.id in state.favoriteProductIds,
+                    onOpen = { onOpenProduct(product.id) },
+                    onAdd = { onAddToCart(product.id) },
+                    onRemove = { onRemoveFromCart(product.id) },
+                    onToggleFavorite = { onToggleFavorite(product.id) },
+                    onEdit = { editing = product; showingEditor = true },
+                    onAdjustStock = { increase ->
+                        stockAdjustmentId = product.id
+                        increasingStock = increase
+                    }
+                )
+            }
+        }
     }
+
+    OnlineVoiceSearchDialogs(voiceSearch)
 
     if (workshop && showingEditor) {
         OnlineProductEditor(
@@ -238,20 +282,97 @@ internal fun OnlineCatalogScreen(
         )
     }
 
-    val toDeactivate = deactivating
-    if (workshop && toDeactivate != null) {
-        AlertDialog(
-            onDismissRequest = { deactivating = null },
-            title = { Text("Desactivar repuesto") },
-            text = { Text("${toDeactivate.name} dejará de estar disponible en el catálogo.") },
-            confirmButton = {
-                Button(enabled = !state.busy, onClick = {
-                    vm.deleteProduct(toDeactivate)
-                    deactivating = null
-                }) { Text("Desactivar") }
-            },
-            dismissButton = { TextButton(onClick = { deactivating = null }) { Text("Volver") } }
+    val adjusting = state.products.firstOrNull { it.id == stockAdjustmentId }
+    if (workshop && adjusting != null) {
+        StockAdjustmentDialog(
+            productName = adjusting.name,
+            currentStock = adjusting.stock,
+            increase = increasingStock,
+            onDismiss = { stockAdjustmentId = null },
+            onConfirm = { amount ->
+                vm.adjustInventoryStock(adjusting.id, if (increasingStock) amount else -amount)
+                stockAdjustmentId = null
+            }
         )
+    }
+
+}
+
+@Composable
+private fun OnlineCatalogCategoryFilters(
+    categories: List<Category>,
+    selection: String?,
+    onSelect: (String?) -> Unit
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().selectableGroup(),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        item(key = "filters:all") {
+            CategoryBadge(Category("", "Todos"), selection == null, { onSelect(null) }, Icons.Outlined.GridView)
+        }
+        item(key = FAVORITES_FILTER_KEY) {
+            CategoryBadge(
+                Category("", "Favoritos"),
+                selection == FAVORITES_FILTER_KEY,
+                { onSelect(FAVORITES_FILTER_KEY) },
+                Icons.Outlined.FavoriteBorder
+            )
+        }
+        items(categories, key = { catalogCategoryFilterKey(it.nombre) }) { category ->
+            val key = catalogCategoryFilterKey(category.nombre)
+            CategoryBadge(category, selection == key, { onSelect(key) })
+        }
+    }
+}
+
+@Composable
+private fun OnlineCatalogResults(title: String, count: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f).semantics { heading() }
+        )
+        Text(
+            if (count == 1) "1 repuesto" else "$count repuestos",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End
+        )
+    }
+}
+
+@Composable
+internal fun OnlineFavoriteButton(
+    name: String,
+    isFavorite: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val haptics = LocalHapticFeedback.current
+    IconButton(
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onToggle()
+        },
+        modifier = modifier
+    ) {
+        Box(Modifier.size(34.dp).background(colors.surface, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(
+                if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                contentDescription = if (isFavorite) "Quitar $name de favoritos" else "Agregar $name a favoritos",
+                tint = if (isFavorite) colors.primary else colors.onSurface,
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
 
@@ -262,11 +383,16 @@ private fun OnlineProductCard(
     workshop: Boolean,
     quantity: Int,
     busy: Boolean,
+    isFavorite: Boolean,
     onOpen: () -> Unit,
     onAdd: () -> Unit,
-    onEdit: () -> Unit
+    onRemove: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onEdit: () -> Unit,
+    onAdjustStock: (Boolean) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val isReference = product.id < 0L
     Surface(
         onClick = onOpen,
         shape = MaterialTheme.shapes.large,
@@ -274,9 +400,18 @@ private fun OnlineProductCard(
         border = BorderStroke(1.dp, colors.outline)
     ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            OnlineStockQuantity(product.stock, isReference, Modifier.fillMaxWidth())
             Box {
-                OnlineProductPhoto(vm, product.imagePath, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
-                if (product.currentPriceCop < product.priceCop) {
+                OnlineProductPhoto(
+                    vm,
+                    product.imagePath,
+                    Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                    referenceDrawable = referenceCatalogImage(product.id)
+                )
+                if (!isReference) {
+                    OnlineFavoriteButton(product.name, isFavorite, onToggleFavorite, Modifier.align(Alignment.TopEnd))
+                }
+                if (!isReference && product.currentPriceCop < product.priceCop) {
                     Surface(
                         modifier = Modifier.align(Alignment.BottomStart).padding(5.dp),
                         shape = MaterialTheme.shapes.small,
@@ -296,47 +431,195 @@ private fun OnlineProductCard(
                 overflow = TextOverflow.Ellipsis
             )
             Text(product.category, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            if (!isReference) OnlineProductRating(product)
             OnlineProductPrice(product)
-            Text(
-                stockLabel(product.stock),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (product.stock <= 0) colors.error else colors.onSurfaceVariant
-            )
+            if (product.description.isNotBlank()) {
+                Text(
+                    product.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (isReference) return@Column
+
             if (workshop) {
+                OnlineCatalogQuantityControls(
+                    name = product.name,
+                    quantity = product.stock,
+                    canAdd = !busy && product.stock < Int.MAX_VALUE,
+                    canRemove = !busy && product.stock > 0,
+                    onAdd = { onAdjustStock(true) },
+                    onRemove = { onAdjustStock(false) },
+                    isInventory = true
+                )
                 OutlinedButton(onClick = onEdit, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Editar")
                 }
             } else {
-                if (quantity > 0) Text("En carrito: $quantity", style = MaterialTheme.typography.labelSmall)
-                Button(
-                    onClick = onAdd,
-                    enabled = !busy && quantity < product.stock,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                ) {
-                    Icon(Icons.Outlined.AddShoppingCart, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Agregar")
-                }
+                OnlineCatalogCartControls(product, quantity, enabled = !busy, onAdd = onAdd, onRemove = onRemove)
             }
         }
     }
 }
 
-private fun stockLabel(stock: Int): String = when {
-    stock <= 0 -> "Agotado"
-    stock == 1 -> "Última unidad"
-    else -> "$stock disponibles"
+@Composable
+private fun OnlineCatalogCartControls(
+    product: OnlineProduct,
+    quantity: Int,
+    enabled: Boolean,
+    onAdd: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    val canAdd = enabled && quantity < product.stock
+    if (quantity == 0) {
+        Button(
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                onAdd()
+            },
+            enabled = canAdd,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+        ) {
+            Icon(Icons.Outlined.AddShoppingCart, contentDescription = null, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Agregar")
+        }
+        return
+    }
+
+    OnlineCatalogQuantityControls(
+        name = product.name,
+        quantity = quantity,
+        canAdd = canAdd,
+        canRemove = enabled,
+        onAdd = onAdd,
+        onRemove = onRemove
+    )
 }
 
 @Composable
-private fun OnlineProductPrice(product: OnlineProduct) {
+internal fun OnlineCatalogQuantityControls(
+    name: String,
+    quantity: Int,
+    canAdd: Boolean,
+    canRemove: Boolean,
+    onAdd: () -> Unit,
+    onRemove: () -> Unit,
+    isInventory: Boolean = false
+) {
+    val haptics = LocalHapticFeedback.current
+    val label = if (isInventory) "stock" else "cantidad"
+    val description = if (isInventory) "Existencias: $quantity" else "Cantidad en carrito: $quantity"
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        FilledTonalIconButton(
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onRemove()
+            },
+            enabled = canRemove,
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Outlined.Remove, contentDescription = "Disminuir $label de $name")
+        }
+        Text(
+            text = quantity.toString(),
+            modifier = Modifier.weight(1f).clearAndSetSemantics { contentDescription = description },
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold
+        )
+        FilledIconButton(
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onAdd()
+            },
+            enabled = canAdd,
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = "Aumentar $label de $name")
+        }
+    }
+}
+
+internal fun stockQuantityText(stock: Int): String = when {
+    stock <= 0 -> "0 unidades · Agotado"
+    stock == 1 -> "1 unidad"
+    else -> "$stock unidades"
+}
+
+@Composable
+internal fun OnlineStockQuantity(stock: Int, isReference: Boolean, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        color = if (stock <= 0) colors.errorContainer else colors.primaryContainer,
+        contentColor = if (stock <= 0) colors.onErrorContainer else colors.onPrimaryContainer
+    ) {
+        Column(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                if (isReference) "Cantidad de referencia" else "Cantidad disponible",
+                style = MaterialTheme.typography.labelSmall
+            )
+            Text(
+                stockQuantityText(stock),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+internal fun OnlineProductRating(product: OnlineProduct, detailed: Boolean = false) {
+    val average = product.averageRating?.takeIf { it in 1.0..5.0 } ?: return
+    val count = product.ratingCount.takeIf { it > 0L } ?: return
+    val score = remember(average) {
+        NumberFormat.getNumberInstance(localeColombia).apply {
+            minimumFractionDigits = 1
+            maximumFractionDigits = 1
+            roundingMode = RoundingMode.HALF_UP
+        }.format(average)
+    }
+    val quantity = remember(count) { NumberFormat.getIntegerInstance(localeColombia).format(count) }
+    val votes = if (count == 1L) "$quantity calificación" else "$quantity calificaciones"
+    val text = if (detailed) "$score de 5 · $votes" else "$score ($quantity)"
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.clearAndSetSemantics { contentDescription = "$score de 5 estrellas, $votes" },
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Filled.Star, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+internal fun OnlineProductPrice(product: OnlineProduct, prominent: Boolean = false) {
     Column {
         Text(
             onlinePrice(product.currentPriceCop),
-            style = MaterialTheme.typography.titleMedium,
+            style = if (prominent) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.ExtraBold
         )
@@ -352,7 +635,7 @@ private fun OnlineProductPrice(product: OnlineProduct) {
 }
 
 @Composable
-private fun OnlineProductEditor(
+internal fun OnlineProductEditor(
     vm: OnlineViewModel,
     state: OnlineState,
     product: OnlineProduct?,
@@ -424,12 +707,12 @@ private fun OnlineProductEditor(
         }
     }
 
-    AlertDialog(
+    EdMotorBottomSheet(
         onDismissRequest = { if (!state.busy) onDismiss() },
+        dismissEnabled = !state.busy,
         title = { Text(if (product == null) "Registrar repuesto" else "Editar repuesto") },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(9.dp)
             ) {
                 OnlineProductField(name, { name = it.take(180) }, "Nombre", !state.busy)
@@ -540,29 +823,44 @@ private fun OnlineProductField(
 }
 
 @Composable
-internal fun OnlineProductPhoto(vm: OnlineViewModel, imagePath: String?, modifier: Modifier) {
-    val bitmap by produceState<Bitmap?>(initialValue = null, key1 = vm, key2 = imagePath) {
-        value = null
-        if (imagePath != null) {
-            val bytes = vm.loadProductImage(imagePath)
-            if (bytes != null && bytes.size in 1..5_242_880) {
-                value = withContext(Dispatchers.IO) {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
-                        bounds.outWidth.toLong() * bounds.outHeight > 20_000_000L
-                    ) return@withContext null
-                    var sample = 1
-                    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 720) sample *= 2
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                }
-            }
-        }
-    }
+internal fun OnlineProductPhoto(
+    vm: OnlineViewModel,
+    imagePath: String?,
+    modifier: Modifier,
+    @DrawableRes referenceDrawable: Int? = null
+) {
     Box(
         modifier.clip(MaterialTheme.shapes.medium).background(EdMotorPhotoMatte),
         contentAlignment = Alignment.Center
     ) {
+        if (referenceDrawable != null) {
+            Image(
+                painterResource(referenceDrawable),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().padding(4.dp),
+                contentScale = ContentScale.Fit
+            )
+            return@Box
+        }
+
+        val bitmap by produceState<Bitmap?>(initialValue = null, key1 = vm, key2 = imagePath) {
+            value = null
+            if (imagePath != null) {
+                val bytes = vm.loadProductImage(imagePath)
+                if (bytes != null && bytes.size in 1..5_242_880) {
+                    value = withContext(Dispatchers.IO) {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
+                            bounds.outWidth.toLong() * bounds.outHeight > 20_000_000L
+                        ) return@withContext null
+                        var sample = 1
+                        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 720) sample *= 2
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                    }
+                }
+            }
+        }
         val image = bitmap
         if (image != null) {
             Image(

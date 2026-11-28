@@ -14,13 +14,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DirectionsCar
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,6 +46,7 @@ import com.example.edmotor.model.Vehicle
 import com.example.edmotor.model.appointmentDateUtcMillis
 import com.example.edmotor.model.appointmentTimeSlots
 import com.example.edmotor.model.firstAppointmentDateUtcMillis
+import com.example.edmotor.ui.components.EdMotorBottomSheet
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -59,6 +58,7 @@ internal fun AppointmentRequestForm(
     nowMillis: Long,
     isProcessing: Boolean,
     timeZone: TimeZone = TimeZone.getDefault(),
+    onOpenGarage: (() -> Unit)? = null,
     onCreateAppointment: (Vehicle, Long, String) -> Unit
 ) {
     var vehicleId by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -100,6 +100,11 @@ internal fun AppointmentRequestForm(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (onOpenGarage != null) {
+                    OutlinedButton(onClick = onOpenGarage, enabled = !isProcessing) {
+                        Text("Ir a Mi Garaje")
+                    }
+                }
             }
             AppointmentOptionMenu(
                 label = availableService ?: "Seleccionar tipo de servicio",
@@ -190,9 +195,10 @@ internal fun AppointmentRescheduleDialog(
             }
         )
     } else {
-        AlertDialog(
+        EdMotorBottomSheet(
             title = { Text(if (isWorkshop && appointment.status == AppointmentStatus.PENDING) "Ajustar fecha y hora" else "Reagendar cita") },
             onDismissRequest = onDismiss,
+            scrollBody = false,
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -280,8 +286,11 @@ internal fun AppointmentDatePicker(
         initialSelectedDateMillis = maxOf(date, minimumDate ?: date),
         selectableDates = selectableDates
     )
-    DatePickerDialog(
+    EdMotorBottomSheet(
         onDismissRequest = onDismiss,
+        scrollBody = false,
+        bodyHorizontalPadding = 0.dp,
+        text = { DatePicker(state = state) },
         confirmButton = {
             TextButton(
                 enabled = state.selectedDateMillis != null,
@@ -292,9 +301,7 @@ internal fun AppointmentDatePicker(
             ) { Text("Elegir fecha") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Volver") } }
-    ) {
-        DatePicker(state = state)
-    }
+    )
 }
 
 @Composable
