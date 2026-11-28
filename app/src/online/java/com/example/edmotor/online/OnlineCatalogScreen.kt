@@ -443,13 +443,13 @@ private fun OnlineProductCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            if (isReference) return@Column
-
             Text(
-                stockLabel(product.stock),
+                stockLabel(product.stock, isReference = isReference),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (product.stock <= 0) colors.error else colors.onSurfaceVariant
             )
+            if (isReference) return@Column
+
             if (workshop) {
                 OnlineCatalogQuantityControls(
                     name = product.name,
@@ -558,7 +558,10 @@ internal fun OnlineCatalogQuantityControls(
     }
 }
 
-internal fun stockLabel(stock: Int): String = when {
+internal fun stockLabel(stock: Int, isReference: Boolean = false): String = when {
+    isReference && stock <= 0 -> "0 unidades de referencia · Agotado"
+    isReference && stock == 1 -> "1 unidad de referencia"
+    isReference -> "$stock unidades de referencia"
     stock <= 0 -> "Agotado"
     stock == 1 -> "Última unidad"
     else -> "$stock disponibles"

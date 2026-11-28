@@ -195,11 +195,10 @@ internal fun OnlineProductDetailScreen(
                         style = MaterialTheme.typography.labelMedium
                     )
                     OnlineProductPrice(product, prominent = true)
+                    Text("Disponibilidad", style = MaterialTheme.typography.labelSmall)
+                    Text(stockLabel(product.stock, isReference = isReference), fontWeight = FontWeight.Bold)
                     if (isReference) {
-                        Text("Consulta las existencias y compra cuando se conecte con el taller.", color = colors.onSurfaceVariant)
-                    } else {
-                        Text("Disponibilidad", style = MaterialTheme.typography.labelSmall)
-                        Text(stockLabel(product.stock), fontWeight = FontWeight.Bold)
+                        Text("Conéctate al taller para confirmar existencias y comprar.", color = colors.onSurfaceVariant)
                     }
                 }
             }

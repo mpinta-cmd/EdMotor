@@ -21,7 +21,6 @@ class ReferenceCatalogTest {
             assertEquals(original.description, preview.description)
             assertEquals(original.imageRes, referenceCatalogImage(id))
             assertTrue(preview.priceCop > 0)
-            assertEquals(0, preview.stock)
             assertNull(preview.averageRating)
         }
 
@@ -30,5 +29,18 @@ class ReferenceCatalogTest {
         assertNull(referenceCatalogProduct(1))
         assertTrue(OnlineState(products = referenceCatalog).hasReferenceCatalog)
         assertFalse(OnlineState().hasReferenceCatalog)
+    }
+
+    @Test
+    fun showsOriginalStockWithReferenceLabels() {
+        val inStock = requireNotNull(referenceCatalogProduct(-2))
+        val soldOut = requireNotNull(referenceCatalogProduct(-3))
+        assertEquals("Filtro de aceite A-111", soldOut.name)
+        assertEquals(39, referenceCatalog.count { it.stock == 10 })
+        assertEquals(1, referenceCatalog.count { it.stock == 0 })
+        assertEquals("10 unidades de referencia", stockLabel(inStock.stock, isReference = true))
+        assertEquals("0 unidades de referencia · Agotado", stockLabel(soldOut.stock, isReference = true))
+        assertEquals("10 disponibles", stockLabel(inStock.stock))
+        assertEquals("Agotado", stockLabel(soldOut.stock))
     }
 }
